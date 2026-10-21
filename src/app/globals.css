@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─────────── Design tokens ───────────
+   Neutral, Vercel-like surfaces with mild accent tints. Chart series colours are the validated
+   categorical palette (fixed order); status colours are reserved for health / severity. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f8;
+  --surface: #ffffff;
+  --surface-2: #f6f6f5;
+  --surface-hover: #f2f2f0;
+  --border: #e8e8e5;
+  --border-strong: #d6d5d0;
+  --ink: #111111;
+  --ink-2: #52514e;
+  --ink-3: #868580;
+  --ring: #2a78d6;
+
+  --primary: #256abf;
+  --primary-hover: #1c5cab;
+  --primary-ink: #ffffff;
+  --primary-soft: #eef4fc;
+
+  /* chart chrome */
+  --chart-surface: #ffffff;
+  --grid: #ecebe6;
+  --axis: #c3c2b7;
+
+  /* categorical series (fixed order) */
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  /* ordinal blue ramp for funnels (250 → 600) */
+  --o1: #86b6ef; --o2: #6da7ec; --o3: #5598e7; --o4: #3987e5; --o5: #2a78d6; --o6: #256abf;
+
+  /* status (fixed) */
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+
+  /* tinted chips: bg / ink */
+  --t-slate-bg: #f1f1ef; --t-slate: #52514e;
+  --t-blue-bg: #ebf3fd; --t-blue: #1c5cab;
+  --t-violet-bg: #f0eefc; --t-violet: #4a3aa7;
+  --t-amber-bg: #fdf4de; --t-amber: #845400;
+  --t-orange-bg: #fdefe8; --t-orange: #a3421b;
+  --t-green-bg: #e9f6ea; --t-green: #006300;
+  --t-red-bg: #fdeded; --t-red: #b42525;
+  --t-aqua-bg: #e6f6f0; --t-aqua: #0d6b4a;
+}
+
+.dark {
+  color-scheme: dark;
+  --page: #0b0b0b;
+  --surface: #141414;
+  --surface-2: #1a1a19;
+  --surface-hover: #202020;
+  --border: #272727;
+  --border-strong: #363636;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --ink-3: #8f8e88;
+  --ring: #3987e5;
+
+  --primary: #3987e5;
+  --primary-hover: #5598e7;
+  --primary-ink: #ffffff;
+  --primary-soft: #14233a;
+
+  --chart-surface: #141414;
+  --grid: #262625;
+  --axis: #383835;
+
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  --o1: #184f95; --o2: #1c5cab; --o3: #256abf; --o4: #2a78d6; --o5: #3987e5; --o6: #5598e7;
+
+  --t-slate-bg: #222221; --t-slate: #c3c2b7;
+  --t-blue-bg: #15253b; --t-blue: #86b6ef;
+  --t-violet-bg: #211d3d; --t-violet: #b3abf2;
+  --t-amber-bg: #2e2410; --t-amber: #f2c45c;
+  --t-orange-bg: #2f1b12; --t-orange: #f2a283;
+  --t-green-bg: #13261a; --t-green: #6fd27a;
+  --t-red-bg: #2f1616; --t-red: #f29a9a;
+  --t-aqua-bg: #10281f; --t-aqua: #6fd8b0;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-ink: var(--primary-ink);
+  --color-primary-soft: var(--primary-soft);
+  --color-good: var(--good);
+  --color-warning: var(--warning);
+  --color-serious: var(--serious);
+  --color-critical: var(--critical);
+}
+
+@layer base {
+  * { border-color: var(--border); }
+  html, body { height: 100%; }
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--primary-soft); }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.5; }
+  .dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+}
+
+@layer utilities {
+  .tabular { font-variant-numeric: tabular-nums; }
+  .scrollbar-thin { scrollbar-width: thin; }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+}

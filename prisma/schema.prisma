@@ -1,0 +1,676 @@
+// Progression CRM data model.
+// Conventions: cuid ids, createdAt/updatedAt on every table, createdById/updatedById audit columns,
+// soft delete (deletedAt) on business records, money as Decimal(16,2) in INR.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Enums ─────────────────────────
+
+enum Role {
+  ADMIN
+  SALES_HEAD
+  SALES
+  PRESALES
+  PURCHASE
+}
+
+enum Stage {
+  IDENTIFIED
+  QUALIFIED
+  BOQ
+  PROPOSAL
+  NEGOTIATION
+  HOLD
+  WON
+  LOST
+  DROPPED
+}
+
+enum ForecastCategory {
+  COMMIT
+  UPSIDE
+  PIPELINE
+  OMITTED
+}
+
+enum AccountType {
+  NEW_LOGO
+  EXISTING
+}
+
+enum RevenueModel {
+  ONE_TIME
+  ARR
+}
+
+enum DealType {
+  NEW_BUSINESS
+  UPSELL
+  CROSS_SELL
+  RENEWAL
+}
+
+enum ProcurementMode {
+  DIRECT
+  RFQ
+  RFP
+  TENDER
+}
+
+enum DealRegStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum HealthLabel {
+  HOT
+  HEALTHY
+  AT_RISK
+  DYING
+  CLOSED
+}
+
+enum AccountStatus {
+  PROSPECT
+  ACTIVE
+  DORMANT
+}
+
+enum Segment {
+  ENTERPRISE
+  MID_MARKET
+  SMB
+  GOVT_PSU
+}
+
+enum ContactRole {
+  DECISION_MAKER
+  INFLUENCER
+  CHAMPION
+  TECHNICAL_EVALUATOR
+  PROCUREMENT
+  FINANCE
+  END_USER
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  UNQUALIFIED
+  CONVERTED
+}
+
+enum ActivityType {
+  CALL
+  EMAIL
+  MEETING
+  DEMO
+  SITE_VISIT
+  NOTE
+  TASK
+}
+
+enum PresalesStatus {
+  REQUESTED
+  IN_PROGRESS
+  BOQ_SUBMITTED
+  CANCELLED
+}
+
+enum PricingStatus {
+  REQUESTED
+  IN_PROGRESS
+  QUOTED
+  CANCELLED
+}
+
+enum LinePricingStatus {
+  PENDING
+  QUOTED
+}
+
+enum QuoteStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+enum NotificationType {
+  PRESALES_REQUEST
+  BOQ_SUBMITTED
+  PRICING_REQUEST
+  PRICING_COMPLETE
+  STAGE_CHANGE
+  ASSIGNMENT
+  MENTION
+  SYSTEM
+}
+
+// ───────────────────────── Users & org ─────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role
+  title        String?
+  phone        String?
+  region       String?
+  managerId    String?
+  manager      User?     @relation("UserManager", fields: [managerId], references: [id])
+  reports      User[]    @relation("UserManager")
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  ownedAccounts         Account[]         @relation("AccountOwner")
+  salesOpportunities    Opportunity[]     @relation("OppSalesOwner")
+  presalesOpportunities Opportunity[]     @relation("OppPresalesOwner")
+  purchaseOpportunities Opportunity[]     @relation("OppPurchaseOwner")
+  activities            Activity[]
+  presalesRequested     PresalesRequest[] @relation("PresalesRequestedBy")
+  presalesAssigned      PresalesRequest[] @relation("PresalesAssignedTo")
+  pricingRequested      PricingRequest[]  @relation("PricingRequestedBy")
+  pricingAssigned       PricingRequest[]  @relation("PricingAssignedTo")
+  notifications         Notification[]
+  targets               SalesTarget[]
+  reviews               PipelineReview[]
+  auditLogs             AuditLog[]
+  leads                 Lead[]
+  stageChanges          StageHistory[]
+  savedViews            SavedView[]
+
+  @@index([role, active])
+}
+
+model BusinessUnit {
+  id            String                @id @default(cuid())
+  name          String                @unique
+  code          String                @unique
+  sortOrder     Int                   @default(0)
+  active        Boolean               @default(true)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  categories    Category[]
+  opportunities Opportunity[]
+  lineItems     OpportunityLineItem[]
+  leads         Lead[]
+}
+
+model Category {
+  id             String                @id @default(cuid())
+  name           String
+  businessUnitId String
+  businessUnit   BusinessUnit          @relation(fields: [businessUnitId], references: [id])
+  sortOrder      Int                   @default(0)
+  active         Boolean               @default(true)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  opportunities  Opportunity[]
+  lineItems      OpportunityLineItem[]
+
+  @@unique([businessUnitId, name])
+}
+
+model Oem {
+  id            String                @id @default(cuid())
+  name          String                @unique
+  sortOrder     Int                   @default(0)
+  active        Boolean               @default(true)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  opportunities Opportunity[]
+  lineItems     OpportunityLineItem[]
+}
+
+/// Generic admin-managed picklists: INDUSTRY, LEAD_SOURCE, LOSS_REASON, COMPETITOR, DISTRIBUTOR
+model PicklistValue {
+  id        String   @id @default(cuid())
+  type      String
+  value     String
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([type, value])
+  @@index([type, active])
+}
+
+/// Running counters for human-readable record codes (OPP-2627-0001 etc.)
+model Sequence {
+  key   String @id
+  value Int    @default(0)
+}
+
+// ───────────────────────── Customers ─────────────────────────
+
+model Account {
+  id              String        @id @default(cuid())
+  code            String        @unique
+  name            String
+  accountType     AccountType   @default(NEW_LOGO)
+  status          AccountStatus @default(PROSPECT)
+  segment         Segment       @default(ENTERPRISE)
+  industry        String?
+  website         String?
+  phone           String?
+  gstin           String?
+  pan             String?
+  addressLine     String?
+  city            String?
+  state           String?
+  pincode         String?
+  annualRevenueCr Decimal?      @db.Decimal(14, 2)
+  employees       Int?
+  ownerId         String
+  owner           User          @relation("AccountOwner", fields: [ownerId], references: [id])
+  description     String?
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+
+  contacts      Contact[]
+  opportunities Opportunity[]
+  activities    Activity[]
+
+  @@index([ownerId])
+  @@index([deletedAt])
+}
+
+model Contact {
+  id          String      @id @default(cuid())
+  accountId   String
+  account     Account     @relation(fields: [accountId], references: [id])
+  firstName   String
+  lastName    String
+  title       String?
+  department  String?
+  email       String?
+  phone       String?
+  mobile      String?
+  role        ContactRole @default(INFLUENCER)
+  isPrimary   Boolean     @default(false)
+  linkedin    String?
+  notes       String?
+  createdById String?
+  updatedById String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  primaryFor    Opportunity[]        @relation("OppPrimaryContact")
+  opportunities OpportunityContact[]
+  activities    Activity[]
+
+  @@index([accountId])
+}
+
+model Lead {
+  id                     String        @id @default(cuid())
+  code                   String        @unique
+  firstName              String
+  lastName               String
+  company                String
+  title                  String?
+  email                  String?
+  phone                  String?
+  city                   String?
+  source                 String?
+  businessUnitId         String?
+  businessUnit           BusinessUnit? @relation(fields: [businessUnitId], references: [id])
+  requirement            String?
+  estimatedValue         Decimal?      @db.Decimal(16, 2)
+  status                 LeadStatus    @default(NEW)
+  ownerId                String
+  owner                  User          @relation(fields: [ownerId], references: [id])
+  convertedAt            DateTime?
+  convertedAccountId     String?
+  convertedOpportunityId String?
+  disqualifyReason       String?
+  createdById            String?
+  updatedById            String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  deletedAt              DateTime?
+
+  @@index([ownerId, status])
+}
+
+// ───────────────────────── Opportunities ─────────────────────────
+
+model Opportunity {
+  id               String   @id @default(cuid())
+  code             String   @unique
+  name             String
+  accountId        String
+  account          Account  @relation(fields: [accountId], references: [id])
+  primaryContactId String?
+  primaryContact   Contact? @relation("OppPrimaryContact", fields: [primaryContactId], references: [id])
+
+  businessUnitId String
+  businessUnit   BusinessUnit @relation(fields: [businessUnitId], references: [id])
+  categoryId     String
+  category       Category     @relation(fields: [categoryId], references: [id])
+  oemId          String?
+  oem            Oem?         @relation(fields: [oemId], references: [id])
+
+  accountType     AccountType
+  revenueModel    RevenueModel    @default(ONE_TIME)
+  dealType        DealType        @default(NEW_BUSINESS)
+  procurementMode ProcurementMode @default(DIRECT)
+
+  /// Total contract value (TCV) in INR
+  amount             Decimal   @db.Decimal(16, 2)
+  /// Annual recurring value for ARR deals
+  arrAmount          Decimal?  @db.Decimal(16, 2)
+  contractTermMonths Int?
+  contractStartDate  DateTime?
+  contractEndDate    DateTime?
+  /// Expected gross margin %, overridden by priced BOQ when available
+  expectedMarginPct  Decimal?  @db.Decimal(5, 2)
+
+  stage              Stage            @default(IDENTIFIED)
+  probability        Int              @default(10)
+  forecastCategory   ForecastCategory @default(PIPELINE)
+  expectedCloseDate  DateTime
+  originalCloseDate  DateTime
+  closeDateSlipCount Int              @default(0)
+  stageEnteredAt     DateTime         @default(now())
+  lastActivityAt     DateTime?
+  closedAt           DateTime?
+
+  salesOwnerId    String
+  salesOwner      User    @relation("OppSalesOwner", fields: [salesOwnerId], references: [id])
+  presalesOwnerId String?
+  presalesOwner   User?   @relation("OppPresalesOwner", fields: [presalesOwnerId], references: [id])
+  purchaseOwnerId String?
+  purchaseOwner   User?   @relation("OppPurchaseOwner", fields: [purchaseOwnerId], references: [id])
+
+  leadSource        String?
+  competitors       String?
+  nextStep          String?
+  nextStepDate      DateTime?
+  submissionDueDate DateTime?
+  dealRegStatus     DealRegStatus @default(NOT_REQUIRED)
+  dealRegNumber     String?
+  dealRegExpiry     DateTime?
+  lossReason        String?
+  lossNotes         String?
+  poNumber          String?
+  poDate            DateTime?
+  description       String?
+
+  // Derived by the rules engine (src/lib/rules) on every write and periodic recompute
+  healthScore      Int         @default(50)
+  healthLabel      HealthLabel @default(HEALTHY)
+  flags            String[]    @default([])
+  rulesEvaluatedAt DateTime?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  contacts         OpportunityContact[]
+  lineItems        OpportunityLineItem[]
+  presalesRequests PresalesRequest[]
+  pricingRequests  PricingRequest[]
+  quotes           Quote[]
+  activities       Activity[]
+  stageHistory     StageHistory[]
+
+  @@index([stage])
+  @@index([salesOwnerId])
+  @@index([presalesOwnerId])
+  @@index([businessUnitId, categoryId])
+  @@index([expectedCloseDate])
+  @@index([healthLabel])
+  @@index([deletedAt])
+}
+
+model OpportunityContact {
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  role          ContactRole
+  createdAt     DateTime    @default(now())
+
+  @@id([opportunityId, contactId])
+}
+
+/// Bill of Quantities line. Presales owns spec fields, Purchase owns cost, Sales owns sell price.
+model OpportunityLineItem {
+  id             String            @id @default(cuid())
+  opportunityId  String
+  opportunity    Opportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  lineNo         Int
+  businessUnitId String?
+  businessUnit   BusinessUnit?     @relation(fields: [businessUnitId], references: [id])
+  categoryId     String?
+  category       Category?         @relation(fields: [categoryId], references: [id])
+  oemId          String?
+  oem            Oem?              @relation(fields: [oemId], references: [id])
+  partNumber     String?
+  description    String
+  quantity       Decimal           @db.Decimal(12, 2)
+  unit           String            @default("Nos")
+  /// Billing frequency for services lines: one-time or monthly recurring
+  recurring      Boolean           @default(false)
+  termMonths     Int?
+  // Purchase
+  unitCost       Decimal?          @db.Decimal(16, 2)
+  distributor    String?
+  oemQuoteRef    String?
+  leadTimeDays   Int?
+  pricingStatus  LinePricingStatus @default(PENDING)
+  // Sales
+  unitPrice      Decimal?          @db.Decimal(16, 2)
+  notes          String?
+  createdById    String?
+  updatedById    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([opportunityId, lineNo])
+}
+
+model PresalesRequest {
+  id              String           @id @default(cuid())
+  opportunityId   String
+  opportunity     Opportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  requestedById   String
+  requestedBy     User             @relation("PresalesRequestedBy", fields: [requestedById], references: [id])
+  assignedToId    String
+  assignedTo      User             @relation("PresalesAssignedTo", fields: [assignedToId], references: [id])
+  status          PresalesStatus   @default(REQUESTED)
+  priority        String           @default("NORMAL")
+  scope           String
+  dueDate         DateTime
+  solutionSummary String?
+  startedAt       DateTime?
+  submittedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  pricingRequests PricingRequest[]
+
+  @@index([assignedToId, status])
+}
+
+model PricingRequest {
+  id                String           @id @default(cuid())
+  opportunityId     String
+  opportunity       Opportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  presalesRequestId String?
+  presalesRequest   PresalesRequest? @relation(fields: [presalesRequestId], references: [id])
+  requestedById     String
+  requestedBy       User             @relation("PricingRequestedBy", fields: [requestedById], references: [id])
+  assignedToId      String
+  assignedTo        User             @relation("PricingAssignedTo", fields: [assignedToId], references: [id])
+  status            PricingStatus    @default(REQUESTED)
+  notes             String?
+  dueDate           DateTime
+  quoteValidTill    DateTime?
+  responseNotes     String?
+  startedAt         DateTime?
+  quotedAt          DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([assignedToId, status])
+}
+
+model Quote {
+  id            String      @id @default(cuid())
+  code          String      @unique
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  version       Int
+  status        QuoteStatus @default(DRAFT)
+  totalPrice    Decimal     @db.Decimal(16, 2)
+  totalCost     Decimal     @db.Decimal(16, 2)
+  marginPct     Decimal     @db.Decimal(6, 2)
+  validTill     DateTime
+  terms         String?
+  /// JSON snapshot of the BOQ lines at the time of quoting
+  snapshot      Json
+  createdById   String?
+  createdAt     DateTime    @default(now())
+  submittedAt   DateTime?
+
+  @@unique([opportunityId, version])
+}
+
+model Activity {
+  id            String       @id @default(cuid())
+  type          ActivityType
+  subject       String
+  body          String?
+  occurredAt    DateTime     @default(now())
+  dueAt         DateTime?
+  completedAt   DateTime?
+  ownerId       String
+  owner         User         @relation(fields: [ownerId], references: [id])
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  accountId     String?
+  account       Account?     @relation(fields: [accountId], references: [id])
+  contactId     String?
+  contact       Contact?     @relation(fields: [contactId], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([opportunityId, occurredAt])
+  @@index([accountId])
+  @@index([ownerId, dueAt])
+}
+
+model StageHistory {
+  id              String      @id @default(cuid())
+  opportunityId   String
+  opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  fromStage       Stage?
+  toStage         Stage
+  amount          Decimal     @db.Decimal(16, 2)
+  changedById     String
+  changedBy       User        @relation(fields: [changedById], references: [id])
+  changedAt       DateTime    @default(now())
+  daysInPrevStage Int?
+
+  @@index([opportunityId, changedAt])
+}
+
+/// Field-level change log for every business record
+model AuditLog {
+  id          String   @id @default(cuid())
+  entityType  String
+  entityId    String
+  action      String
+  field       String?
+  oldValue    String?
+  newValue    String?
+  changedById String?
+  changedBy   User?    @relation(fields: [changedById], references: [id])
+  changedAt   DateTime @default(now())
+
+  @@index([entityType, entityId, changedAt])
+  @@index([changedAt])
+}
+
+/// A pipeline review checkpoint. "Changes since last review" diffs the audit log from reviewedAt.
+model PipelineReview {
+  id           String   @id @default(cuid())
+  reviewedById String
+  reviewedBy   User     @relation(fields: [reviewedById], references: [id])
+  reviewedAt   DateTime @default(now())
+  notes        String?
+  /// Snapshot of headline numbers at review time for delta comparison
+  snapshot     Json?
+
+  @@index([reviewedById, reviewedAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model SalesTarget {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fiscalYear   Int
+  quarter      Int
+  targetAmount Decimal  @db.Decimal(16, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, fiscalYear, quarter])
+}
+
+model SavedView {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page      String
+  name      String
+  query     String
+  createdAt DateTime @default(now())
+
+  @@index([userId, page])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

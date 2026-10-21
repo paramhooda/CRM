@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.github
+.env
+.env.*
+!.env.example
+prisma/dist
+test-results
+playwright-report
+coverage
+*.log
+Dockerfile
+docker-compose.yml
+.dockerignore
+README.md

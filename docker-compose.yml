@@ -1,0 +1,45 @@
+# Progression CRM — one command:  docker compose up -d
+# Then open http://localhost:3000  (demo password for all users: Progression@123)
+name: progression-crm
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm_local_only}
+      POSTGRES_DB: crm
+      TZ: Asia/Kolkata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+    image: progression-crm:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://crm:${POSTGRES_PASSWORD:-crm_local_only}@db:5432/crm?schema=public
+      # Leave empty to auto-generate a strong secret on first start (stored in the appdata volume)
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      DEMO_LOGINS: ${DEMO_LOGINS:-true}
+      # Set to "true" when serving over HTTPS behind a reverse proxy
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - appdata:/app/data
+
+volumes:
+  pgdata:
+  appdata:
