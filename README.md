@@ -88,7 +88,7 @@ No finance integration is built yet, but the data is shaped so one is a thin add
 - **Click-through dashboards**: every tile, bar, segment and row opens the matching filtered list, for example the Commit tile, a month in the bookings trend, an OEM in the pipeline mix or a week in the closing calendar.
 - **Sidebar**: collapse it to an icon rail with the button in the top bar or **Ctrl/⌘ + B**; the choice is remembered.
 
-**Branding**: the Progression logo is used in the sidebar, login page, quotations, 404 page and as the favicon. The files live in `public/brand/` and `src/app/icon.png`; drop in higher-resolution versions with the same names to upgrade them. The interface uses the Inter typeface, bundled with the app.
+**Branding**: the Progression logo is used in the sidebar, login page, quotations, 404 page and as the favicon. The wordmark files live in `public/brand/` (drop in higher-resolution versions with the same names to upgrade them). The favicon is a vector redraw of the swoosh: `src/app/icon.svg`, with `favicon.ico` (16/32/48 px) and `apple-icon.png` generated from it. The interface uses the Inter typeface, bundled with the app.
 
 **Conventions**
 - Currency is INR in lakh and crore (₹48.6 L, ₹1.25 Cr). The fiscal year runs April–March (Q1 Apr–Jun, FY27 = Apr 2026–Mar 2027). Dates display in IST.

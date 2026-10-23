@@ -19,5 +19,5 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   // Static brand assets and icons stay public so the login page and favicon render before sign-in
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|brand/|robots.txt).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|brand/|robots.txt).*)"],
 };

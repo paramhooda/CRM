@@ -205,7 +205,7 @@ test.describe("Roles and permissions", () => {
   });
 
   test("logo and favicon load before sign-in", async ({ request }) => {
-    for (const path of ["/brand/progression-logo.png", "/brand/progression-logo-dark.png", "/icon.png"]) {
+    for (const path of ["/brand/progression-logo.png", "/brand/progression-logo-dark.png", "/brand/progression-mark.svg", "/favicon.ico", "/icon.svg", "/apple-icon.png"]) {
       const r = await request.get(path, { maxRedirects: 0 });
       expect(r.status(), path).toBe(200);
     }

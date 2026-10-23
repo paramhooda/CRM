@@ -3,7 +3,8 @@ import { cn } from "@/lib/utils";
 
 // Brand assets live in public/brand. Drop in higher-resolution files with the same names to upgrade them.
 const FULL = { light: "/brand/progression-logo.png", dark: "/brand/progression-logo-dark.png", ratio: 184 / 32 };
-const MARK = { src: "/brand/progression-mark.png", ratio: 33 / 31 };
+// Vector swoosh (same artwork as the favicon, src/app/icon.svg), sharp at any size
+const MARK = { src: "/brand/progression-mark.svg", ratio: 1 };
 
 /** Progression logo. `full` is the swoosh + wordmark (switches to a light wordmark in dark mode); `mark` is the swoosh alone. */
 export function Logo({
