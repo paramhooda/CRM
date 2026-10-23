@@ -16,7 +16,7 @@ export default async function EditOpportunityPage({ params }: { params: Promise<
   const o = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] } });
   if (!o) notFound();
   if (!can.editOpportunity(user, o)) redirect(`/opportunities/${id}`);
-  const [options, accounts] = await Promise.all([getOptions(), accountOptions(user)]);
+  const [options, accounts, lineCount] = await Promise.all([getOptions(), accountOptions(user), db.opportunityLineItem.count({ where: { opportunityId: id } })]);
   if (!accounts.some((a) => a.id === o.accountId)) {
     const a = await db.account.findUniqueOrThrow({ where: { id: o.accountId }, include: { contacts: { where: { deletedAt: null } } } });
     accounts.push({ id: a.id, name: a.name, accountType: a.accountType, contacts: a.contacts.map((c) => ({ id: c.id, name: `${c.firstName} ${c.lastName}`, title: c.title })) });
@@ -39,7 +39,7 @@ export default async function EditOpportunityPage({ params }: { params: Promise<
     <>
       <PageHeader crumbs={[{ href: "/opportunities", label: "Opportunities" }, { href: `/opportunities/${id}`, label: o.code }]} title={`Edit ${o.name}`} />
       <PageBody className="max-w-5xl">
-        <OppForm mode="edit" id={id} initial={initial} accounts={accounts} options={options} canReassign={isManager(user)} currentUserId={user.id} />
+        <OppForm mode="edit" id={id} initial={initial} accounts={accounts} options={options} canReassign={isManager(user)} currentUserId={user.id} existingLineCount={lineCount} />
       </PageBody>
     </>
   );

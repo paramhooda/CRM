@@ -59,7 +59,7 @@ export function PicklistEditor({
   const [v, setV] = useState("");
   const { pending, run } = useAction();
   return (
-    <div className="rounded-lg border border-border bg-surface">
+    <div className="rounded-xl border border-border bg-surface">
       <p className="border-b border-border px-3 py-2 text-[13px] font-semibold">{title} <span className="font-normal text-ink-3">{values.filter((x) => x.active).length}</span></p>
       <div className="flex flex-wrap gap-1.5 p-3">
         {values.map((x) => (
@@ -90,7 +90,7 @@ export function TargetsGrid({ fy, rows }: { fy: number; rows: { userId: string; 
   const [dirty, setDirty] = useState(false);
   const { pending, run } = useAction();
   return (
-    <div className="rounded-lg border border-border bg-surface">
+    <div className="rounded-xl border border-border bg-surface">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <p className="text-[13px] font-semibold">Quarterly targets · FY{String(fy).slice(-2)} <span className="font-normal text-ink-3">(INR)</span></p>
         <Button

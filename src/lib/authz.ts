@@ -1,6 +1,6 @@
 // Authorization: record visibility (who sees which opportunities/accounts) and action permissions.
-// Model follows a private sharing model with role hierarchy: Sales see their own book, Presales/Purchase see
-// deals they are working on, Sales Head and Admin see everything.
+// Sales see their own book. Presales, Purchase, Sales Head and Admin can read everything; what each role can
+// change is governed by the `can` rules below (field-level edit rights on the BOQ, owner-only deal edits).
 import type { Prisma, Role } from "@prisma/client";
 
 type U = { id: string; role: Role };
@@ -16,19 +16,15 @@ export function opportunityScope(u: U): Prisma.OpportunityWhereInput {
     case "SALES":
       return { ...base, salesOwnerId: u.id };
     case "PRESALES":
-      return { ...base, OR: [{ presalesOwnerId: u.id }, { presalesRequests: { some: { assignedToId: u.id } } }] };
     case "PURCHASE":
-      return { ...base, OR: [{ purchaseOwnerId: u.id }, { pricingRequests: { some: { assignedToId: u.id } } }] };
+      return base;
   }
 }
 
 export function accountScope(u: U): Prisma.AccountWhereInput {
   const base: Prisma.AccountWhereInput = { deletedAt: null };
-  if (isManager(u)) return base;
-  if (u.role === "SALES") {
-    return { ...base, OR: [{ ownerId: u.id }, { opportunities: { some: { salesOwnerId: u.id, deletedAt: null } } }] };
-  }
-  return { ...base, opportunities: { some: opportunityScope(u) } };
+  if (u.role !== "SALES") return base;
+  return { ...base, OR: [{ ownerId: u.id }, { opportunities: { some: { salesOwnerId: u.id, deletedAt: null } } }] };
 }
 
 export function leadScope(u: U): Prisma.LeadWhereInput {
@@ -51,8 +47,10 @@ export const can = {
   editBoqCost: (u: U) => u.role === "ADMIN" || u.role === "PURCHASE",
   /** Sell side: unit price */
   editBoqPrice: (u: U, o: OppRef) => isManager(u) || (u.role === "SALES" && o.salesOwnerId === u.id),
-  /** Field-level security: presales do not see buy prices or margin */
-  viewCost: (u: U) => u.role !== "PRESALES",
+  /** Everyone involved in a deal may see buy prices and margin; only Purchase/Admin may change cost. */
+  viewCost: (u: U) => !!u,
+  /** Product catalogue is governed centrally */
+  manageProducts: (u: U) => u.role === "ADMIN",
   createQuote: (u: U, o: OppRef) => isManager(u) || (u.role === "SALES" && o.salesOwnerId === u.id),
   manageAccounts: (u: U) => u.role === "ADMIN" || u.role === "SALES_HEAD" || u.role === "SALES",
   manageLeads: (u: U) => u.role === "ADMIN" || u.role === "SALES_HEAD" || u.role === "SALES",

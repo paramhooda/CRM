@@ -44,7 +44,7 @@ export default async function ContactsPage({ searchParams }: { searchParams: Pro
         </div>
       </PageHeader>
       <PageBody>
-        <div className="rounded-lg border border-border bg-surface">
+        <div className="rounded-xl border border-border bg-surface">
           <Table>
             <THead><tr><TH>Name</TH><TH>Account</TH><TH>Buying role</TH><TH>Email</TH><TH>Mobile</TH><TH className="text-right">Deals</TH></tr></THead>
             <TBody>

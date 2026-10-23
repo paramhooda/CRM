@@ -15,6 +15,7 @@ import { toNumber } from "@/lib/format";
 import { THRESHOLDS, STAGE_META, type StageKey } from "@/lib/constants";
 import { zodErrors, type ActionResult } from "@/lib/validation";
 import { applyStageChange, UserError } from "@/server/domain/stage";
+import { lineInputSchema, resolveSpec, rollUpDeal } from "@/server/domain/lines";
 
 const DAY = 86_400_000;
 
@@ -224,45 +225,25 @@ export async function completePricing(requestId: string, input: Record<string, u
   return { ok: true };
 }
 
-// ───────────── BOQ lines ─────────────
-
-const lineSchema = z.object({
-  id: z.string().optional(),
-  businessUnitId: z.string().nullish(),
-  categoryId: z.string().nullish(),
-  oemId: z.string().nullish(),
-  partNumber: z.string().max(80).nullish(),
-  description: z.string().trim().min(2, "Each line needs a description").max(500),
-  quantity: z.coerce.number().positive("Quantity must be positive").max(1e7),
-  unit: z.string().max(20).default("Nos"),
-  recurring: z.boolean().default(false),
-  termMonths: z.coerce.number().int().min(1).max(120).nullish(),
-  unitCost: z.coerce.number().min(0).nullish(),
-  distributor: z.string().max(80).nullish(),
-  oemQuoteRef: z.string().max(80).nullish(),
-  leadTimeDays: z.coerce.number().int().min(0).max(365).nullish(),
-  unitPrice: z.coerce.number().min(0).nullish(),
-  notes: z.string().max(500).nullish(),
-});
-export type BoqLineInput = z.infer<typeof lineSchema>;
+// ───────────── Line items (BOQ) ─────────────
 
 export async function saveBoq(oppId: string, rawLines: unknown[]): Promise<ActionResult> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
-  const parsed = z.array(lineSchema).max(200).safeParse(rawLines);
+  const parsed = z.array(lineInputSchema).max(200).safeParse(rawLines);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const spec = can.editBoqSpec(user, opp);
   const cost = can.editBoqCost(user);
   const price = can.editBoqPrice(user, opp);
-  if (!spec && !cost && !price) return { ok: false, error: "You cannot edit this BOQ." };
-  if (["WON", "LOST", "DROPPED"].includes(opp.stage)) return { ok: false, error: "BOQ is locked on closed deals." };
+  if (!spec && !cost && !price) return { ok: false, error: "You cannot edit these line items." };
+  if (["WON", "LOST", "DROPPED"].includes(opp.stage)) return { ok: false, error: "Line items are locked on closed deals." };
 
   const existing = await db.opportunityLineItem.findMany({ where: { opportunityId: oppId } });
   const byId = new Map(existing.map((l) => [l.id, l]));
   const incomingIds = new Set(parsed.data.filter((l) => l.id).map((l) => l.id!));
   const toDelete = existing.filter((l) => !incomingIds.has(l.id));
-  if (toDelete.length && !spec) return { ok: false, error: "Only presales or the deal owner can remove BOQ lines." };
+  if (toDelete.length && !spec) return { ok: false, error: "Only presales or the deal owner can remove line items." };
 
   const dec = (n: number | null | undefined) => (n === null || n === undefined ? null : new Prisma.Decimal(n));
   let changed = 0;
@@ -271,11 +252,6 @@ export async function saveBoq(oppId: string, rawLines: unknown[]): Promise<Actio
     let lineNo = 0;
     for (const l of parsed.data) {
       lineNo++;
-      const specData = {
-        businessUnitId: l.businessUnitId || null, categoryId: l.categoryId || null, oemId: l.oemId || null,
-        partNumber: l.partNumber || null, description: l.description, quantity: new Prisma.Decimal(l.quantity), unit: l.unit,
-        recurring: l.recurring, termMonths: l.recurring ? l.termMonths ?? opp.contractTermMonths ?? 12 : null, notes: l.notes || null,
-      };
       const costData = {
         unitCost: dec(l.unitCost), distributor: l.distributor || null, oemQuoteRef: l.oemQuoteRef || null, leadTimeDays: l.leadTimeDays ?? null,
       };
@@ -283,13 +259,14 @@ export async function saveBoq(oppId: string, rawLines: unknown[]): Promise<Actio
       const cur = l.id ? byId.get(l.id) : undefined;
       if (!cur) {
         if (!spec) continue;
+        const specData = await resolveSpec(tx, l, opp.contractTermMonths);
         await tx.opportunityLineItem.create({
           data: { opportunityId: oppId, lineNo, ...specData, ...(cost ? costData : {}), ...(price ? priceData : {}), createdById: user.id, updatedById: user.id },
         });
         changed++;
       } else {
-        const data: Prisma.OpportunityLineItemUpdateInput = { lineNo, updatedById: user.id };
-        if (spec) Object.assign(data, specData);
+        const data: Prisma.OpportunityLineItemUncheckedUpdateInput = { lineNo, updatedById: user.id };
+        if (spec) Object.assign(data, await resolveSpec(tx, l, opp.contractTermMonths));
         if (cost) Object.assign(data, costData, { pricingStatus: l.unitCost !== null && l.unitCost !== undefined ? "QUOTED" : "PENDING" });
         if (price) Object.assign(data, priceData);
         await tx.opportunityLineItem.update({ where: { id: cur.id }, data });
@@ -298,25 +275,7 @@ export async function saveBoq(oppId: string, rawLines: unknown[]): Promise<Actio
     }
     await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "BOQ_UPDATED", userId: user.id, newValue: `${changed} lines saved, ${toDelete.length} removed` });
     await tx.opportunity.update({ where: { id: oppId }, data: { lastActivityAt: new Date() } });
-    await recomputeOpportunity(tx, oppId);
-  });
-  refresh(oppId);
-  return { ok: true };
-}
-
-/** Set the deal value from the priced BOQ total. */
-export async function syncAmountFromBoq(oppId: string): Promise<ActionResult> {
-  const user = await requireUser();
-  const opp = await visibleOpp(user, oppId);
-  if (!opp || !can.editOpportunity(user, opp)) return { ok: false, error: "Not allowed." };
-  const lines = await db.opportunityLineItem.findMany({ where: { opportunityId: oppId } });
-  const t = boqTotals(lines);
-  if (!t.fullyPriced) return { ok: false, error: "Every BOQ line needs a sell price first." };
-  await db.$transaction(async (tx) => {
-    const amount = new Prisma.Decimal(Math.round(t.totalPrice));
-    const margin = t.marginPct === null ? null : new Prisma.Decimal(Math.round(t.marginPct * 100) / 100);
-    await tx.opportunity.update({ where: { id: oppId }, data: { amount, expectedMarginPct: margin, updatedById: user.id } });
-    await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: opp, after: { amount, expectedMarginPct: margin }, fields: ["amount", "expectedMarginPct"], userId: user.id });
+    await rollUpDeal(tx, oppId, user.id);
     await recomputeOpportunity(tx, oppId);
   });
   refresh(oppId);
@@ -340,7 +299,7 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
   const lines = await db.opportunityLineItem.findMany({
     where: { opportunityId: oppId },
     orderBy: { lineNo: "asc" },
-    include: { oem: { select: { name: true } } },
+    include: { oem: { select: { name: true } }, product: { select: { hsnSac: true } } },
   });
   const t = boqTotals(lines);
   if (!t.fullyPriced) return { ok: false, error: "Every BOQ line needs a sell price before quoting." };
@@ -358,7 +317,8 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
           terms: parsed.data.terms || null, createdById: user.id,
           snapshot: lines.map((l) => ({
             lineNo: l.lineNo, oem: l.oem?.name ?? null, partNumber: l.partNumber, description: l.description,
-            quantity: toNumber(l.quantity), unit: l.unit, recurring: l.recurring, termMonths: l.termMonths,
+            quantity: toNumber(l.quantity), unit: l.unit, billingFrequency: l.billingFrequency, termMonths: l.termMonths,
+            hsnSac: l.hsnSac ?? l.product?.hsnSac ?? null,
             unitPrice: toNumber(l.unitPrice), extended: lineMultiplier(l) * toNumber(l.unitPrice),
           })),
         },

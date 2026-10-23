@@ -71,8 +71,8 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
           <Suspense><FilterBar options={options} showPeriod={false} dims={["bu", "cat", "sales", "oem", "fc", "atype", "rev"]} hideSales={user.role === "SALES"} /></Suspense>
         </div>
       </PageHeader>
-      <PageBody className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
+      <PageBody className="flex flex-col gap-6">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
           <Tile icon={<Gauge className="size-4" />} label="Deals changed" value={String(s.total)} sub={s.valueDelta ? `${s.valueDelta > 0 ? "+" : ""}${inr(s.valueDelta)} re-estimated` : "No value changes"} tone="blue" />
           <Tile icon={<Trophy className="size-4" />} label="Won" value={String(s.won.count)} sub={inr(s.won.amount)} tone="green" />
           <Tile icon={<XCircle className="size-4" />} label="Lost / dropped" value={String(s.lost.count)} sub={inr(s.lost.amount)} tone="red" />
@@ -81,7 +81,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
           <Tile icon={<Moon className="size-4" />} label="No movement" value={String(staleList.length)} sub="No change, no activity" tone="slate" />
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2">
           {groups.filter((g) => g.rows.length).map((g) => (
             <Card key={g.key}>
               <CardHeader
@@ -151,7 +151,7 @@ function rank(x?: string) {
 
 function Tile({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string; sub: string; tone: string }) {
   return (
-    <div className="rounded-lg border border-border bg-surface px-4 py-3">
+    <div className="rounded-xl border border-border bg-surface px-4 py-3">
       <p className="flex items-center gap-1.5 text-xs text-ink-3"><span style={{ color: `var(--t-${tone})` }}>{icon}</span>{label}</p>
       <p className="mt-1 text-[22px] font-semibold tabular">{value}</p>
       <p className="text-xs text-ink-3 tabular">{sub}</p>

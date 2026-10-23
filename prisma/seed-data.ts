@@ -297,3 +297,122 @@ export const LAST_NAMES = [
   "Sharma", "Iyer", "Reddy", "Nair", "Gupta", "Kulkarni", "Banerjee", "Menon", "Joshi", "Patel", "Rao", "Saxena",
   "Bhatt", "Pillai", "Chatterjee", "Agarwal", "Deshpande", "Srinivasan", "Khan", "Mishra", "Sinha", "Krishnan",
 ];
+
+// ───────────── Product catalogue ─────────────
+// Templates per "BU|Category"; expanded across the plausible OEMs for that category.
+// price = list price per unit (per billing period for recurring items); cost = standard cost as a share of list.
+type ProductTpl = {
+  name: string; unit: string; type: "HARDWARE" | "SOFTWARE_LICENCE" | "SUBSCRIPTION" | "SERVICE" | "SUPPORT_AMC";
+  freq: "ONE_TIME" | "MONTHLY" | "QUARTERLY" | "ANNUAL"; term?: number; hsn: string; price: number; cost: number;
+};
+
+export const PRODUCT_TEMPLATES: Record<string, ProductTpl[]> = {
+  "IT Infrastructure|Server": [
+    { name: "2U Rack Server, 2x Xeon Gold, 512 GB", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84715000", price: 1_150_000, cost: 0.88 },
+    { name: "1U Rack Server, 1x Xeon Silver, 128 GB", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84715000", price: 420_000, cost: 0.88 },
+    { name: "3-year 24x7 4-hour onsite support", unit: "Nos", type: "SUPPORT_AMC", freq: "ONE_TIME", hsn: "998713", price: 145_000, cost: 0.8 },
+  ],
+  "IT Infrastructure|Storage": [
+    { name: "All-flash array, 100 TB usable, dual controller", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84717020", price: 6_800_000, cost: 0.86 },
+    { name: "32G SAN switch, 24 ports", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "85176290", price: 780_000, cost: 0.87 },
+  ],
+  "IT Infrastructure|Laptop": [
+    { name: "Business laptop, Core i5, 16 GB, 512 GB SSD", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84713010", price: 78_000, cost: 0.91 },
+    { name: "Business laptop, Core i7, 32 GB, 1 TB SSD", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84713010", price: 118_000, cost: 0.91 },
+  ],
+  "IT Infrastructure|Desktop": [
+    { name: "Desktop, Core i5, 16 GB, 512 GB SSD, 24\" monitor", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84714190", price: 62_000, cost: 0.9 },
+  ],
+  "IT Infrastructure|Workstation": [
+    { name: "Tower workstation, Xeon W, 64 GB, RTX A4000", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84714190", price: 385_000, cost: 0.89 },
+  ],
+  "IT Infrastructure|Licence": [
+    { name: "Virtualisation subscription, per core, 3 years", unit: "Cores", type: "SOFTWARE_LICENCE", freq: "ONE_TIME", hsn: "997331", price: 26_000, cost: 0.9 },
+  ],
+  "IT Infrastructure|Networking": [
+    { name: "Core switch, 48x 25G + 8x 100G", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "85176290", price: 1_650_000, cost: 0.85 },
+    { name: "Access switch, 48-port PoE+", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "85176290", price: 245_000, cost: 0.86 },
+    { name: "Wi-Fi 6E access point", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "85176290", price: 68_000, cost: 0.86 },
+  ],
+  "IT Infrastructure|Others": [
+    { name: "Online UPS 10 kVA with batteries", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "85044090", price: 310_000, cost: 0.88 },
+  ],
+  "Cloud|Hosting": [
+    { name: "Virtual compute pool, 64 vCPU / 256 GB", unit: "Pool", type: "SUBSCRIPTION", freq: "MONTHLY", term: 12, hsn: "998315", price: 185_000, cost: 0.72 },
+    { name: "Block storage, per TB", unit: "TB", type: "SUBSCRIPTION", freq: "MONTHLY", term: 12, hsn: "998315", price: 6_500, cost: 0.7 },
+  ],
+  "Cloud|Managed Hosting": [
+    { name: "Managed private cloud with OS and DB management", unit: "Month", type: "SERVICE", freq: "MONTHLY", term: 36, hsn: "998316", price: 640_000, cost: 0.7 },
+    { name: "Cloud migration and cutover", unit: "Lot", type: "SERVICE", freq: "ONE_TIME", hsn: "998313", price: 450_000, cost: 0.6 },
+  ],
+  "Cloud|DRaaS": [
+    { name: "DR replication, per protected VM", unit: "VMs", type: "SUBSCRIPTION", freq: "MONTHLY", term: 36, hsn: "998315", price: 4_200, cost: 0.68 },
+    { name: "DR drill and runbook service", unit: "Drill", type: "SERVICE", freq: "QUARTERLY", term: 36, hsn: "998316", price: 95_000, cost: 0.6 },
+  ],
+  "Cloud|Colo": [
+    { name: "Rack space 42U with 6 kW power", unit: "Racks", type: "SUBSCRIPTION", freq: "MONTHLY", term: 36, hsn: "998315", price: 115_000, cost: 0.74 },
+    { name: "Cross-connect and remote hands", unit: "Month", type: "SERVICE", freq: "MONTHLY", term: 36, hsn: "998316", price: 28_000, cost: 0.6 },
+  ],
+  "Cloud|Public Cloud": [
+    { name: "Public cloud consumption commitment", unit: "Month", type: "SUBSCRIPTION", freq: "MONTHLY", term: 12, hsn: "998315", price: 850_000, cost: 0.9 },
+    { name: "Managed cloud operations", unit: "Month", type: "SERVICE", freq: "MONTHLY", term: 12, hsn: "998316", price: 120_000, cost: 0.62 },
+  ],
+  "Cloud|Licence": [
+    { name: "Productivity suite, per user", unit: "Users", type: "SUBSCRIPTION", freq: "ANNUAL", term: 12, hsn: "997331", price: 9_800, cost: 0.88 },
+  ],
+  "Services|FMS": [
+    { name: "Onsite L1/L2 engineer (FMS)", unit: "Resources", type: "SERVICE", freq: "MONTHLY", term: 12, hsn: "998316", price: 62_000, cost: 0.72 },
+  ],
+  "Services|NOC": [
+    { name: "24x7 NOC monitoring, per device", unit: "Devices", type: "SERVICE", freq: "MONTHLY", term: 36, hsn: "998316", price: 1_450, cost: 0.6 },
+    { name: "NOC onboarding and runbooks", unit: "Lot", type: "SERVICE", freq: "ONE_TIME", hsn: "998313", price: 280_000, cost: 0.55 },
+  ],
+  "Services|AMC": [
+    { name: "Comprehensive AMC, servers and storage", unit: "Year", type: "SUPPORT_AMC", freq: "ANNUAL", term: 12, hsn: "998713", price: 1_400_000, cost: 0.75 },
+    { name: "Comprehensive AMC, network devices", unit: "Year", type: "SUPPORT_AMC", freq: "ANNUAL", term: 12, hsn: "998713", price: 520_000, cost: 0.75 },
+  ],
+  "Services|Professional Services": [
+    { name: "Solution architect, per day", unit: "Days", type: "SERVICE", freq: "ONE_TIME", hsn: "998313", price: 28_000, cost: 0.55 },
+    { name: "Implementation engineer, per day", unit: "Days", type: "SERVICE", freq: "ONE_TIME", hsn: "998313", price: 16_000, cost: 0.55 },
+  ],
+  "Services|Backup as a Service": [
+    { name: "Managed backup, per TB protected", unit: "TB", type: "SUBSCRIPTION", freq: "MONTHLY", term: 36, hsn: "998315", price: 3_900, cost: 0.66 },
+  ],
+  "Cybersecurity|SOC": [
+    { name: "24x7 managed SOC (MDR), per EPS tier", unit: "Month", type: "SERVICE", freq: "MONTHLY", term: 36, hsn: "998316", price: 420_000, cost: 0.62 },
+    { name: "SOC onboarding and use-case tuning", unit: "Lot", type: "SERVICE", freq: "ONE_TIME", hsn: "998313", price: 350_000, cost: 0.55 },
+  ],
+  "Cybersecurity|Licence": [
+    { name: "Security subscription, per user, annual", unit: "Users", type: "SUBSCRIPTION", freq: "ANNUAL", term: 36, hsn: "997331", price: 4_800, cost: 0.86 },
+    { name: "Next-gen firewall appliance", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "85176290", price: 920_000, cost: 0.86 },
+  ],
+  "Cybersecurity|Compliance": [
+    { name: "Compliance consultant, per day", unit: "Days", type: "SERVICE", freq: "ONE_TIME", hsn: "998313", price: 24_000, cost: 0.55 },
+    { name: "Data classification licence, per user", unit: "Users", type: "SOFTWARE_LICENCE", freq: "ONE_TIME", hsn: "997331", price: 3_200, cost: 0.85 },
+  ],
+};
+
+/** Typical add-ons that turn a deal into a multi-OEM, multi-BU solution. */
+export const COMPLEMENTS: Record<string, string[]> = {
+  "IT Infrastructure|Server": ["IT Infrastructure|Licence", "Services|Professional Services", "Services|Backup as a Service"],
+  "IT Infrastructure|Storage": ["Services|Professional Services", "Services|Backup as a Service"],
+  "IT Infrastructure|Laptop": ["Cybersecurity|Licence"],
+  "IT Infrastructure|Desktop": ["Cybersecurity|Licence"],
+  "IT Infrastructure|Networking": ["Cybersecurity|Licence", "Services|NOC"],
+  "IT Infrastructure|Licence": ["Services|Professional Services"],
+  "Cloud|Hosting": ["Services|Backup as a Service", "Cybersecurity|SOC"],
+  "Cloud|Managed Hosting": ["Cloud|DRaaS", "Cybersecurity|SOC"],
+  "Cloud|Public Cloud": ["Services|Professional Services", "Cybersecurity|Licence"],
+  "Cloud|Colo": ["Services|NOC", "IT Infrastructure|Networking"],
+  "Services|FMS": ["Services|AMC"],
+  "Services|NOC": ["IT Infrastructure|Networking"],
+  "Cybersecurity|SOC": ["Cybersecurity|Licence", "Cybersecurity|Compliance"],
+  "Cybersecurity|Licence": ["Services|Professional Services"],
+};
+
+export const OEM_CODE: Record<string, string> = {
+  Progression: "PRG", "Neon Cloud": "NEON", AWS: "AWS", Azure: "AZR", HPE: "HPE", HPI: "HPI", Lenovo: "LNV", Dell: "DELL",
+  Acer: "ACR", VMware: "VMW", Nutanix: "NTNX", Cisco: "CSCO", Fortinet: "FTNT", Zscaler: "ZS", Crowdstrike: "CRWD",
+  Forcepoint: "FP", Cato: "CATO", Seclore: "SCLR", Seqrite: "SQRT", GISPL: "GISPL", Holm: "HOLM", Veeam: "VEEAM",
+  Acronis: "ACRN", Commvault: "CMVLT",
+};

@@ -35,7 +35,7 @@ export function ContactsEditor({
           Buying group gap: no {missing.map((m) => CONTACT_ROLE_LABEL[m].toLowerCase()).join(", ")} engaged on this deal.
         </p>
       )}
-      <div className="rounded-lg border border-border bg-surface">
+      <div className="rounded-xl border border-border bg-surface">
         {current.map((c) => (
           <div key={c.contact.id} className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2.5 last:border-0">
             <Avatar name={`${c.contact.firstName} ${c.contact.lastName}`} className="size-8" />

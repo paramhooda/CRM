@@ -7,15 +7,15 @@
    categorical palette (fixed order); status colours are reserved for health / severity. */
 :root {
   color-scheme: light;
-  --page: #f9f9f8;
+  --page: #fafafa;
   --surface: #ffffff;
-  --surface-2: #f6f6f5;
-  --surface-hover: #f2f2f0;
-  --border: #e8e8e5;
-  --border-strong: #d6d5d0;
-  --ink: #111111;
-  --ink-2: #52514e;
-  --ink-3: #868580;
+  --surface-2: #f5f5f5;
+  --surface-hover: #f2f2f2;
+  --border: #ebebeb;
+  --border-strong: #d4d4d4;
+  --ink: #171717;
+  --ink-2: #4d4d4d;
+  --ink-3: #8f8f8f;
   --ring: #2a78d6;
 
   --primary: #256abf;
@@ -25,8 +25,8 @@
 
   /* chart chrome */
   --chart-surface: #ffffff;
-  --grid: #ecebe6;
-  --axis: #c3c2b7;
+  --grid: #f0f0f0;
+  --axis: #d4d4d4;
 
   /* categorical series (fixed order) */
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
@@ -38,7 +38,7 @@
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
 
   /* tinted chips: bg / ink */
-  --t-slate-bg: #f1f1ef; --t-slate: #52514e;
+  --t-slate-bg: #f2f2f2; --t-slate: #4d4d4d;
   --t-blue-bg: #ebf3fd; --t-blue: #1c5cab;
   --t-violet-bg: #f0eefc; --t-violet: #4a3aa7;
   --t-amber-bg: #fdf4de; --t-amber: #845400;
@@ -50,15 +50,15 @@
 
 .dark {
   color-scheme: dark;
-  --page: #0b0b0b;
-  --surface: #141414;
-  --surface-2: #1a1a19;
-  --surface-hover: #202020;
-  --border: #272727;
-  --border-strong: #363636;
-  --ink: #f0efec;
-  --ink-2: #c3c2b7;
-  --ink-3: #8f8e88;
+  --page: #0a0a0a;
+  --surface: #111111;
+  --surface-2: #171717;
+  --surface-hover: #1f1f1f;
+  --border: #242424;
+  --border-strong: #333333;
+  --ink: #ededed;
+  --ink-2: #b4b4b4;
+  --ink-3: #8a8a8a;
   --ring: #3987e5;
 
   --primary: #3987e5;
@@ -66,9 +66,9 @@
   --primary-ink: #ffffff;
   --primary-soft: #14233a;
 
-  --chart-surface: #141414;
-  --grid: #262625;
-  --axis: #383835;
+  --chart-surface: #111111;
+  --grid: #222222;
+  --axis: #333333;
 
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
   --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
@@ -113,6 +113,7 @@
   html, body { height: 100%; }
   body {
     background: var(--page);
+    letter-spacing: -0.003em;
     color: var(--ink);
     font-family: var(--font-sans);
     font-size: 14px;

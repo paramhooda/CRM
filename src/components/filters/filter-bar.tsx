@@ -28,6 +28,7 @@ export function FilterBar({
   showSearch = true,
   periods,
   hideSales,
+  primary,
 }: {
   options: FilterOptions;
   dims?: DimKey[];
@@ -35,6 +36,8 @@ export function FilterBar({
   showSearch?: boolean;
   periods?: { value: string; label: string }[];
   hideSales?: boolean;
+  /** Dimensions shown inline; the rest live under "More filters" */
+  primary?: DimKey[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -92,53 +95,110 @@ export function FilterBar({
 
   const activeKeys = [...ALL_DIMS, "period", "q"].filter((k) => sp.get(k));
   const visibleDims = dims.filter((d) => !(hideSales && d === "sales"));
+  const inline = (primary ?? (hideSales ? ["bu", "cat"] : ["bu", "sales"])).filter((d) => visibleDims.includes(d));
+  const more = visibleDims.filter((d) => !inline.includes(d));
+  const moreActive = more.filter((d) => sp.get(d));
   const periodOptions = periods ?? [];
+  const selected = (d: DimKey) => (sp.get(d) ?? "").split(",").filter(Boolean);
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="mr-1 inline-flex items-center gap-1 text-xs text-ink-3">
-        {pending ? <Loader2 className="size-3.5 animate-spin" /> : <SlidersHorizontal className="size-3.5" />}
-        Filters
-      </span>
-      {showSearch && (
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-ink-3" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search"
-            className="h-7 w-40 rounded-full border border-border bg-surface pl-7 pr-2 text-xs outline-none placeholder:text-ink-3 hover:border-border-strong focus:border-ring"
-          />
+    <div className="flex flex-col gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        {showSearch && (
+          <div className="relative">
+            {pending ? (
+              <Loader2 className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-ink-3" />
+            ) : (
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-3" />
+            )}
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search"
+              className="h-8 w-48 rounded-lg border border-border bg-surface pl-8 pr-2 text-[13px] outline-none placeholder:text-ink-3 hover:border-border-strong focus:border-ring"
+            />
+          </div>
+        )}
+        {showPeriod && periodOptions.length > 0 && (
+          <SingleSelectChip label="Period" value={sp.get("period")} options={periodOptions} onChange={(v) => update("period", v)} />
+        )}
+        {inline.map((d) => (
+          <MultiSelectChip key={d} dim={dimensions[d]} selected={selected(d)} onChange={(vals) => update(d, vals)} />
+        ))}
+        {more.length > 0 && (
+          <Popover>
+            <PopoverTrigger className={chipClass(moreActive.length > 0)}>
+              <SlidersHorizontal className="size-3.5" />
+              <span>More filters</span>
+              {moreActive.length > 0 && <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-ink">{moreActive.length}</span>}
+            </PopoverTrigger>
+            <PopoverContent className="w-[440px] p-0" align="start">
+              <div className="max-h-[440px] overflow-y-auto p-4 scrollbar-thin">
+                {more.map((d) => {
+                  const dim = dimensions[d];
+                  const sel = selected(d);
+                  return (
+                    <div key={d} className="mb-4 last:mb-0">
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <p className="text-xs font-medium text-ink-2">{dim.label}</p>
+                        {sel.length > 0 && (
+                          <button onClick={() => update(d, [])} className="text-xs text-ink-3 hover:text-ink cursor-pointer">Clear</button>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {dim.options.map((o) => {
+                          const on = sel.includes(o.value);
+                          return (
+                            <button
+                              key={o.value}
+                              onClick={() => update(d, on ? sel.filter((x) => x !== o.value) : [...sel, o.value])}
+                              className={cn(
+                                "rounded-md border px-2 py-1 text-xs transition-colors cursor-pointer",
+                                on ? "border-[color-mix(in_srgb,var(--primary)_40%,transparent)] bg-primary-soft text-[var(--t-blue)]" : "border-border text-ink-2 hover:border-border-strong hover:text-ink",
+                              )}
+                            >
+                              {o.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+        {activeKeys.length > 0 && (
+          <button
+            onClick={() => {
+              setQ("");
+              const next = new URLSearchParams(sp.toString());
+              for (const k of [...ALL_DIMS, "period", "q", "page"]) next.delete(k);
+              start(() => router.replace(`${pathname}?${next.toString()}`, { scroll: false }));
+            }}
+            className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-ink-3 hover:bg-surface-hover hover:text-ink cursor-pointer"
+          >
+            <X className="size-3" /> Clear all
+          </button>
+        )}
+      </div>
+      {moreActive.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {moreActive.flatMap((d) =>
+            selected(d).map((v) => {
+              const label = dimensions[d].options.find((o) => o.value === v)?.label ?? v;
+              return (
+                <span key={`${d}:${v}`} className="inline-flex items-center gap-1 rounded-md bg-primary-soft py-0.5 pl-2 pr-1 text-xs text-[var(--t-blue)]">
+                  <span className="text-ink-3">{dimensions[d].label}:</span> {label}
+                  <button onClick={() => update(d, selected(d).filter((x) => x !== v))} aria-label={`Remove ${label}`} className="rounded p-0.5 hover:bg-[color-mix(in_srgb,var(--primary)_15%,transparent)] cursor-pointer">
+                    <X className="size-3" />
+                  </button>
+                </span>
+              );
+            }),
+          )}
         </div>
-      )}
-      {showPeriod && periodOptions.length > 0 && (
-        <SingleSelectChip
-          label="Period"
-          value={sp.get("period")}
-          options={periodOptions}
-          onChange={(v) => update("period", v)}
-        />
-      )}
-      {visibleDims.map((d) => (
-        <MultiSelectChip
-          key={d}
-          dim={dimensions[d]}
-          selected={(sp.get(d) ?? "").split(",").filter(Boolean)}
-          onChange={(vals) => update(d, vals)}
-        />
-      ))}
-      {activeKeys.length > 0 && (
-        <button
-          onClick={() => {
-            setQ("");
-            const next = new URLSearchParams(sp.toString());
-            for (const k of [...ALL_DIMS, "period", "q", "page"]) next.delete(k);
-            start(() => router.replace(`${pathname}?${next.toString()}`, { scroll: false }));
-          }}
-          className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs text-ink-3 hover:bg-surface-hover hover:text-ink cursor-pointer"
-        >
-          <X className="size-3" /> Clear all
-        </button>
       )}
     </div>
   );
@@ -146,7 +206,7 @@ export function FilterBar({
 
 function chipClass(active: boolean) {
   return cn(
-    "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-xs transition-colors cursor-pointer",
+    "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] transition-colors cursor-pointer",
     active
       ? "border-[color-mix(in_srgb,var(--primary)_35%,transparent)] bg-primary-soft text-[var(--t-blue)]"
       : "border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink",

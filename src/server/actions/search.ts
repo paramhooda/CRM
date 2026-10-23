@@ -5,14 +5,14 @@ import { accountScope, opportunityScope } from "@/lib/authz";
 import { inr } from "@/lib/format";
 import { STAGE_META, type StageKey } from "@/lib/constants";
 
-export type SearchHit = { id: string; type: "opportunity" | "account" | "contact"; title: string; sub: string; href: string };
+export type SearchHit = { id: string; type: "opportunity" | "account" | "contact" | "product"; title: string; sub: string; href: string };
 
 export async function globalSearch(q: string): Promise<SearchHit[]> {
   const user = await requireUser();
   const term = q.trim().slice(0, 80);
   if (term.length < 2) return [];
   const ci = { contains: term, mode: "insensitive" as const };
-  const [opps, accounts, contacts] = await Promise.all([
+  const [opps, accounts, contacts, products] = await Promise.all([
     db.opportunity.findMany({
       where: { AND: [opportunityScope(user), { OR: [{ name: ci }, { code: ci }, { account: { name: ci } }] }] },
       select: { id: true, name: true, code: true, amount: true, stage: true, account: { select: { name: true } } },
@@ -33,6 +33,11 @@ export async function globalSearch(q: string): Promise<SearchHit[]> {
       select: { id: true, firstName: true, lastName: true, title: true, accountId: true, account: { select: { name: true } } },
       take: 4,
     }),
+    db.product.findMany({
+      where: { active: true, OR: [{ code: ci }, { name: ci }] },
+      select: { id: true, code: true, name: true, oem: { select: { name: true } } },
+      take: 4,
+    }),
   ]);
   return [
     ...opps.map((o) => ({
@@ -45,5 +50,6 @@ export async function globalSearch(q: string): Promise<SearchHit[]> {
       id: c.id, type: "contact" as const, title: `${c.firstName} ${c.lastName}`, sub: `${c.title ?? ""} · ${c.account.name}`,
       href: `/accounts/${c.accountId}?tab=contacts`,
     })),
+    ...products.map((p) => ({ id: p.id, type: "product" as const, title: p.name, sub: `${p.code} · ${p.oem.name}`, href: `/products?q=${encodeURIComponent(p.code)}` })),
   ];
 }

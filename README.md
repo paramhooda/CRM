@@ -1,6 +1,6 @@
 # Progression CRM
 
-A focused CRM for a Systems Integrator / Managed Services Provider. It covers accounts, contacts, leads, opportunities, a Sales → Presales → Purchase BOQ and pricing workflow, quotes, pipeline reviews and analytics, in a clean, minimal interface.
+A focused CRM for a Systems Integrator / Managed Services Provider. It covers accounts, contacts, leads, opportunities with multi-OEM line items, a product catalogue, a Sales → Presales → Purchase BOQ and pricing workflow, quotes, pipeline reviews and analytics, in a clean, minimal interface.
 
 ## Run it
 
@@ -16,9 +16,9 @@ Open **http://localhost:3000**. The first start builds the image, creates the da
 |---|---|---|
 | Sales Head | `vivek.malhotra@progression.com` | Dashboard, pipeline review, reports, reassigning deals |
 | Sales | `rakesh.pawar@progression.com` | Create a deal, pull in presales, price and quote |
-| Presales | `rakesh.yadav@progression.com` | BOQ requests inbox, build and submit a BOQ |
-| Purchase | `meera.iyer@progression.com` | Pricing requests inbox, enter costs |
-| Admin | `admin@progression.com` | Users, picklists, targets, audit log |
+| Presales | `rakesh.yadav@progression.com` | My work home, build and submit a BOQ |
+| Purchase | `meera.iyer@progression.com` | My work home, RFQs by OEM, enter costs |
+| Admin | `admin@progression.com` | Product catalogue, users, picklists, targets, audit log |
 
 All demo users share the password **`Progression@123`**. The login page also has one-click demo sign-in buttons. Every sales and presales person from the field sheet exists as a user, with emails in the form `firstname.lastname@progression.com`.
 
@@ -39,13 +39,35 @@ APP_PORT=8080 docker compose up -d  # run on another port
 - Salesforce-style stage path, Kanban pipeline board with drag-and-drop, and a sortable table with column chooser, saved views and CSV export.
 - Stage gates. Closed-Won needs a PO number and date. Lost or Dropped needs a reason. ARR needs a contract term. RFPs need a submission date. Pushing a close date out counts as a slip.
 
-**Sales → Presales → Purchase workflow**
-1. Sales clicks **Pull in presales** on a deal and picks an engineer, due date and scope. The presales engineer is notified.
-2. Presales builds the BOQ (OEM, part number, description, quantity, one-time or monthly recurring lines) and clicks **Submit BOQ to purchase**. Purchase is notified, and the request auto-assigns to the least-loaded buyer if none is chosen.
-3. Purchase enters unit cost, distributor and lead time, then clicks **Pricing complete**. Sales and presales are notified.
-4. Sales sets sell prices, optionally with **Price at margin**, then clicks **Generate quote**. This versions the quote, updates the deal value and moves the deal to Proposal Submitted. The quote opens as a printable PDF-ready page.
+**Line items and product catalogue**
+- One opportunity holds many line items, and each line carries its own BU, category and OEM. A single deal can mix, for example, Dell servers, VMware licences and Progression implementation services.
+- Lines are picked from the **product catalogue** (Catalogue → Products): SKU, name, BU, category, OEM, product type, unit, billing frequency and default term, list price, standard cost, HSN/SAC and GST %. Everyone can browse it. Only Admin can add, edit or deactivate products.
+- A custom line is still allowed for one-off items, but it must have a BU, category and OEM.
+- Each line bills One-time, Monthly, Quarterly or Annually, over a term in months.
+- Line items are optional when creating a deal. Once a deal has lines, its value rolls up from them automatically, and its primary BU, category and OEM come from the largest line. Every roll-up change is audited, so it shows in "changes since last review".
+- Dashboards and reports split multi-OEM deals by line value, so BU, OEM and product figures are accurate. BU, category and OEM filters match a deal if its header or any of its lines matches.
 
-Field-level security applies throughout. Presales never see buy prices or margin. Purchase edits only cost fields. Sales edits only sell prices.
+**Sales → Presales → Purchase workflow**
+1. Sales clicks **Pull in presales** on a deal and picks an engineer, due date and scope. The presales engineer sees it on their **My work** home and is notified.
+2. Presales refines the line items into the BOQ and clicks **Submit BOQ to purchase**. Purchase is notified, and the request auto-assigns to the least-loaded buyer if none is chosen.
+3. Purchase sees uncosted lines grouped by OEM, so RFQs to distributors can be batched. They enter unit cost (or apply **Standard costs** from the catalogue), distributor and lead time, then click **Pricing complete**. Sales and presales are notified.
+4. Sales sets sell prices, with **List prices** or **Price at margin** as shortcuts, then clicks **Generate quote**. This versions the quote and moves the deal to Proposal Submitted. The quote opens as a printable PDF-ready page with HSN/SAC and billing terms.
+5. On **Closed-Won**, every line must be priced and carry an HSN/SAC. The lines then lock for billing (see below).
+
+Everyone can read all deals, costs and margins. Edit rights stay role-based: presales edit the specification, purchase edits only cost fields, and sales edit only sell prices.
+
+**Role homes**
+- **Presales** and **Purchase** land on a **My work** page rather than sales numbers: their queue sorted overdue first, quick filters (Overdue, Due this week, Not started, and Partly costed for purchase), and one-click **Start work** / **Open BOQ**.
+- Presales also see BOQs waiting on purchase, recently delivered BOQs, their tasks and updates.
+- Purchase also see quotes to request grouped by OEM, supplier quotes about to expire on open deals, recently priced BOQs, their tasks and updates.
+
+**Billing-ready by design**
+
+No finance integration is built yet, but the data is shaped so one is a thin addition:
+- When a deal is won, its lines are snapshotted (product code, name, HSN/SAC, GST %), stamped with a billing start date (the PO date, or the contract start for recurring lines), marked **Ready to bill** and locked against edits.
+- In the same transaction an `opportunity.won` event is written to the `IntegrationEvent` outbox table. Its payload is a versioned list of `BillableLine` records: customer, GSTIN, PAN and address, PO, BU, category, OEM, product, HSN/SAC, GST %, quantity, unit price, taxable value, billing frequency, term, periods and per-period amount. Reopening a won deal unlocks the lines and writes an `opportunity.reopened` event.
+- A future finance connector can drain that outbox, or expose `toBillableLines()` (`src/server/domain/billing.ts`) as an API. Lines already have `billingStatus` (Not ready, Ready, Sent, Invoiced) and `externalRef` fields for the finance system to write back.
+- Until then, **Export → Line items (billing)** on the opportunities list downloads one CSV row per line with all billing columns.
 
 **Seeing what matters**
 - **Health score (0–100)** on every open deal, recalculated on each change and every 30 minutes, with a plain-language "why" panel.
@@ -54,7 +76,9 @@ Field-level security applies throughout. Presales never see buy prices or margin
   - *At risk*: score below 60, or any serious or critical concern.
 - **Concern flags** (15 rules), shown as chips and grouped on the dashboard: close date passed, no activity, commit at risk, stuck in stage, close date slipped 3+ times, no presales at BOQ, BOQ or pricing SLA overdue, low margin (under 8%), no next step, single-threaded high-value deal, missing contact, ARR without term, deal registration expiring, RFP due soon.
 - **Changes since last review**: every field change is audited. The pipeline review page diffs from your last review, the last 7 or 30 days, or any past review. It shows won, lost, newly dying, close dates pushed, moved back, forecast up or down, value changes, new deals, and deals with no movement at all. **Mark as reviewed** saves a new baseline.
-- **Dashboard**: open and weighted pipeline, commit vs quarter target with coverage, bookings, win rate, deal size, sales cycle, ARR booked, BU × forecast chart, bookings trend vs target, stage funnel, sales leaderboard, OEM mix, aging, win rate by BU, closing in 30 days, and upcoming ARR renewals.
+- **Dashboard, Overview tab**: four headline tiles with trends and deltas (open pipeline and its change since the last review, commit vs target, won this quarter vs the same point last quarter, win rate vs the prior year), a **Needs attention** panel (Hot, Dying, Changed since review, Concerns), auto-generated **insights**, quarter forecast against target, bookings trend, pipeline by BU and top performers.
+- **Dashboard, Insights tab**: deals created vs won per month, an 8-week closing calendar, stage funnel and conversion, bookings by BU, OEM and product, pipeline health, one-time vs ARR mix, OEM mix, aging, win rate by BU, closing in 30 days and upcoming renewals.
+- **Insights** are plain-language findings ranked by size, for example a BU's share of pipeline vs its share of bookings, win rate with and without presales, commit already past its close date, slip behaviour on won vs lost deals, account concentration, stuck stages and renewals due.
 - **Reports**: forecast vs target per quarter, stage velocity and conversion, BU × category heatmap, loss reasons, new logo vs existing, win rate by competitor type, and a full sales scorecard.
 - **Filters everywhere**, stored in the URL so views are shareable: BU, category, sales person, presales, OEM, stage, forecast, health, concern, account type, revenue model, fiscal period and search.
 
@@ -66,14 +90,17 @@ Field-level security applies throughout. Presales never see buy prices or margin
 
 | | Admin | Sales Head | Sales | Presales | Purchase |
 |---|---|---|---|---|---|
-| Sees deals | All | All | Own | Assigned | Assigned |
+| Home page | Dashboard | Dashboard | Dashboard | My work | My work |
+| Sees deals | All | All | Own | All | All |
 | Create and edit deals | ✓ | ✓ | Own | – | – |
 | Reassign deals, set targets | ✓ | ✓ | – | – | – |
 | BOQ specification | ✓ | ✓ | Own | Assigned | – |
 | BOQ cost, distributor | ✓ | – | – | – | ✓ |
 | BOQ sell price, quotes | ✓ | ✓ | Own | – | – |
-| See cost and margin | ✓ | ✓ | ✓ | – | ✓ |
-| Pipeline review, reports | ✓ | ✓ | ✓ | – | – |
+| See cost and margin | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Reports | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Pipeline review | ✓ | ✓ | ✓ | – | – |
+| Product catalogue | Edit | View | View | View | View |
 | Settings, users, audit log | ✓ | – | – | – | – |
 
 Permissions are enforced on the server in every action and query, and the UI mirrors them.
@@ -108,8 +135,8 @@ npm run dev                        # http://localhost:3000
 | Command | What it does |
 |---|---|
 | `npm run lint` / `npm run typecheck` | ESLint and TypeScript strict checks |
-| `npm test` | Unit tests for the health rules, fiscal calendar, INR formatting, BOQ maths and permissions |
-| `npm run test:e2e` | Playwright end-to-end test of the full Sales → Presales → Purchase → Won flow and role checks, against a running app |
+| `npm test` | Unit tests for the health rules, fiscal calendar, INR formatting, BOQ and billing-period maths, line attribution, billing readiness and the billable-line contract, and permissions |
+| `npm run test:e2e` | Playwright end-to-end test of the full flow (multi-OEM deal → presales home → purchase RFQs → quote → won and locked → billing export) and role checks, against a running app |
 | `npm run db:migrate` | Create a new migration after editing `prisma/schema.prisma` |
 
 **Stack:** Next.js 15 (App Router, server actions), React 19, TypeScript, Tailwind CSS 4, Prisma 6 with PostgreSQL 16, Recharts, Radix UI primitives, Zod validation, and signed HttpOnly JWT sessions with bcrypt password hashing.
@@ -118,12 +145,12 @@ npm run dev                        # http://localhost:3000
 
 ```
 prisma/                 schema, migrations, seed and its reference data
-src/app/(app)/          authenticated pages: dashboard, pipeline, opportunities, accounts, contacts,
-                        leads, requests, reviews, reports, admin
+src/app/(app)/          authenticated pages: dashboard (overview, insights), pipeline, opportunities,
+                        accounts, contacts, leads, products, requests, reviews, reports, admin
 src/app/(print)/        printable quotation
 src/server/actions/     server actions (all writes, with permission checks and audit logging)
-src/server/queries/     read models for dashboards, lists and reports
-src/server/domain/      stage transition rules
+src/server/queries/     read models for dashboards, insights, role work queues, lists and reports
+src/server/domain/      stage transitions, line-item roll-up, billing lock and outbox events
 src/lib/rules/          health score and concern flags (pure, unit-tested)
 src/lib/                auth, permissions, fiscal calendar, formatting, filters, audit
 src/components/         UI primitives, charts, feature components

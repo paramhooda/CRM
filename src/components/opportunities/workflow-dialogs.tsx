@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
-import { UserPlus, Send, Calculator, FileText, PlayCircle, CheckCircle2, RefreshCw } from "lucide-react";
+import { UserPlus, Send, Calculator, FileText, PlayCircle, CheckCircle2 } from "lucide-react";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
 import {
-  requestPresales, startPresales, submitBoq, requestPricing, startPricing, completePricing, createQuote, syncAmountFromBoq,
+  requestPresales, startPresales, submitBoq, requestPricing, startPricing, completePricing, createQuote,
 } from "@/server/actions/workflow";
 import { isoDate } from "@/lib/format";
 
@@ -241,14 +241,5 @@ export function CreateQuoteButton({ oppId, disabledReason }: { oppId: string; di
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-export function SyncAmountButton({ oppId }: { oppId: string }) {
-  const { pending, run } = useAction();
-  return (
-    <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => syncAmountFromBoq(oppId), { success: "Deal value updated from BOQ" })}>
-      <RefreshCw /> Use BOQ total as deal value
-    </Button>
   );
 }

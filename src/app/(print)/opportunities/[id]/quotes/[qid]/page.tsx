@@ -8,7 +8,9 @@ import { PrintButton } from "./print-button";
 
 export const metadata = { title: "Quotation" };
 
-type SnapLine = { lineNo: number; oem: string | null; partNumber: string | null; description: string; quantity: number; unit: string; recurring: boolean; termMonths: number | null; unitPrice: number; extended: number };
+type SnapLine = { lineNo: number; oem: string | null; partNumber: string | null; description: string; quantity: number; unit: string; billingFrequency?: "ONE_TIME" | "MONTHLY" | "QUARTERLY" | "ANNUAL"; recurring?: boolean; termMonths: number | null; hsnSac?: string | null; unitPrice: number; extended: number };
+const PER: Record<string, string> = { MONTHLY: "/mo", QUARTERLY: "/qtr", ANNUAL: "/yr" };
+const freqOf = (l: SnapLine) => l.billingFrequency ?? (l.recurring ? "MONTHLY" : "ONE_TIME");
 
 export default async function QuotePage({ params }: { params: Promise<{ id: string; qid: string }> }) {
   const user = await requireUser();
@@ -61,7 +63,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
       <table className="mt-5 w-full">
         <thead>
           <tr className="border-b border-neutral-300 text-left text-[11px] uppercase tracking-wide text-neutral-500">
-            <th className="py-2 pr-2">#</th><th className="py-2 pr-2">Description</th><th className="py-2 pr-2 text-right">Qty</th>
+            <th className="py-2 pr-2">#</th><th className="py-2 pr-2">Description</th><th className="py-2 pr-2">HSN/SAC</th><th className="py-2 pr-2 text-right">Qty</th>
             <th className="py-2 pr-2 text-right">Unit price</th><th className="py-2 text-right">Amount</th>
           </tr>
         </thead>
@@ -73,11 +75,12 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
                 <p>{l.description}</p>
                 <p className="text-xs text-neutral-500">
                   {[l.oem, l.partNumber].filter(Boolean).join(" · ")}
-                  {l.recurring && ` · billed monthly for ${l.termMonths} months`}
+                  {freqOf(l) !== "ONE_TIME" && ` · billed ${freqOf(l).toLowerCase()} for ${l.termMonths} months`}
                 </p>
               </td>
+              <td className="py-2 pr-2 font-mono text-xs">{l.hsnSac ?? "—"}</td>
               <td className="py-2 pr-2 text-right tabular">{l.quantity.toLocaleString("en-IN")} {l.unit}</td>
-              <td className="py-2 pr-2 text-right tabular">{inr(l.unitPrice, { precise: true })}{l.recurring && <span className="text-xs text-neutral-500">/mo</span>}</td>
+              <td className="py-2 pr-2 text-right tabular">{inr(l.unitPrice, { precise: true })}{PER[freqOf(l)] && <span className="text-xs text-neutral-500">{PER[freqOf(l)]}</span>}</td>
               <td className="py-2 text-right tabular">{inr(l.extended, { precise: true })}</td>
             </tr>
           ))}

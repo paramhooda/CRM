@@ -62,7 +62,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         </div>
       </PageHeader>
       <PageBody>
-        <div className="rounded-lg border border-border bg-surface">
+        <div className="rounded-xl border border-border bg-surface">
           <Table>
             <THead>
               <tr>

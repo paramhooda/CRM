@@ -80,9 +80,15 @@ export function ListToolbar({ views, canCreate }: { views: { id: string; name: s
           <DropdownItem disabled={!qs} onSelect={() => setOpen(true)}><Plus /> Save current filters…</DropdownItem>
         </DropdownContent>
       </Dropdown>
-      <Button asChild>
-        <a href={`/api/export/opportunities?${qs}`}><Download /> Export CSV</a>
-      </Button>
+      <Dropdown>
+        <DropdownTrigger asChild>
+          <Button><Download /> Export</Button>
+        </DropdownTrigger>
+        <DropdownContent className="w-64">
+          <DropdownItem asChild><a href={`/api/export/opportunities?${qs}`}>Deals (one row per opportunity)</a></DropdownItem>
+          <DropdownItem asChild><a href={`/api/export/opportunities?${qs}${qs ? "&" : ""}mode=lines`}>Line items (one row per product, billing-ready)</a></DropdownItem>
+        </DropdownContent>
+      </Dropdown>
       {canCreate && (
         <Button asChild variant="primary">
           <Link href="/opportunities/new"><Plus /> New opportunity</Link>

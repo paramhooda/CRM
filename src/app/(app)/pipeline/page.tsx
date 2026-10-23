@@ -51,7 +51,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           </>
         }
       >
-        <div className="mt-4">
+        <div className="mt-6">
           <Suspense>
             <FilterBar options={options} periods={periodOptions()} dims={["bu", "cat", "sales", "presales", "oem", "fc", "health", "flag", "atype", "rev"]} hideSales={user.role === "SALES"} />
           </Suspense>

@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getReports } from "@/server/queries/reports";
 import { getOptions } from "@/server/queries/options";
@@ -18,7 +17,6 @@ export const metadata = { title: "Reports" };
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const user = await requireUser();
-  if (user.role === "PRESALES" || user.role === "PURCHASE") redirect("/dashboard");
   const sp = await searchParams;
   const [r, options] = await Promise.all([getReports(user, sp), getOptions()]);
   const maxCell = Math.max(1, ...r.matrix.map((m) => m.open));
@@ -32,8 +30,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           <Suspense><FilterBar options={options} periods={periodOptions()} dims={["bu", "cat", "sales", "oem", "atype", "rev"]} hideSales={user.role === "SALES"} /></Suspense>
         </div>
       </PageHeader>
-      <PageBody className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <PageBody className="flex flex-col gap-6">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <StatTile label="Won" value={inr(r.totals.won)} sub={`${r.totals.wonN} deals`} accent="var(--s6)" />
           <StatTile label="Lost / dropped" value={inr(r.totals.lost)} sub={`${r.totals.lostN} deals`} accent="var(--s8)" />
           <StatTile label="Win rate" value={r.totals.winRate === null ? "—" : `${r.totals.winRate}%`} sub="By count" />
@@ -77,7 +75,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader title="Stage velocity" description="Average days deals spend in each stage vs the stale threshold" />
             <CardContent className="flex flex-col gap-2.5">
@@ -107,7 +105,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <Card>
           <CardHeader title="Business unit × category" description="Open pipeline (cell shade), won value and win rate. Darker means more pipeline." />
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
               {buGroups.map((bu) => (
                 <div key={bu}>
                   <p className="mb-1.5 text-xs font-semibold">{bu}</p>
@@ -131,7 +129,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-6 lg:grid-cols-3">
           <Card>
             <CardHeader title="Why we lose" description="Loss reasons by value" />
             <CardContent>

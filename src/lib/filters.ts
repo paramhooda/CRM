@@ -62,11 +62,15 @@ export function activeFilterCount(f: OppFilters): number {
 export function oppWhere(f: OppFilters, opts: { ignore?: (keyof OppFilters)[] } = {}): Prisma.OpportunityWhereInput {
   const ig = new Set(opts.ignore ?? []);
   const and: Prisma.OpportunityWhereInput[] = [];
-  if (f.bu.length && !ig.has("bu")) and.push({ businessUnitId: { in: f.bu } });
-  if (f.cat.length && !ig.has("cat")) and.push({ categoryId: { in: f.cat } });
+  // BU, category and OEM match the deal header or any of its line items (multi-OEM deals)
+  if (f.bu.length && !ig.has("bu"))
+    and.push({ OR: [{ businessUnitId: { in: f.bu } }, { lineItems: { some: { businessUnitId: { in: f.bu } } } }] });
+  if (f.cat.length && !ig.has("cat"))
+    and.push({ OR: [{ categoryId: { in: f.cat } }, { lineItems: { some: { categoryId: { in: f.cat } } } }] });
   if (f.sales.length && !ig.has("sales")) and.push({ salesOwnerId: { in: f.sales } });
   if (f.presales.length && !ig.has("presales")) and.push({ presalesOwnerId: { in: f.presales } });
-  if (f.oem.length && !ig.has("oem")) and.push({ oemId: { in: f.oem } });
+  if (f.oem.length && !ig.has("oem"))
+    and.push({ OR: [{ oemId: { in: f.oem } }, { lineItems: { some: { oemId: { in: f.oem } } } }] });
   if (f.stage.length && !ig.has("stage")) and.push({ stage: { in: f.stage as never } });
   if (f.fc.length && !ig.has("fc")) and.push({ forecastCategory: { in: f.fc as never } });
   if (f.health.length && !ig.has("health")) and.push({ healthLabel: { in: f.health as never } });

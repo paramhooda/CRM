@@ -28,18 +28,18 @@ const COLS: Col[] = [
   { id: "amount", label: "Amount", sort: "amount", align: "right", def: true, render: (o) => <span className="font-medium tabular">{inr(o.amount)}</span> },
   { id: "stage", label: "Stage", sort: "stage", def: true, render: (o) => <StageBadge stage={o.stage} /> },
   { id: "health", label: "Health", sort: "health", def: true, render: (o) => <HealthBadge label={o.healthLabel} score={o.healthScore} /> },
-  { id: "flags", label: "Concerns", def: true, className: "min-w-[180px]", render: (o) => <FlagChips flags={o.flags} max={2} /> },
+  { id: "flags", label: "Concerns", def: false, className: "min-w-[180px]", render: (o) => <FlagChips flags={o.flags} max={2} /> },
   { id: "close", label: "Close date", sort: "close", def: true, render: (o) => (
       <span className={cn("tabular", o.expectedCloseDate < new Date() && !["WON", "LOST", "DROPPED"].includes(o.stage) && "text-[var(--t-red)] font-medium")}>
         {fmtDate(o.expectedCloseDate)}
         {o.closeDateSlipCount > 0 && <span className="ml-1 text-xs text-ink-3">↻{o.closeDateSlipCount}</span>}
       </span>
     ) },
-  { id: "forecast", label: "Forecast", def: true, render: (o) => <ForecastBadge value={o.forecastCategory} /> },
+  { id: "forecast", label: "Forecast", def: false, render: (o) => <ForecastBadge value={o.forecastCategory} /> },
   { id: "owner", label: "Sales person", def: true, render: (o) => <PersonCell name={o.salesOwner.name} /> },
-  { id: "bu", label: "BU / Category", def: true, render: (o) => <span className="text-xs"><span className="block">{o.businessUnit.name}</span><span className="text-ink-3">{o.category.name}</span></span> },
+  { id: "bu", label: "BU / Category", def: false, render: (o) => <span className="text-xs"><span className="block">{o.businessUnit.name}</span><span className="text-ink-3">{o.category.name}</span></span> },
   { id: "oem", label: "OEM", def: false, render: (o) => o.oem?.name ?? "—" },
-  { id: "activity", label: "Last activity", sort: "activity", def: true, render: (o) => <span className="text-xs text-ink-2">{relativeDays(o.lastActivityAt)}</span> },
+  { id: "activity", label: "Last activity", sort: "activity", def: false, render: (o) => <span className="text-xs text-ink-2">{relativeDays(o.lastActivityAt)}</span> },
   { id: "presales", label: "Presales", def: false, render: (o) => <PersonCell name={o.presalesOwner?.name} /> },
   { id: "rev", label: "Revenue model", def: false, render: (o) => REVENUE_MODEL_LABEL[o.revenueModel] },
   { id: "atype", label: "Account type", def: false, render: (o) => ACCOUNT_TYPE_LABEL[o.accountType] },
@@ -49,7 +49,7 @@ const COLS: Col[] = [
   { id: "created", label: "Created", sort: "created", def: false, render: (o) => <span className="text-xs tabular">{fmtDate(o.createdAt)}</span> },
 ];
 
-const STORAGE_KEY = "crm.oppTable.cols";
+const STORAGE_KEY = "crm.oppTable.cols.v2";
 
 export function OppTable({
   rows, total, page, pageSize, sortKey, dir, hideCost,
@@ -84,8 +84,8 @@ export function OppTable({
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <div className="rounded-lg border border-border bg-surface">
-      <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2">
+    <div className="rounded-xl border border-border bg-surface">
+      <div className="flex items-center justify-end gap-2 border-b border-border px-4 py-2.5">
         <Popover>
           <PopoverTrigger asChild>
             <Button size="sm" variant="ghost"><Columns3 /> Columns</Button>
@@ -135,7 +135,7 @@ export function OppTable({
           )}
         </TBody>
       </Table>
-      <div className="flex items-center justify-between border-t border-border px-3 py-2 text-xs text-ink-3">
+      <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-ink-3">
         <span>
           {total === 0 ? 0 : (page - 1) * pageSize + 1}–{Math.min(total, page * pageSize)} of {total}
         </span>

@@ -12,7 +12,7 @@ export function DropdownContent({ className, align = "end", ...props }: M.Dropdo
       <M.Content
         align={align}
         sideOffset={6}
-        className={cn("z-50 min-w-44 rounded-lg border border-border bg-surface p-1 shadow-lg", className)}
+        className={cn("z-50 min-w-44 rounded-xl border border-border bg-surface p-1 shadow-lg", className)}
         {...props}
       />
     </M.Portal>

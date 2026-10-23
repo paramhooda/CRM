@@ -1,0 +1,156 @@
+import "server-only";
+// "My work" read models for Presales and Purchase: what is waiting on me, what I am waiting on, what I did.
+import { db } from "@/lib/db";
+import type { CurrentUser } from "@/lib/auth";
+import { toNumber } from "@/lib/format";
+
+const DAY = 86_400_000;
+const OPEN = ["REQUESTED", "IN_PROGRESS"] as const;
+const PRIORITY_RANK: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2 };
+
+export type QueueItem = {
+  id: string;
+  status: string;
+  priority: string;
+  dueDate: Date;
+  createdAt: Date;
+  note: string | null;
+  requestedBy: string;
+  opp: { id: string; name: string; code: string; account: string; amount: number; salesOwner: string };
+  lines: number;
+  costed?: number;
+  oems?: string[];
+  overdue: boolean;
+  dueThisWeek: boolean;
+  notStarted: boolean;
+};
+
+function classify(dueDate: Date, status: string, now: Date) {
+  return {
+    overdue: dueDate < now,
+    dueThisWeek: dueDate >= now && dueDate.getTime() - now.getTime() <= 7 * DAY,
+    notStarted: status === "REQUESTED",
+  };
+}
+
+function sortQueue(a: QueueItem, b: QueueItem) {
+  if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+  const d = a.dueDate.getTime() - b.dueDate.getTime();
+  if (d) return d;
+  return (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2);
+}
+
+const oppSelect = {
+  id: true, name: true, code: true, amount: true,
+  account: { select: { name: true } }, salesOwner: { select: { name: true } },
+} as const;
+
+async function common(user: CurrentUser) {
+  const [notifications, tasks] = await Promise.all([
+    db.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 6 }),
+    db.activity.findMany({
+      where: { ownerId: user.id, type: "TASK", completedAt: null },
+      orderBy: [{ dueAt: { sort: "asc", nulls: "last" } }],
+      take: 6,
+      include: { opportunity: { select: { id: true, name: true } } },
+    }),
+  ]);
+  return { notifications, tasks };
+}
+
+export async function getPresalesWork(user: CurrentUser) {
+  const now = new Date();
+  const [open, waiting, delivered, base] = await Promise.all([
+    db.presalesRequest.findMany({
+      where: { assignedToId: user.id, status: { in: [...OPEN] } },
+      include: { opportunity: { select: { ...oppSelect, _count: { select: { lineItems: true } } } }, requestedBy: { select: { name: true } } },
+    }),
+    db.pricingRequest.findMany({
+      where: { status: { in: [...OPEN] }, OR: [{ requestedById: user.id }, { presalesRequest: { assignedToId: user.id } }] },
+      orderBy: { dueDate: "asc" },
+      include: { opportunity: { select: oppSelect }, assignedTo: { select: { name: true } } },
+    }),
+    db.presalesRequest.findMany({
+      where: { assignedToId: user.id, status: "BOQ_SUBMITTED", submittedAt: { gte: new Date(now.getTime() - 14 * DAY) } },
+      orderBy: { submittedAt: "desc" },
+      take: 6,
+      include: { opportunity: { select: oppSelect } },
+    }),
+    common(user),
+  ]);
+  const queue: QueueItem[] = open
+    .map((r) => ({
+      id: r.id, status: r.status, priority: r.priority, dueDate: r.dueDate, createdAt: r.createdAt, note: r.scope,
+      requestedBy: r.requestedBy.name, lines: r.opportunity._count.lineItems,
+      opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, amount: toNumber(r.opportunity.amount), salesOwner: r.opportunity.salesOwner.name },
+      ...classify(r.dueDate, r.status, now),
+    }))
+    .sort(sortQueue);
+  return {
+    queue,
+    waiting: waiting.map((w) => ({ id: w.id, opp: { id: w.opportunity.id, name: w.opportunity.name, account: w.opportunity.account.name }, buyer: w.assignedTo.name, dueDate: w.dueDate, overdue: w.dueDate < now })),
+    delivered: delivered.map((d) => ({ id: d.id, opp: { id: d.opportunity.id, name: d.opportunity.name, account: d.opportunity.account.name }, at: d.submittedAt! })),
+    ...base,
+  };
+}
+
+export async function getPurchaseWork(user: CurrentUser) {
+  const now = new Date();
+  const [open, expiring, priced, base] = await Promise.all([
+    db.pricingRequest.findMany({
+      where: { assignedToId: user.id, status: { in: [...OPEN] } },
+      include: {
+        opportunity: { select: { ...oppSelect, lineItems: { select: { unitCost: true, oem: { select: { name: true } } } } } },
+        requestedBy: { select: { name: true } },
+      },
+    }),
+    db.pricingRequest.findMany({
+      where: {
+        assignedToId: user.id,
+        status: "QUOTED",
+        quoteValidTill: { gte: new Date(now.getTime() - 30 * DAY), lte: new Date(now.getTime() + 10 * DAY) },
+        opportunity: { stage: { in: ["BOQ", "PROPOSAL", "NEGOTIATION", "HOLD"] }, deletedAt: null },
+      },
+      orderBy: { quoteValidTill: "asc" },
+      take: 6,
+      include: { opportunity: { select: oppSelect } },
+    }),
+    db.pricingRequest.findMany({
+      where: { assignedToId: user.id, status: "QUOTED", quotedAt: { gte: new Date(now.getTime() - 14 * DAY) } },
+      orderBy: { quotedAt: "desc" },
+      take: 6,
+      include: { opportunity: { select: oppSelect } },
+    }),
+    common(user),
+  ]);
+  const queue: QueueItem[] = open
+    .map((r) => {
+      const lines = r.opportunity.lineItems;
+      return {
+        id: r.id, status: r.status, priority: "NORMAL", dueDate: r.dueDate, createdAt: r.createdAt, note: r.notes,
+        requestedBy: r.requestedBy.name, lines: lines.length, costed: lines.filter((l) => l.unitCost !== null).length,
+        oems: [...new Set(lines.map((l) => l.oem.name))],
+        opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, amount: toNumber(r.opportunity.amount), salesOwner: r.opportunity.salesOwner.name },
+        ...classify(r.dueDate, r.status, now),
+      };
+    })
+    .sort(sortQueue);
+  // Uncosted lines across my queue grouped by OEM, so RFQs to distributors can be batched
+  const byOem = new Map<string, { oem: string; lines: number; deals: Set<string> }>();
+  for (const r of open) {
+    for (const l of r.opportunity.lineItems) {
+      if (l.unitCost !== null) continue;
+      const x = byOem.get(l.oem.name) ?? { oem: l.oem.name, lines: 0, deals: new Set<string>() };
+      x.lines++;
+      x.deals.add(r.opportunity.id);
+      byOem.set(l.oem.name, x);
+    }
+  }
+  return {
+    queue,
+    rfqByOem: [...byOem.values()].map((x) => ({ oem: x.oem, lines: x.lines, deals: x.deals.size })).sort((a, b) => b.lines - a.lines),
+    expiring: expiring.map((e) => ({ id: e.id, opp: { id: e.opportunity.id, name: e.opportunity.name, account: e.opportunity.account.name }, validTill: e.quoteValidTill!, expired: e.quoteValidTill! < now })),
+    priced: priced.map((p) => ({ id: p.id, opp: { id: p.opportunity.id, name: p.opportunity.name, account: p.opportunity.account.name }, at: p.quotedAt! })),
+    ...base,
+  };
+}

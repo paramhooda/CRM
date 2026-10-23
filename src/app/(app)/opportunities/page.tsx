@@ -37,7 +37,7 @@ export default async function OpportunitiesPage({ searchParams }: { searchParams
           </Suspense>
         }
       >
-        <div className="mt-4">
+        <div className="mt-6">
           <Suspense>
             <FilterBar
               options={options}

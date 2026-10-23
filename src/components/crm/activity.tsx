@@ -21,7 +21,7 @@ export function ActivityComposer({
   return (
     <form
       key={key}
-      className="rounded-lg border border-border bg-surface p-3"
+      className="rounded-xl border border-border bg-surface p-3"
       onSubmit={(e) => {
         e.preventDefault();
         const f = Object.fromEntries(new FormData(e.currentTarget).entries());
@@ -89,7 +89,7 @@ export function ActivityTimeline({ items }: { items: ActivityItem[] }) {
   return (
     <div className="flex flex-col gap-4">
       {tasks.length > 0 && (
-        <div className="rounded-lg border border-border bg-surface">
+        <div className="rounded-xl border border-border bg-surface">
           <p className="border-b border-border px-3 py-2 text-xs font-medium text-ink-2">Open tasks</p>
           {tasks.map((t) => {
             const overdue = t.dueAt && t.dueAt < new Date();

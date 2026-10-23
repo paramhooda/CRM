@@ -7,6 +7,7 @@ import { notify } from "@/lib/notify";
 import { boqTotals } from "@/lib/boq";
 import { defaultForecast } from "@/lib/rules/evaluate";
 import { STAGE_META, CLOSED_STAGES, type StageKey } from "@/lib/constants";
+import { billingReadinessIssues, lockForBilling, unlockForBilling, BillingLockedError } from "./billing";
 
 const DAY = 86_400_000;
 
@@ -24,7 +25,7 @@ export async function applyStageChange(
   const o = await tx.opportunity.findUniqueOrThrow({
     where: { id },
     include: {
-      lineItems: { select: { quantity: true, unitCost: true, unitPrice: true, recurring: true, termMonths: true } },
+      lineItems: { select: { quantity: true, unitCost: true, unitPrice: true, billingFrequency: true, termMonths: true } },
       presalesRequests: { select: { id: true } },
       quotes: { orderBy: { version: "desc" }, take: 1 },
     },
@@ -35,6 +36,18 @@ export async function applyStageChange(
   if (to === "WON" && !(extra.poNumber ?? o.poNumber)) throw new UserError("PO number and PO date are required to close as won.");
   if (to === "WON" && !(extra.poDate ?? o.poDate)) throw new UserError("PO date is required to close as won.");
   if ((to === "LOST" || to === "DROPPED") && !(extra.lossReason ?? o.lossReason)) throw new UserError("A loss reason is required.");
+  if (to === "WON") {
+    const issues = await billingReadinessIssues(tx, id);
+    if (issues.length) throw new UserError(`Cannot close as won: ${issues.join(" ")}`);
+  }
+  if (from === "WON") {
+    try {
+      await unlockForBilling(tx, id, { now, userId: user.id });
+    } catch (e) {
+      if (e instanceof BillingLockedError) throw new UserError(e.message);
+      throw e;
+    }
+  }
 
   let warning: string | undefined;
   const totals = boqTotals(o.lineItems);
@@ -72,6 +85,14 @@ export async function applyStageChange(
     data.lossNotes = extra.lossNotes ?? o.lossNotes;
   }
   await tx.opportunity.update({ where: { id }, data });
+  if (to === "WON") {
+    await lockForBilling(tx, id, {
+      poDate: (data.poDate as Date | undefined) ?? null,
+      contractStart: (data.contractStartDate as Date | undefined) ?? o.contractStartDate,
+      now,
+      userId: user.id,
+    });
+  }
 
   const last = await tx.stageHistory.findFirst({ where: { opportunityId: id }, orderBy: { changedAt: "desc" } });
   await tx.stageHistory.create({

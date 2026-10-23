@@ -120,6 +120,26 @@ export const HEALTH_LABEL = {
 } as const;
 export type HealthKey = keyof typeof HEALTH_LABEL;
 
+export const BILLING_FREQUENCY_LABEL = {
+  ONE_TIME: "One-time",
+  MONTHLY: "Monthly",
+  QUARTERLY: "Quarterly",
+  ANNUAL: "Annual",
+} as const;
+export const PRODUCT_TYPE_LABEL = {
+  HARDWARE: "Hardware",
+  SOFTWARE_LICENCE: "Software licence",
+  SUBSCRIPTION: "Subscription",
+  SERVICE: "Service",
+  SUPPORT_AMC: "Support / AMC",
+} as const;
+export const LINE_BILLING_STATUS_LABEL = {
+  NOT_READY: "Not ready",
+  READY: "Ready to bill",
+  SENT: "Sent to finance",
+  INVOICED: "Invoiced",
+} as const;
+
 export const PICKLIST_TYPES = {
   INDUSTRY: "Industry",
   LEAD_SOURCE: "Lead source",

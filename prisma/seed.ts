@@ -5,8 +5,11 @@ import { PrismaClient, Prisma, type Stage, type ForecastCategory } from "@prisma
 import bcrypt from "bcryptjs";
 import {
   ACCOUNTS, ADMIN_NAME, BUSINESS_UNITS, CATEGORY_OEMS, CATEGORY_PROFILE, CONTACT_TEMPLATES, FIRST_NAMES,
-  LAST_NAMES, OEMS, PICKLISTS, PRESALES_PEOPLE, PURCHASE_PEOPLE, SALES_HEAD, SALES_PEOPLE,
+  LAST_NAMES, OEMS, PICKLISTS, PRESALES_PEOPLE, PURCHASE_PEOPLE, SALES_HEAD, SALES_PEOPLE, PRODUCT_TEMPLATES, COMPLEMENTS,
+  OEM_CODE,
 } from "./seed-data";
+import { billingPeriods } from "../src/lib/boq";
+import { lockForBilling } from "../src/server/domain/billing";
 import { STAGE_META, type StageKey } from "../src/lib/constants";
 import { defaultForecast } from "../src/lib/rules/evaluate";
 import { recomputeAll } from "../src/lib/opportunity-service";
@@ -122,6 +125,43 @@ async function main() {
   for (const [type, values] of Object.entries(PICKLISTS)) {
     await db.picklistValue.createMany({ data: values.map((value, i) => ({ type, value, sortOrder: i })) });
   }
+
+  // ── Product catalogue ──
+  const CAT_CODE: Record<string, string> = {
+    "IT Infrastructure|Server": "SRV", "IT Infrastructure|Storage": "STO", "IT Infrastructure|Laptop": "NBK",
+    "IT Infrastructure|Desktop": "DSK", "IT Infrastructure|Workstation": "WKS", "IT Infrastructure|Licence": "VLC",
+    "IT Infrastructure|Networking": "NET", "IT Infrastructure|Others": "OTH", "Cloud|Hosting": "HST",
+    "Cloud|Managed Hosting": "MHS", "Cloud|DRaaS": "DRS", "Cloud|Colo": "COL", "Cloud|Public Cloud": "PUB",
+    "Cloud|Licence": "CLC", "Services|FMS": "FMS", "Services|NOC": "NOC", "Services|AMC": "AMC",
+    "Services|Professional Services": "PSV", "Services|Backup as a Service": "BKP", "Cybersecurity|SOC": "SOC",
+    "Cybersecurity|Licence": "SLC", "Cybersecurity|Compliance": "CMP",
+  };
+  type SeedProduct = { id: string; code: string; oem: string; catKey: string; tpl: (typeof PRODUCT_TEMPLATES)[string][number]; price: number };
+  const productsByCat: Record<string, SeedProduct[]> = {};
+  for (const [catKey, tpls] of Object.entries(PRODUCT_TEMPLATES)) {
+    const [buName, catName] = catKey.split("|") as [string, string];
+    for (const oem of CATEGORY_OEMS[catKey] ?? []) {
+      for (const [i, tpl] of tpls.entries()) {
+        // Progression-only services are not resold for other OEMs' service categories
+        const isService = tpl.type === "SERVICE" || tpl.type === "SUPPORT_AMC";
+        if (isService && oem !== "Progression" && !["Services|AMC", "Cloud|DRaaS", "Cloud|Public Cloud"].includes(catKey) && catKey !== "IT Infrastructure|Server") continue;
+        const factor = 0.9 + ((oem.length * 7 + i * 3) % 25) / 100;
+        const price = Math.round((tpl.price * factor) / 10) * 10;
+        const code = `${OEM_CODE[oem]}-${CAT_CODE[catKey]}-${String(i + 1).padStart(2, "0")}`;
+        const row = await db.product.create({
+          data: {
+            code, name: `${oem} ${tpl.name}`, businessUnitId: bus[buName]!.id, categoryId: bus[buName]!.cats[catName]!,
+            oemId: oems[oem]!, productType: tpl.type, unit: tpl.unit, billingFrequency: tpl.freq, defaultTermMonths: tpl.term ?? null,
+            listPrice: price, standardCost: Math.round(price * tpl.cost), hsnSac: tpl.hsn, gstRatePct: 18,
+            description: `${tpl.name}. ${tpl.freq === "ONE_TIME" ? "One-time" : tpl.freq.toLowerCase() + " billing"}.`,
+            createdById: admin.id,
+          },
+        });
+        (productsByCat[catKey] ??= []).push({ id: row.id, code, oem, catKey, tpl, price });
+      }
+    }
+  }
+  const productCount = Object.values(productsByCat).reduce((a, x) => a + x.length, 0);
 
   // ── Accounts & contacts ──
   const accounts: { id: string; short: string; ownerId: string; contacts: { id: string; role: string }[]; govt: boolean; prospect: boolean; industry: string }[] = [];
@@ -390,26 +430,57 @@ async function main() {
       const priced = isClosed || order >= 4 || (p.stage === "BOQ" && p.scenario === "healthy" && chance(0.5)) || p.stage === "HOLD";
       const pricingOpen = p.stage === "BOQ" && !priced && p.scenario !== "presalesOverdue";
       const presalesOpen = p.scenario === "presalesOverdue" || (p.stage === "BOQ" && !priced && !pricingOpen);
-      for (const [k, tpl] of prof.lines.entries()) {
-        const ext = amount * tpl.w;
-        const recurring = !!tpl.recurring && !!term;
-        const qtyBase = tpl.unit === "Lot" || tpl.unit === "Month" || tpl.unit === "Pool" ? 1 : tpl.unit === "Days" ? int(20, 120) : tpl.unit === "Cores" ? pick([64, 128, 256]) : tpl.unit === "Users" ? pick([250, 500, 1000, 1500]) : tpl.unit === "Resources" ? int(4, 18) : tpl.unit === "Devices" ? pick([150, 300, 600]) : tpl.unit === "VMs" ? pick([40, 80, 120]) : tpl.unit === "TB" ? pick([20, 50, 100]) : tpl.unit === "Racks" ? int(2, 8) : int(4, 60);
-        const mult = qtyBase * (recurring ? term! : 1);
-        const unitPrice = Math.round(ext / mult);
+      // Line plan: products from the deal's own category and OEM, plus complementary products from other
+      // OEMs/BUs for ~45% of deals (e.g. servers + virtualisation licences + implementation services).
+      const own = (productsByCat[catKey] ?? []).filter((x) => x.oem === oemName);
+      const primary = (own.length ? own : productsByCat[catKey] ?? []).slice(0, int(1, 3));
+      const extras: SeedProduct[] = [];
+      if (chance(0.45) && COMPLEMENTS[catKey]) {
+        for (const ck of COMPLEMENTS[catKey]!.slice(0, int(1, 2))) {
+          const choices = productsByCat[ck];
+          if (choices?.length) extras.push(pick(choices));
+        }
+      }
+      const plan = [
+        ...primary.map((pr, i) => ({ pr, w: (0.72 / primary.length) * (i === 0 ? 1.4 : 0.8) })),
+        ...extras.map((pr) => ({ pr, w: 0.28 / extras.length })),
+      ];
+      const wSum = plan.reduce((a, x) => a + x.w, 0);
+      let total = 0;
+      let cost = 0;
+      for (const [k, { pr, w }] of plan.entries()) {
+        const freq = pr.tpl.freq;
+        const lineTerm = freq === "ONE_TIME" ? null : term ?? pr.tpl.term ?? 12;
+        const periods = billingPeriods({ billingFrequency: freq, termMonths: lineTerm });
+        const ext = (amount * w) / wSum;
+        const unit = pr.tpl.unit;
+        let qty = ["Lot", "Month", "Pool", "Year", "Drill"].includes(unit) ? 1 : Math.max(1, Math.round(ext / (pr.price * periods)));
+        if (unit === "Days") qty = Math.min(qty, 220);
+        const unitPrice = Math.max(1, Math.round(ext / (qty * periods)));
         const unitCost = Math.round(unitPrice * (1 - marginTarget * (0.85 + rnd() * 0.3)));
+        total += unitPrice * qty * periods;
+        cost += unitCost * qty * periods;
+        const cat = pr.catKey.split("|") as [string, string];
         await db.opportunityLineItem.create({
           data: {
-            opportunityId: opp.id, lineNo: k + 1, businessUnitId: bus[buName]!.id, categoryId: bus[buName]!.cats[catName]!,
-            oemId: oems[oemName], partNumber: tpl.unit === "Lot" || tpl.unit === "Days" ? null : `${oemName.replace(/\s/g, "").slice(0, 3).toUpperCase()}-${int(10000, 99999)}-${pick(["B21", "AA", "X1", "M2", "S"])}`,
-            description: `${oemName} ${tpl.d}`, quantity: qtyBase, unit: tpl.unit, recurring, termMonths: recurring ? term : null,
+            opportunityId: opp.id, lineNo: k + 1, productId: pr.id, businessUnitId: bus[cat[0]]!.id, categoryId: bus[cat[0]]!.cats[cat[1]]!,
+            oemId: oems[pr.oem]!, partNumber: pr.code, description: `${pr.oem} ${pr.tpl.name}`, quantity: qty, unit,
+            billingFrequency: freq, termMonths: lineTerm, hsnSac: pr.tpl.hsn, gstRatePct: 18,
             unitCost: priced ? unitCost : null, unitPrice: priced ? unitPrice : null,
-            distributor: priced && oemName !== "Progression" ? pick(PICKLISTS.DISTRIBUTOR!) : null,
-            oemQuoteRef: priced && oemName !== "Progression" ? `Q-${int(100000, 999999)}` : null,
+            distributor: priced && pr.oem !== "Progression" ? pick(PICKLISTS.DISTRIBUTOR!) : null,
+            oemQuoteRef: priced && pr.oem !== "Progression" ? `Q-${int(100000, 999999)}` : null,
             leadTimeDays: priced ? pick([7, 14, 21, 30, 45]) : null, pricingStatus: priced ? "QUOTED" : "PENDING",
             createdById: presalesUser?.id ?? owner.id, createdAt: new Date(createdAt.getTime() + 10 * DAY),
           },
         });
         lineCount++;
+      }
+      if (priced && total > 0) {
+        amount = total;
+        await db.opportunity.update({
+          where: { id: opp.id },
+          data: { amount: total, expectedMarginPct: Math.round(((total - cost) / total) * 10000) / 100, arrAmount: arr && term ? Math.round(total / (term / 12)) : null },
+        });
       }
       if (presalesUser) {
         // Open requests get recent, internally consistent dates; completed ones sit early in the deal's life.
@@ -477,6 +548,11 @@ async function main() {
       }
     }
     void lineCount;
+    if (p.stage === "WON" && lineCount > 0) {
+      await lockForBilling(db as unknown as Parameters<typeof lockForBilling>[0], opp.id, {
+        poDate: closedAt, contractStart: arr ? closedAt : null, now: closedAt!, userId: owner.id,
+      });
+    }
 
     // Activities
     const nActs = isClosed ? int(4, 9) : p.scenario === "fresh" ? int(1, 2) : int(3, 10);
@@ -581,18 +657,31 @@ async function main() {
 
   const n = await recomputeAll(db as unknown as Parameters<typeof recomputeAll>[0], NOW);
 
-  // Health snapshot on last week's review so "newly dying / newly hot" has history to compare against.
-  const live = await db.opportunity.findMany({ where: { closedAt: null }, select: { id: true, healthLabel: true, amount: true, stage: true } });
+  // Snapshot on last week's review, reconstructed from history: deals as they stood at review time, so
+  // "changes since review" can compare pipeline value and health.
+  const all = await db.opportunity.findMany({
+    where: { createdAt: { lt: reviewAt } },
+    select: { id: true, healthLabel: true, amount: true, stage: true, closedAt: true },
+  });
+  const later = await db.auditLog.findMany({
+    where: { entityType: "Opportunity", changedAt: { gt: reviewAt }, field: { in: ["amount", "stage"] } },
+    orderBy: { changedAt: "asc" },
+  });
+  const firstOld = new Map<string, string>();
+  for (const l of later) if (!firstOld.has(`${l.entityId}:${l.field}`) && l.oldValue) firstOld.set(`${l.entityId}:${l.field}`, l.oldValue);
   const snapshot: Record<string, { h: string; a: number; s: string }> = {};
   let demoted = 0, promoted = 0;
-  for (const o of live) {
-    let h: string = o.healthLabel;
+  for (const o of all) {
+    const stageThen = firstOld.get(`${o.id}:stage`) ?? o.stage;
+    if (["WON", "LOST", "DROPPED"].includes(stageThen)) continue;
+    let h: string = o.healthLabel === "CLOSED" ? "HEALTHY" : o.healthLabel;
     if (o.healthLabel === "DYING" && demoted < 3) { h = "AT_RISK"; demoted++; }
     else if (o.healthLabel === "HOT" && promoted < 3) { h = "HEALTHY"; promoted++; }
-    snapshot[o.id] = { h, a: Number(o.amount), s: o.stage };
+    snapshot[o.id] = { h, a: Number(firstOld.get(`${o.id}:amount`) ?? o.amount), s: stageThen };
   }
   await db.pipelineReview.updateMany({ where: { reviewedAt: reviewAt }, data: { snapshot } });
   const counts = await db.opportunity.groupBy({ by: ["healthLabel"], _count: true });
+  console.log(`Catalogue: ${productCount} products.`);
   console.log(`Seeded ${ACCOUNTS.length} accounts, ${n} opportunities. Health:`, counts.map((c) => `${c.healthLabel}=${c._count}`).join(" "));
   console.log(`Demo password for all users: ${DEMO_PASSWORD}`);
 }

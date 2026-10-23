@@ -10,22 +10,78 @@ import { notify } from "@/lib/notify";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { CLOSED_STAGES } from "@/lib/constants";
 import { applyStageChange, UserError } from "@/server/domain/stage";
+import { lineInputSchema, resolveSpec, rollUpDeal } from "@/server/domain/lines";
+import { z } from "zod";
+import { toNumber } from "@/lib/format";
+
+const draftLineSchema = z.object({
+  productId: z.string().min(1),
+  quantity: z.coerce.number().positive().max(1e7),
+  unitPrice: z.coerce.number().min(0).nullish(),
+  billingFrequency: z.enum(["ONE_TIME", "MONTHLY", "QUARTERLY", "ANNUAL"]),
+  termMonths: z.coerce.number().int().min(1).max(120).nullish(),
+});
+
+function parseDraftLines(form: FormData) {
+  const raw = form.get("lines");
+  if (!raw) return { ok: true as const, lines: [] };
+  try {
+    const parsed = z
+      .array(draftLineSchema)
+      .max(100)
+      .safeParse(JSON.parse(String(raw)));
+    return parsed.success ? { ok: true as const, lines: parsed.data } : { ok: false as const };
+  } catch {
+    return { ok: false as const };
+  }
+}
 import {
-  opportunitySchema, stageChangeSchema, zodErrors, formToObject, type ActionResult, type OpportunityInput,
+  opportunitySchema,
+  stageChangeSchema,
+  zodErrors,
+  formToObject,
+  type ActionResult,
+  type OpportunityInput,
 } from "@/lib/validation";
 
 const DAY = 86_400_000;
 const AUDITED = [
-  "name", "accountId", "primaryContactId", "businessUnitId", "categoryId", "oemId", "accountType", "revenueModel", "dealType",
-  "procurementMode", "amount", "arrAmount", "contractTermMonths", "expectedMarginPct", "probability", "forecastCategory",
-  "expectedCloseDate", "salesOwnerId", "presalesOwnerId", "leadSource", "competitors", "nextStep", "nextStepDate",
-  "submissionDueDate", "dealRegStatus", "dealRegNumber", "dealRegExpiry", "lossReason", "poNumber", "poDate",
+  "name",
+  "accountId",
+  "primaryContactId",
+  "businessUnitId",
+  "categoryId",
+  "oemId",
+  "accountType",
+  "revenueModel",
+  "dealType",
+  "procurementMode",
+  "amount",
+  "arrAmount",
+  "contractTermMonths",
+  "expectedMarginPct",
+  "probability",
+  "forecastCategory",
+  "expectedCloseDate",
+  "salesOwnerId",
+  "presalesOwnerId",
+  "leadSource",
+  "competitors",
+  "nextStep",
+  "nextStepDate",
+  "submissionDueDate",
+  "dealRegStatus",
+  "dealRegNumber",
+  "dealRegExpiry",
+  "lossReason",
+  "poNumber",
+  "poDate",
 ];
 
 function toData(v: OpportunityInput) {
   const arrAmount =
     v.revenueModel === "ARR"
-      ? v.arrAmount ?? (v.contractTermMonths ? Math.round(v.amount / (v.contractTermMonths / 12)) : null)
+      ? (v.arrAmount ?? (v.contractTermMonths ? Math.round(v.amount / (v.contractTermMonths / 12)) : null))
       : null;
   return {
     name: v.name,
@@ -40,7 +96,8 @@ function toData(v: OpportunityInput) {
     procurementMode: v.procurementMode,
     amount: new Prisma.Decimal(v.amount),
     arrAmount: arrAmount === null ? null : new Prisma.Decimal(arrAmount),
-    contractTermMonths: v.revenueModel === "ARR" ? v.contractTermMonths ?? null : v.contractTermMonths ?? null,
+    contractTermMonths:
+      v.revenueModel === "ARR" ? (v.contractTermMonths ?? null) : (v.contractTermMonths ?? null),
     contractStartDate: v.contractStartDate ?? null,
     expectedMarginPct: v.expectedMarginPct === undefined ? null : new Prisma.Decimal(v.expectedMarginPct),
     probability: v.probability,
@@ -72,42 +129,103 @@ async function loadEditable(user: CurrentUser, id: string) {
 
 export async function createOpportunity(form: FormData): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
-  if (!can.createOpportunity(user)) return { ok: false, error: "You do not have permission to create opportunities." };
+  if (!can.createOpportunity(user))
+    return { ok: false, error: "You do not have permission to create opportunities." };
   const parsed = opportunitySchema.safeParse(formToObject(form));
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
   if (user.role === "SALES" && v.salesOwnerId !== user.id) v.salesOwnerId = user.id;
-  if (CLOSED_STAGES.includes(v.stage)) return { ok: false, error: "Create the deal in an open stage, then close it." };
+  if (CLOSED_STAGES.includes(v.stage))
+    return { ok: false, error: "Create the deal in an open stage, then close it." };
+  const drafts = parseDraftLines(form);
+  if (!drafts.ok)
+    return { ok: false, error: "One of the line items is invalid. Check products and quantities." };
 
-  const id = await db.$transaction(async (tx) => {
-    const now = new Date();
-    const code = await nextCode(tx, "OPP", now);
-    const opp = await tx.opportunity.create({
-      data: {
-        ...toData(v),
-        code,
-        stage: v.stage,
-        originalCloseDate: v.expectedCloseDate,
-        stageEnteredAt: now,
-        lastActivityAt: now,
-        createdById: user.id,
-        updatedById: user.id,
-      },
+  let id: string;
+  try {
+    id = await db.$transaction(async (tx) => {
+      const now = new Date();
+      const code = await nextCode(tx, "OPP", now);
+      const opp = await tx.opportunity.create({
+        data: {
+          ...toData(v),
+          code,
+          stage: v.stage,
+          originalCloseDate: v.expectedCloseDate,
+          stageEnteredAt: now,
+          lastActivityAt: now,
+          createdById: user.id,
+          updatedById: user.id,
+        },
+      });
+      if (v.primaryContactId) {
+        const c = await tx.contact.findUnique({ where: { id: v.primaryContactId }, select: { role: true } });
+        await tx.opportunityContact.create({
+          data: { opportunityId: opp.id, contactId: v.primaryContactId, role: c?.role ?? "INFLUENCER" },
+        });
+      }
+      for (const [i, d] of drafts.lines.entries()) {
+        const product = await tx.product.findUnique({ where: { id: d.productId } });
+        if (!product || !product.active)
+          throw new UserError("A selected product is no longer in the catalogue.");
+        const line = lineInputSchema.parse({
+          productId: product.id,
+          description: product.name,
+          quantity: d.quantity,
+          unit: product.unit,
+          billingFrequency: d.billingFrequency,
+          termMonths: d.termMonths ?? v.contractTermMonths ?? product.defaultTermMonths,
+          unitPrice: d.unitPrice,
+        });
+        const spec = await resolveSpec(tx, line, v.contractTermMonths ?? null);
+        await tx.opportunityLineItem.create({
+          data: {
+            opportunityId: opp.id,
+            lineNo: i + 1,
+            ...spec,
+            unitPrice:
+              d.unitPrice === null || d.unitPrice === undefined ? null : new Prisma.Decimal(d.unitPrice),
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        });
+      }
+      if (drafts.lines.length) await rollUpDeal(tx, opp.id, user.id);
+      const created = await tx.opportunity.findUniqueOrThrow({
+        where: { id: opp.id },
+        select: { amount: true },
+      });
+      await tx.stageHistory.create({
+        data: {
+          opportunityId: opp.id,
+          toStage: v.stage,
+          amount: created.amount,
+          changedById: user.id,
+          changedAt: now,
+        },
+      });
+      await recordEvent(tx, {
+        entityType: "Opportunity",
+        entityId: opp.id,
+        action: "CREATE",
+        userId: user.id,
+        newValue: opp.name,
+      });
+      if (v.salesOwnerId !== user.id) {
+        await notify(tx, [v.salesOwnerId], {
+          type: "ASSIGNMENT",
+          title: `New opportunity assigned: ${opp.name}`,
+          body: `Assigned by ${user.name}`,
+          link: `/opportunities/${opp.id}`,
+        });
+      }
+      await recomputeOpportunity(tx, opp.id, now);
+      return opp.id;
     });
-    if (v.primaryContactId) {
-      const c = await tx.contact.findUnique({ where: { id: v.primaryContactId }, select: { role: true } });
-      await tx.opportunityContact.create({ data: { opportunityId: opp.id, contactId: v.primaryContactId, role: c?.role ?? "INFLUENCER" } });
-    }
-    await tx.stageHistory.create({
-      data: { opportunityId: opp.id, toStage: v.stage, amount: opp.amount, changedById: user.id, changedAt: now },
-    });
-    await recordEvent(tx, { entityType: "Opportunity", entityId: opp.id, action: "CREATE", userId: user.id, newValue: opp.name });
-    if (v.salesOwnerId !== user.id) {
-      await notify(tx, [v.salesOwnerId], { type: "ASSIGNMENT", title: `New opportunity assigned: ${opp.name}`, body: `Assigned by ${user.name}`, link: `/opportunities/${opp.id}` });
-    }
-    await recomputeOpportunity(tx, opp.id, now);
-    return opp.id;
-  });
+  } catch (e) {
+    if (e instanceof UserError) return { ok: false, error: e.message };
+    throw e;
+  }
   revalidatePath("/opportunities");
   revalidatePath("/dashboard");
   return { ok: true, data: { id } };
@@ -117,11 +235,20 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
   const user = await requireUser();
   const before = await loadEditable(user, id).catch(() => null);
   if (!before) return { ok: false, error: "Opportunity not found." };
-  if (!can.editOpportunity(user, before)) return { ok: false, error: "You do not have permission to edit this opportunity." };
+  if (!can.editOpportunity(user, before))
+    return { ok: false, error: "You do not have permission to edit this opportunity." };
   const parsed = opportunitySchema.safeParse(formToObject(form));
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
   if (!can.reassignOpportunity(user)) v.salesOwnerId = before.salesOwnerId;
+  const lineCount = await db.opportunityLineItem.count({ where: { opportunityId: id } });
+  if (lineCount > 0) {
+    // Value and primary classification roll up from the line items
+    v.amount = toNumber(before.amount);
+    v.businessUnitId = before.businessUnitId;
+    v.categoryId = before.categoryId;
+    v.oemId = before.oemId ?? undefined;
+  }
 
   let warning: string | undefined;
   await db.$transaction(async (tx) => {
@@ -135,20 +262,43 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
       data: { ...data, closeDateSlipCount: slip, updatedById: user.id },
     });
     await recordChanges(tx, {
-      entityType: "Opportunity", entityId: id, before, after: { ...before, ...data }, fields: AUDITED, userId: user.id, at: now,
+      entityType: "Opportunity",
+      entityId: id,
+      before,
+      after: { ...before, ...data },
+      fields: AUDITED,
+      userId: user.id,
+      at: now,
     });
     if (v.primaryContactId) {
-      const exists = await tx.opportunityContact.findUnique({ where: { opportunityId_contactId: { opportunityId: id, contactId: v.primaryContactId } } });
+      const exists = await tx.opportunityContact.findUnique({
+        where: { opportunityId_contactId: { opportunityId: id, contactId: v.primaryContactId } },
+      });
       if (!exists) {
         const c = await tx.contact.findUnique({ where: { id: v.primaryContactId }, select: { role: true } });
-        await tx.opportunityContact.create({ data: { opportunityId: id, contactId: v.primaryContactId, role: c?.role ?? "INFLUENCER" } });
+        await tx.opportunityContact.create({
+          data: { opportunityId: id, contactId: v.primaryContactId, role: c?.role ?? "INFLUENCER" },
+        });
       }
     }
     if (v.salesOwnerId !== before.salesOwnerId) {
-      await notify(tx, [v.salesOwnerId], { type: "ASSIGNMENT", title: `Opportunity reassigned to you: ${v.name}`, body: `By ${user.name}`, link: `/opportunities/${id}`, exclude: user.id });
+      await notify(tx, [v.salesOwnerId], {
+        type: "ASSIGNMENT",
+        title: `Opportunity reassigned to you: ${v.name}`,
+        body: `By ${user.name}`,
+        link: `/opportunities/${id}`,
+        exclude: user.id,
+      });
     }
     if (v.stage !== before.stage) {
-      const r = await applyStageChange(tx, user, id, v.stage, { lossReason: v.lossReason, lossNotes: v.lossNotes, poNumber: v.poNumber, poDate: v.poDate }, { keepProbability: true, keepForecast: true });
+      const r = await applyStageChange(
+        tx,
+        user,
+        id,
+        v.stage,
+        { lossReason: v.lossReason, lossNotes: v.lossNotes, poNumber: v.poNumber, poDate: v.poDate },
+        { keepProbability: true, keepForecast: true },
+      );
       warning = r.warning;
     }
     await recomputeOpportunity(tx, id, now);
@@ -158,13 +308,12 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
   return { ok: true, warning };
 }
 
-
-
 export async function changeStage(id: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const opp = await loadEditable(user, id).catch(() => null);
   if (!opp) return { ok: false, error: "Opportunity not found." };
-  if (!can.editOpportunity(user, opp)) return { ok: false, error: "Only the deal owner or a manager can change the stage." };
+  if (!can.editOpportunity(user, opp))
+    return { ok: false, error: "Only the deal owner or a manager can change the stage." };
   const parsed = stageChangeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   try {
@@ -194,7 +343,10 @@ export async function deleteOpportunity(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-export async function setOpportunityContacts(id: string, contacts: { contactId: string; role: string }[]): Promise<ActionResult> {
+export async function setOpportunityContacts(
+  id: string,
+  contacts: { contactId: string; role: string }[],
+): Promise<ActionResult> {
   const user = await requireUser();
   const opp = await loadEditable(user, id).catch(() => null);
   if (!opp || !can.editOpportunity(user, opp)) return { ok: false, error: "Not allowed." };
@@ -205,7 +357,13 @@ export async function setOpportunityContacts(id: string, contacts: { contactId: 
         data: contacts.map((c) => ({ opportunityId: id, contactId: c.contactId, role: c.role as never })),
       });
     }
-    await recordEvent(tx, { entityType: "Opportunity", entityId: id, action: "CONTACTS", userId: user.id, newValue: String(contacts.length) });
+    await recordEvent(tx, {
+      entityType: "Opportunity",
+      entityId: id,
+      action: "CONTACTS",
+      userId: user.id,
+      newValue: String(contacts.length),
+    });
     await recomputeOpportunity(tx, id);
   });
   revalidatePath(`/opportunities/${id}`);

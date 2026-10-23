@@ -9,6 +9,8 @@ import { toNumber } from "@/lib/format";
 import { FLAG_META, SEVERITY_RANK, type FlagCode } from "@/lib/rules/flags";
 import { ensureRulesFresh } from "@/lib/opportunity-service";
 import { reviewChanges } from "./reviews";
+import { attribute, rollup, type AttrSlice } from "@/lib/attribution";
+import { buildInsights } from "./insights";
 
 const DAY = 86_400_000;
 
@@ -22,6 +24,16 @@ const oppSelect = {
   oem: { select: { name: true } },
   salesOwner: { select: { id: true, name: true } },
   account: { select: { id: true, name: true } },
+  presalesOwnerId: true,
+  closeDateSlipCount: true,
+  accountType: true,
+  lineItems: {
+    select: {
+      quantity: true, unitPrice: true, billingFrequency: true, termMonths: true,
+      product: { select: { name: true, listPrice: true } },
+      businessUnit: { select: { name: true } }, category: { select: { name: true } }, oem: { select: { name: true } },
+    },
+  },
 } as const;
 
 export async function getDashboard(user: CurrentUser, sp: SearchParams) {
@@ -29,11 +41,18 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
   const now = new Date();
   const f = parseOppFilters(sp);
   const scope = { AND: [opportunityScope(user), oppWhere(f, { ignore: ["period"] })] };
-  const opps = (await db.opportunity.findMany({ where: scope, select: oppSelect })).map((o) => ({
-    ...o,
-    amount: toNumber(o.amount),
-    arrAmount: o.arrAmount === null ? null : toNumber(o.arrAmount),
-  }));
+  const opps = (await db.opportunity.findMany({ where: scope, select: oppSelect })).map((o) => {
+    const amount = toNumber(o.amount);
+    // Line-level attribution: multi-OEM / multi-BU deals are split by line value
+    const slices = attribute(
+      { amount, businessUnit: o.businessUnit.name, category: o.category.name, oem: o.oem?.name ?? null },
+      o.lineItems.map((l) => ({
+        quantity: l.quantity, unitPrice: l.unitPrice, listPrice: l.product?.listPrice ?? null, billingFrequency: l.billingFrequency,
+        termMonths: l.termMonths, businessUnit: l.businessUnit.name, category: l.category.name, oem: l.oem.name, product: l.product?.name ?? null,
+      })),
+    );
+    return { ...o, amount, arrAmount: o.arrAmount === null ? null : toNumber(o.arrAmount), slices, lineItems: undefined };
+  });
   type O = (typeof opps)[number];
 
   const cur = fiscalPeriod(now);
@@ -92,18 +111,18 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
     return { stage: STAGE_META[s].label, key: s, count: xs.length, amount: sum(xs) };
   });
 
-  const buNames = [...new Set(opps.map((o) => o.businessUnit.name))];
+  const buNames = [...new Set(opps.flatMap((o) => o.slices.map((sl) => sl.businessUnit)))];
   const BU_ORDER = ["IT Infrastructure", "Cloud", "Services", "Cybersecurity"];
   buNames.sort((a, b) => BU_ORDER.indexOf(a) - BU_ORDER.indexOf(b));
   const byBu = buNames.map((bu) => {
-    const xs = open.filter((o) => o.businessUnit.name === bu);
+    const part = (xs: O[]) => xs.reduce((a, o) => a + o.slices.filter((sl) => sl.businessUnit === bu).reduce((b, sl) => b + sl.amount, 0), 0);
     return {
       bu,
-      Commit: sum(xs.filter((o) => o.forecastCategory === "COMMIT")),
-      Upside: sum(xs.filter((o) => o.forecastCategory === "UPSIDE")),
-      Pipeline: sum(xs.filter((o) => o.forecastCategory === "PIPELINE")),
-      total: sum(xs),
-      won: sum(wonInRange.filter((o) => o.businessUnit.name === bu)),
+      Commit: part(open.filter((o) => o.forecastCategory === "COMMIT")),
+      Upside: part(open.filter((o) => o.forecastCategory === "UPSIDE")),
+      Pipeline: part(open.filter((o) => o.forecastCategory === "PIPELINE")),
+      total: part(open),
+      won: part(wonInRange),
     };
   });
 
@@ -149,11 +168,9 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
     return { bucket: b.label, count: xs.length, amount: sum(xs) };
   });
 
-  const oemMap = new Map<string, number>();
-  for (const o of open) oemMap.set(o.oem?.name ?? "Unassigned", (oemMap.get(o.oem?.name ?? "Unassigned") ?? 0) + o.amount);
-  const oemSorted = [...oemMap.entries()].sort((a, b) => b[1] - a[1]);
-  const oemMix = oemSorted.slice(0, 7).map(([name, amount]) => ({ name, amount }));
-  if (oemSorted.length > 7) oemMix.push({ name: "Other", amount: oemSorted.slice(7).reduce((a, [, v]) => a + v, 0) });
+  const oemSorted = rollup(open.flatMap((o) => o.slices), "oem");
+  const oemMix = oemSorted.slice(0, 7).map((r) => ({ name: r.key, amount: r.amount }));
+  if (oemSorted.length > 7) oemMix.push({ name: "Other", amount: oemSorted.slice(7).reduce((a, r) => a + r.amount, 0) });
 
   const winByBu = buNames.map((bu) => {
     const w = won12.filter((o) => o.businessUnit.name === bu).length;
@@ -227,7 +244,72 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
     pricingOverdue: pricingOpen.filter((r) => r.dueDate < now).length,
   };
 
+  // ── Overview extras: sparklines, deltas, forecast, calendar, flow, bookings mix ──
+  const monthly = months.map((m) => ({
+    label: m.label,
+    created: sum(opps.filter((o) => inRange(o.createdAt, m))),
+    won: sum(won.filter((o) => inRange(o.closedAt, m))),
+  }));
+  const prevQ = cur.quarter === 1 ? { fiscalYear: cur.fiscalYear - 1, quarter: 4 } : { fiscalYear: cur.fiscalYear, quarter: cur.quarter - 1 };
+  const prevRange = quarterRange(prevQ.fiscalYear, prevQ.quarter);
+  const elapsed = now.getTime() - q.start.getTime();
+  const wonPrevSamePoint = sum(won.filter((o) => inRange(o.closedAt, { start: prevRange.start, end: new Date(prevRange.start.getTime() + elapsed) })));
+  const prior12 = { start: new Date(now.getTime() - 730 * DAY), end: new Date(now.getTime() - 365 * DAY) };
+  const wP = won.filter((o) => inRange(o.closedAt, prior12)).length;
+  const lP = lost.filter((o) => inRange(o.closedAt, prior12)).length;
+  const winRatePrior = wP + lP ? (wP / (wP + lP)) * 100 : null;
+
+  const nextQ = cur.quarter === 4 ? { fiscalYear: cur.fiscalYear + 1, quarter: 1 } : { fiscalYear: cur.fiscalYear, quarter: cur.quarter + 1 };
+  const nq = quarterRange(nextQ.fiscalYear, nextQ.quarter);
+  const forecastRows = [
+    { label: periodLabel(cur), range: q, target: qTarget, fy: cur.fiscalYear, qtr: cur.quarter },
+    { label: `Q${nextQ.quarter} ${fyLabel(nextQ.fiscalYear)}`, range: nq, target: targetsApplicable ? targetFor(nextQ.fiscalYear, nextQ.quarter) : 0, fy: nextQ.fiscalYear, qtr: nextQ.quarter },
+  ].map((r) => ({
+    label: r.label,
+    target: r.target,
+    won: sum(won.filter((o) => inRange(o.closedAt, r.range))),
+    commit: sum(openAll.filter((o) => o.forecastCategory === "COMMIT" && closeIn(o, r.range))),
+    upside: sum(openAll.filter((o) => o.forecastCategory === "UPSIDE" && closeIn(o, r.range))),
+    pipeline: sum(openAll.filter((o) => o.forecastCategory === "PIPELINE" && closeIn(o, r.range))),
+  }));
+
+  const weekStart = new Date(now.getTime() - ((now.getUTCDay() + 6) % 7) * DAY);
+  weekStart.setUTCHours(0, 0, 0, 0);
+  const closingCalendar = Array.from({ length: 8 }, (_, i) => {
+    const r = { start: new Date(weekStart.getTime() + i * 7 * DAY), end: new Date(weekStart.getTime() + (i + 1) * 7 * DAY) };
+    const xs = openAll.filter((o) => closeIn(o, r));
+    return { week: i === 0 ? "This wk" : r.start.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }), amount: sum(xs), count: xs.length, commit: sum(xs.filter((o) => o.forecastCategory === "COMMIT")) };
+  });
+  const overdueOpen = sum(openAll.filter((o) => o.expectedCloseDate < now));
+
+  const wonSlices: AttrSlice[] = wonInRange.flatMap((o) => o.slices);
+  const bookingsMix = {
+    bu: rollup(wonSlices, "businessUnit"),
+    oem: rollup(wonSlices, "oem").slice(0, 8),
+    product: rollup(wonSlices.filter((sl) => sl.product), "product").slice(0, 10),
+    category: rollup(wonSlices, "category").slice(0, 8),
+  };
+
+  const insights = buildInsights({
+    now, open: openAll, won12, lost12, won, opps,
+    pipelineByBu: rollup(openAll.flatMap((o) => o.slices), "businessUnit"),
+    bookingsByBu: rollup(won12.flatMap((o) => o.slices), "businessUnit"),
+    renewals,
+  });
+
   return {
+    monthly,
+    deltas: {
+      pipelineSinceReview: changes.pipelineAtReview === null ? null : sum(openAll) - changes.pipelineAtReview,
+      wonVsPrevQuarter: sum(wonQtd) - wonPrevSamePoint,
+      wonPrevSamePoint,
+      winRatePrior,
+    },
+    forecastRows,
+    closingCalendar,
+    overdueOpen,
+    bookingsMix,
+    insights,
     filters: f,
     periodLabel: period?.label ?? null,
     quarterLabel: periodLabel(cur),

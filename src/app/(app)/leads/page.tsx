@@ -51,14 +51,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           <Pills param="status" sp={sp} path="/leads" allLabel="Open leads" options={Object.entries(LEAD_STATUS_LABEL).map(([value, label]) => ({ value, label, count: count(value) }))} />
         </div>
       </PageHeader>
-      <PageBody className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <PageBody className="flex flex-col gap-6">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <StatTile label="Open leads" value={count("NEW") + count("CONTACTED") + count("QUALIFIED")} sub={`${inr(openValue)} estimated`} accent="var(--s1)" />
           <StatTile label="Qualified, ready to convert" value={count("QUALIFIED")} accent="var(--s3)" />
           <StatTile label="Converted" value={count("CONVERTED")} sub={total ? `${Math.round((count("CONVERTED") / total) * 100)}% conversion` : undefined} accent="var(--s6)" />
           <StatTile label="Disqualified" value={count("UNQUALIFIED")} />
         </div>
-        <div className="rounded-lg border border-border bg-surface">
+        <div className="rounded-xl border border-border bg-surface">
           <Table>
             <THead><tr><TH>Lead</TH><TH>Company</TH><TH>Interest</TH><TH className="text-right">Est. value</TH><TH>Source</TH><TH>Status</TH><TH>Owner</TH><TH>Age</TH><TH /></tr></THead>
             <TBody>

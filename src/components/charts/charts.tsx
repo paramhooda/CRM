@@ -302,3 +302,172 @@ export function SegmentBar({
     </div>
   );
 }
+
+/** 12-point sparkline: de-emphasised line with a 10% wash, current period marked in the accent. */
+export function Sparkline({ values, color = "var(--s1)", height = 36, label }: { values: number[]; color?: string; height?: number; label?: string }) {
+  const w = 160;
+  const h = height;
+  const max = Math.max(1, ...values);
+  const step = values.length > 1 ? w / (values.length - 1) : w;
+  const pts = values.map((v, i) => [i * step, h - 3 - (v / max) * (h - 8)] as const);
+  const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `${line} L${w},${h} L0,${h} Z`;
+  const last = pts[pts.length - 1];
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="block h-9 w-full" role="img" aria-label={label ?? "Trend"}>
+      <path d={area} fill={color} opacity={0.1} />
+      <path d={line} fill="none" stroke="var(--ink-3)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      {last && <circle cx={last[0]} cy={last[1]} r={3.5} fill={color} stroke="var(--chart-surface)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+    </svg>
+  );
+}
+
+/** Quarter bullet: stacked Won / Commit / Upside against a target marker. */
+export function ForecastBullets({
+  rows,
+}: {
+  rows: { label: string; target: number; won: number; commit: number; upside: number; pipeline: number }[];
+}) {
+  const max = Math.max(1, ...rows.map((r) => Math.max(r.target, r.won + r.commit + r.upside)));
+  const series = [
+    { key: "won", label: "Won", color: "var(--s6)" },
+    { key: "commit", label: "Commit", color: "var(--s1)" },
+    { key: "upside", label: "Upside", color: "var(--s2)" },
+  ] as const;
+  return (
+    <div>
+      <LegendRow items={[...series.map((s) => ({ label: s.label, color: s.color })), { label: "Target", color: "var(--ink)", dash: true }]} />
+      <div className="mt-5 flex flex-col gap-6">
+        {rows.map((r) => {
+          const covered = r.won + r.commit;
+          return (
+            <div key={r.label}>
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <span className="text-[13px] font-medium">{r.label}</span>
+                <span className="text-xs tabular text-ink-3">
+                  {r.target > 0 ? <>won + commit <span className="font-medium text-ink">{inr(covered)}</span> of {inr(r.target)} · {Math.round((covered / r.target) * 100)}%</> : <>won + commit {inr(covered)}</>}
+                </span>
+              </div>
+              <div className="relative h-7">
+                <div className="absolute inset-0 rounded-md bg-surface-2" />
+                <div className="absolute inset-y-0 left-0 flex w-full gap-[2px]">
+                  {series.map((s) => {
+                    const v = r[s.key];
+                    return v > 0 ? (
+                      <Tooltip key={s.key} content={`${s.label}: ${inr(v)}`}>
+                        <div className="h-full shrink-0 first:rounded-l-md last:rounded-r-[4px]" style={{ width: `${(v / max) * 100}%`, background: s.color }} />
+                      </Tooltip>
+                    ) : null;
+                  })}
+                </div>
+                {r.target > 0 && (
+                  <Tooltip content={`Target ${inr(r.target)}`}>
+                    <div className="absolute -top-1.5 -bottom-1.5 w-[3px] -translate-x-1/2 rounded-full bg-ink" style={{ left: `${Math.min(100, (r.target / max) * 100)}%` }} />
+                  </Tooltip>
+                )}
+              </div>
+              {r.pipeline > 0 && <p className="mt-1.5 text-xs text-ink-3">+ {inr(r.pipeline)} early-stage pipeline also expected to close</p>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Horizontal stacked bars per business unit by forecast category (HTML, labels never clipped). */
+export function BuStackBars({ data }: { data: { bu: string; Commit: number; Upside: number; Pipeline: number; total: number }[] }) {
+  const series = [
+    { key: "Commit", color: "var(--s1)" },
+    { key: "Upside", color: "var(--s2)" },
+    { key: "Pipeline", color: "var(--s3)" },
+  ] as const;
+  const max = Math.max(1, ...data.map((d) => d.total));
+  return (
+    <div>
+      <LegendRow items={series.map((s) => ({ label: s.key, color: s.color }))} />
+      <div className="mt-5 flex flex-col gap-4">
+        {data.map((d) => (
+          <div key={d.bu}>
+            <div className="mb-1.5 flex items-baseline justify-between">
+              <span className="text-[13px]">{d.bu}</span>
+              <span className="text-[13px] font-medium tabular">{inr(d.total)}</span>
+            </div>
+            <div className="flex h-2.5 gap-[2px]" style={{ width: `${Math.max(2, (d.total / max) * 100)}%` }}>
+              {series.map((s) =>
+                d[s.key] > 0 ? (
+                  <Tooltip key={s.key} content={`${d.bu} · ${s.key}: ${inr(d[s.key])}`}>
+                    <div className="h-full first:rounded-l-full last:rounded-r-full" style={{ width: `${(d[s.key] / d.total) * 100}%`, background: s.color }} />
+                  </Tooltip>
+                ) : null,
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Two-series grouped columns on one axis, e.g. pipeline created vs won per month. */
+export function FlowChart({ data }: { data: { label: string; created: number; won: number }[] }) {
+  return (
+    <div>
+      <LegendRow items={[{ label: "Pipeline created", color: "var(--s1)" }, { label: "Closed-won", color: "var(--s3)" }]} />
+      <div className="mt-2 h-56">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 4, left: -8, bottom: 0 }} barGap={2} barCategoryGap="28%">
+            <CartesianGrid vertical={false} stroke="var(--grid)" />
+            <XAxis dataKey="label" tick={axisTick} tickLine={false} axisLine={{ stroke: "var(--axis)" }} interval="preserveStartEnd" minTickGap={8} />
+            <YAxis tick={axisTick} tickLine={false} axisLine={false} tickFormatter={inrAxis} width={48} />
+            <RTooltip
+              cursor={{ fill: "var(--surface-hover)" }}
+              content={({ active, payload, label }) =>
+                active && payload?.length ? (
+                  <TooltipBox
+                    title={String(label)}
+                    rows={[
+                      { label: "Pipeline created", value: inr(payload.find((p) => p.dataKey === "created")?.value ?? 0), color: "var(--s1)" },
+                      { label: "Closed-won", value: inr(payload.find((p) => p.dataKey === "won")?.value ?? 0), color: "var(--s3)" },
+                    ]}
+                  />
+                ) : null
+              }
+            />
+            <Bar dataKey="created" fill="var(--s1)" maxBarSize={14} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="won" fill="var(--s3)" maxBarSize={14} radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+/** Weekly closing calendar: expected close value per week, commit highlighted within each column. */
+export function ClosingCalendar({ data }: { data: { week: string; amount: number; count: number; commit: number }[] }) {
+  const rows = data.map((d) => ({ ...d, other: d.amount - d.commit }));
+  return (
+    <div>
+      <LegendRow items={[{ label: "Commit", color: "var(--s1)" }, { label: "Other open", color: "var(--o1)" }]} />
+      <div className="mt-2 h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke="var(--grid)" />
+            <XAxis dataKey="week" tick={axisTick} tickLine={false} axisLine={{ stroke: "var(--axis)" }} interval={0} />
+            <YAxis tick={axisTick} tickLine={false} axisLine={false} tickFormatter={inrAxis} width={48} />
+            <RTooltip
+              cursor={{ fill: "var(--surface-hover)" }}
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null;
+                const r = payload[0]!.payload as (typeof rows)[number];
+                return <TooltipBox title={`Week of ${label}`} rows={[{ label: "Commit", value: inr(r.commit), color: "var(--s1)" }, { label: "Other open", value: inr(r.other), color: "var(--o1)" }, { label: "Deals", value: String(r.count) }]} />;
+              }}
+            />
+            <Bar dataKey="commit" stackId="a" fill="var(--s1)" maxBarSize={24} stroke="var(--chart-surface)" strokeWidth={2} />
+            <Bar dataKey="other" stackId="a" fill="var(--o1)" maxBarSize={24} radius={[4, 4, 0, 0]} stroke="var(--chart-surface)" strokeWidth={2} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}

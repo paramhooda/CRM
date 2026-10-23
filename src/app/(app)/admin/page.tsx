@@ -23,13 +23,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   const tab = TABS.some(([k]) => k === t) ? t! : "users";
   return (
     <>
-      <PageHeader title="Settings" description="Administration for users, master data, targets and governance">
-        <nav className="-mb-4 mt-5 flex gap-1 overflow-x-auto">
-          {TABS.map(([k, l]) => (
-            <Link key={k} href={`/admin?tab=${k}`} className={cn("whitespace-nowrap border-b-2 px-3 pb-2.5 text-[13px]", tab === k ? "border-ink font-medium text-ink" : "border-transparent text-ink-3 hover:text-ink")}>{l}</Link>
-          ))}
-        </nav>
-      </PageHeader>
+      <PageHeader title="Settings" description="Administration for users, master data, targets and governance" tabs={TABS.map(([k, l]) => ({ href: `/admin?tab=${k}`, label: l, active: tab === k }))} />
       <PageBody>
         {tab === "users" && <Users />}
         {tab === "picklists" && <Picklists />}
@@ -107,7 +101,7 @@ async function Targets() {
 
 function Rules() {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader title="Health model" description="Score 0–100 recalculated on every change and every 30 minutes" action={<RecomputeButton />} />
         <CardContent className="flex flex-col gap-2 text-[13px] text-ink-2">

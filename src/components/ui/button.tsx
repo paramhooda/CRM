@@ -4,21 +4,22 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-[13px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0 cursor-pointer",
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg text-[13px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0 cursor-pointer",
   {
     variants: {
       variant: {
-        primary: "bg-primary text-primary-ink hover:bg-primary-hover shadow-sm",
-        secondary: "border border-border bg-surface text-ink hover:bg-surface-hover shadow-[0_1px_0_rgba(0,0,0,0.02)]",
+        primary: "bg-primary text-primary-ink hover:bg-primary-hover",
+        secondary: "border border-border bg-surface text-ink hover:bg-surface-hover hover:border-border-strong",
         ghost: "text-ink-2 hover:bg-surface-hover hover:text-ink",
         danger: "bg-critical text-white hover:opacity-90",
         link: "text-primary hover:underline px-0 h-auto",
       },
       size: {
         sm: "h-7 px-2.5 text-xs",
-        md: "h-8 px-3",
+        md: "h-9 px-3.5",
         lg: "h-10 px-4 text-sm",
-        icon: "h-8 w-8",
+        "icon-md": "h-8 w-8",
+        icon: "h-9 w-9",
         "icon-sm": "h-7 w-7",
       },
     },

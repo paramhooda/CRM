@@ -44,7 +44,7 @@ export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: str
   }
 
   return (
-    <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-thin">
+    <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin">
       {COLUMNS.map((s) => {
         const items = optimistic.filter((c) => c.stage === s).sort((a, b) => b.amount - a.amount);
         const total = items.reduce((a, c) => a + c.amount, 0);
@@ -56,11 +56,11 @@ export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: str
             onDragLeave={() => setOver((o) => (o === s ? null : o))}
             onDrop={(e) => { e.preventDefault(); setOver(null); drop(s, e.dataTransfer.getData("text/plain")); }}
             className={cn(
-              "flex w-[272px] shrink-0 flex-col rounded-lg border bg-surface-2/70 transition-colors",
+              "flex w-[288px] shrink-0 flex-col rounded-xl border bg-surface-2/60 transition-colors",
               over === s ? "border-primary bg-primary-soft" : "border-border",
             )}
           >
-            <div className="border-b border-border px-3 py-2.5">
+            <div className="border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="size-2 rounded-full" style={{ background: `var(--t-${STAGE_META[s].tone})` }} />
                 <p className="text-[13px] font-semibold">{STAGE_META[s].label}</p>
@@ -70,7 +70,7 @@ export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: str
                 {inr(total)} {s !== "HOLD" && <>· weighted {inr(weighted)}</>}
               </p>
             </div>
-            <div className="flex min-h-24 flex-1 flex-col gap-2 p-2">
+            <div className="flex min-h-24 flex-1 flex-col gap-2.5 p-2.5">
               {items.map((c) => {
                 const flags = sortFlags(c.flags);
                 const overdue = new Date(c.expectedCloseDate) < new Date();
@@ -79,7 +79,7 @@ export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: str
                     key={c.id}
                     draggable={editable.has(c.id)}
                     onDragStart={(e) => e.dataTransfer.setData("text/plain", c.id)}
-                    className={cn("group rounded-md border border-border bg-surface p-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.03)] hover:border-border-strong", editable.has(c.id) && "cursor-grab active:cursor-grabbing")}
+                    className={cn("group rounded-lg border border-border bg-surface p-3.5 transition-colors hover:border-border-strong", editable.has(c.id) && "cursor-grab active:cursor-grabbing")}
                   >
                     <Link href={`/opportunities/${c.id}`} className="block text-[13px] font-medium leading-snug hover:text-primary">{c.name}</Link>
                     <p className="mt-0.5 truncate text-xs text-ink-3">{c.account}</p>

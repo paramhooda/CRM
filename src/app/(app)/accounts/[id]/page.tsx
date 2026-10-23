@@ -17,7 +17,6 @@ import { ActivityComposer, ActivityTimeline } from "@/components/crm/activity";
 import { BarList } from "@/components/charts/charts";
 import { inr, fmtDate, toNumber, pct } from "@/lib/format";
 import { ACCOUNT_TYPE_LABEL, SEGMENT_LABEL, ACCOUNT_STATUS_LABEL, CONTACT_ROLE_LABEL, ACTIVE_STAGES, type StageKey } from "@/lib/constants";
-import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Account" };
 const TABS = ["overview", "contacts", "activity"] as const;
@@ -68,6 +67,7 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
     <>
       <PageHeader
         crumbs={[{ href: "/accounts", label: "Accounts" }]}
+        tabs={TABS.map((k) => ({ href: `/accounts/${a.id}${k === "overview" ? "" : `?tab=${k}`}`, label: k[0]!.toUpperCase() + k.slice(1), active: tab === k, count: k === "contacts" ? a.contacts.length : undefined }))}
         title={a.name}
         description={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -101,26 +101,18 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
           </>
         }
       >
-        <nav className="-mb-4 mt-5 flex gap-1">
-          {TABS.map((k) => (
-            <Link key={k} href={`/accounts/${a.id}${k === "overview" ? "" : `?tab=${k}`}`} className={cn("border-b-2 px-3 pb-2.5 text-[13px] capitalize", tab === k ? "border-ink font-medium text-ink" : "border-transparent text-ink-3 hover:text-ink")}>
-              {k}
-              {k === "contacts" && <span className="ml-1.5 rounded-full bg-surface-2 px-1.5 text-[11px]">{a.contacts.length}</span>}
-            </Link>
-          ))}
-        </nav>
       </PageHeader>
-      <PageBody className="flex flex-col gap-4">
+      <PageBody className="flex flex-col gap-6">
         {tab === "overview" && (
           <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
               <StatTile label="Open pipeline" value={inr(sum(open))} sub={`${open.length} active deals`} accent="var(--s1)" />
               <StatTile label="Lifetime won" value={inr(sum(won))} sub={`${won.length} deals`} accent="var(--s6)" />
               <StatTile label="Running ARR" value={inr(arrRunning)} sub="Active managed service contracts" accent="var(--s3)" />
               <StatTile label="Win rate" value={winRate === null ? "—" : pct(winRate)} sub={`${won.length} won · ${lost.length} lost`} />
               <StatTile label="Account owner" value={<span className="text-[15px]"><PersonCell name={a.owner.name} /></span>} sub={ACCOUNT_STATUS_LABEL[a.status]} />
             </div>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-6 lg:grid-cols-3">
               <Card className="lg:col-span-2">
                 <CardHeader title="Opportunities" description="Open deals first, then closed history" />
                 <CardContent className="px-0 pb-0">
@@ -196,7 +188,7 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
           </Card>
         )}
         {tab === "activity" && (
-          <div className="grid gap-4 lg:grid-cols-5">
+          <div className="grid gap-6 lg:grid-cols-5">
             <div className="lg:col-span-2"><ActivityComposer accountId={a.id} contacts={a.contacts} /></div>
             <div className="lg:col-span-3"><ActivityTimeline items={activities} /></div>
           </div>

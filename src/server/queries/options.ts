@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 
 /** Picklist options for filters and forms (cached per request). */
 export const getOptions = cache(async () => {
-  const [bus, oems, users, picklists] = await Promise.all([
+  const [bus, oems, users, picklists, products] = await Promise.all([
     db.businessUnit.findMany({
       where: { active: true },
       orderBy: { sortOrder: "asc" },
@@ -13,6 +13,11 @@ export const getOptions = cache(async () => {
     db.oem.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
     db.user.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true, role: true } }),
     db.picklistValue.findMany({ where: { active: true }, orderBy: [{ type: "asc" }, { sortOrder: "asc" }] }),
+    db.product.findMany({
+      where: { active: true },
+      orderBy: [{ oem: { sortOrder: "asc" } }, { code: "asc" }],
+      include: { oem: { select: { name: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } } },
+    }),
   ]);
   const pl = (type: string) => picklists.filter((p) => p.type === type).map((p) => p.value);
   return {
@@ -27,7 +32,16 @@ export const getOptions = cache(async () => {
     lossReasons: pl("LOSS_REASON"),
     competitors: pl("COMPETITOR"),
     distributors: pl("DISTRIBUTOR"),
+    products: products.map((p) => ({
+      id: p.id, code: p.code, name: p.name, oemId: p.oemId, oemName: p.oem.name, businessUnitId: p.businessUnitId,
+      buName: p.businessUnit.name, categoryId: p.categoryId, categoryName: p.category.name, productType: p.productType,
+      unit: p.unit, billingFrequency: p.billingFrequency, defaultTermMonths: p.defaultTermMonths,
+      listPrice: p.listPrice === null ? null : Number(p.listPrice), standardCost: p.standardCost === null ? null : Number(p.standardCost),
+      hsnSac: p.hsnSac, gstRatePct: Number(p.gstRatePct),
+    })),
   };
 });
 
 export type Options = Awaited<ReturnType<typeof getOptions>>;
+
+export type ProductOption = Options["products"][number];

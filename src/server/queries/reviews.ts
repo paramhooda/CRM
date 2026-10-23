@@ -194,9 +194,16 @@ export async function reviewChanges(user: CurrentUser, sp: SearchParams, opts: {
     newlyHot: { count: s.newlyHot.length, amount: sumAmt(s.newlyHot) },
   };
 
+  // Active pipeline value at review time, for the same scope and filters (null without a snapshot)
+  const ACTIVE = new Set(["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"]);
+  const pipelineAtReview = snapshot
+    ? Object.entries(snapshot).reduce((a, [id, x]) => (byId.has(id) && ACTIVE.has(x.s) ? a + x.a : a), 0)
+    : null;
+
   return {
     since,
     sinceLabel,
+    pipelineAtReview,
     hasSnapshot: !!snapshot,
     reviews: reviews.map((r) => ({ id: r.id, reviewedAt: r.reviewedAt, notes: r.notes })),
     summary,

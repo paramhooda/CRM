@@ -3,12 +3,15 @@ import { boqTotals, lineMultiplier } from "@/lib/boq";
 import { can, opportunityScope } from "@/lib/authz";
 
 describe("BOQ totals", () => {
-  it("multiplies recurring lines by term and computes margin on costed+priced lines", () => {
-    expect(lineMultiplier({ quantity: 10, recurring: true, termMonths: 36 })).toBe(360);
+  it("multiplies recurring lines by billing periods and computes margin on costed+priced lines", () => {
+    expect(lineMultiplier({ quantity: 10, billingFrequency: "MONTHLY", termMonths: 36 })).toBe(360);
+    expect(lineMultiplier({ quantity: 10, billingFrequency: "QUARTERLY", termMonths: 36 })).toBe(120);
+    expect(lineMultiplier({ quantity: 10, billingFrequency: "ANNUAL", termMonths: 36 })).toBe(30);
+    expect(lineMultiplier({ quantity: 10, billingFrequency: "ONE_TIME", termMonths: 36 })).toBe(10);
     const t = boqTotals([
-      { quantity: 2, unitCost: 80, unitPrice: 100, recurring: false, termMonths: null },
-      { quantity: 1, unitCost: 10, unitPrice: 20, recurring: true, termMonths: 12 },
-      { quantity: 5, unitCost: null, unitPrice: 50, recurring: false, termMonths: null },
+      { quantity: 2, unitCost: 80, unitPrice: 100, billingFrequency: "ONE_TIME" as const, termMonths: null },
+      { quantity: 1, unitCost: 10, unitPrice: 20, billingFrequency: "MONTHLY" as const, termMonths: 12 },
+      { quantity: 5, unitCost: null, unitPrice: 50, billingFrequency: "ONE_TIME" as const, termMonths: null },
     ]);
     expect(t.totalPrice).toBe(200 + 240 + 250);
     expect(t.totalCost).toBe(160 + 120);
@@ -17,7 +20,7 @@ describe("BOQ totals", () => {
     expect(t.fullyCosted).toBe(false);
   });
   it("returns null margin when nothing is costed", () => {
-    expect(boqTotals([{ quantity: 1, unitCost: null, unitPrice: 10, recurring: false, termMonths: null }]).marginPct).toBeNull();
+    expect(boqTotals([{ quantity: 1, unitCost: null, unitPrice: 10, billingFrequency: "ONE_TIME" as const, termMonths: null }]).marginPct).toBeNull();
   });
 });
 
@@ -36,10 +39,17 @@ describe("authorization", () => {
     expect(can.editBoqCost({ id: "s1", role: "SALES" })).toBe(false);
     expect(can.editBoqPrice({ id: "s1", role: "SALES" }, opp)).toBe(true);
     expect(can.editBoqPrice({ id: "b1", role: "PURCHASE" }, opp)).toBe(false);
-    expect(can.viewCost({ id: "p1", role: "PRESALES" })).toBe(false);
+    // Everyone may see cost and margin; only purchase/admin may change cost
+    expect(can.viewCost({ id: "p1", role: "PRESALES" })).toBe(true);
+    expect(can.editBoqCost({ id: "p1", role: "PRESALES" })).toBe(false);
+    expect(can.manageProducts({ id: "a", role: "ADMIN" })).toBe(true);
+    expect(can.manageProducts({ id: "b1", role: "PURCHASE" })).toBe(false);
   });
-  it("scopes sales users to their own deals", () => {
+  it("scopes sales users to their own deals, others read all", () => {
     expect(opportunityScope({ id: "s1", role: "SALES" })).toMatchObject({ salesOwnerId: "s1", deletedAt: null });
     expect(opportunityScope({ id: "a", role: "ADMIN" })).toEqual({ deletedAt: null });
+    // Presales and purchase can read every deal
+    expect(opportunityScope({ id: "p1", role: "PRESALES" })).toEqual({ deletedAt: null });
+    expect(opportunityScope({ id: "b1", role: "PURCHASE" })).toEqual({ deletedAt: null });
   });
 });

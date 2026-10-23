@@ -13,12 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { StageBadge, HealthBadge, ForecastBadge, PersonCell, healthColor } from "@/components/crm/badges";
 import { SeverityIcon } from "@/components/crm/flag-chips";
 import { StagePath } from "@/components/opportunities/stage-path";
-import { BoqEditor } from "@/components/opportunities/boq-editor";
+import { LineItemsEditor } from "@/components/opportunities/line-items-editor";
 import { ContactsEditor } from "@/components/opportunities/contacts-editor";
 import { ActivityComposer, ActivityTimeline } from "@/components/crm/activity";
 import {
   PullPresalesButton, StartPresalesButton, SubmitBoqButton, RequestPricingButton, StartPricingButton, CompletePricingButton,
-  CreateQuoteButton, SyncAmountButton,
+  CreateQuoteButton,
 } from "@/components/opportunities/workflow-dialogs";
 import { inr, pct, fmtDate, fmtDateTime, relativeDays } from "@/lib/format";
 import {
@@ -34,7 +34,7 @@ export async function generateMetadata() {
 
 const TABS = [
   { key: "overview", label: "Overview" },
-  { key: "boq", label: "BOQ & pricing" },
+  { key: "boq", label: "Line items" },
   { key: "activity", label: "Activity" },
   { key: "contacts", label: "Contacts" },
   { key: "quotes", label: "Quotes" },
@@ -62,6 +62,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
     <>
       <PageHeader
         crumbs={[{ href: "/opportunities", label: "Opportunities" }, { href: `/accounts/${o.account.id}`, label: o.account.name }]}
+        tabs={TABS.map((t) => ({ href: `/opportunities/${o.id}${t.key === "overview" ? "" : `?tab=${t.key}`}`, label: t.label, active: tab === t.key, count: counts[t.key] }))}
         title={o.name}
         description={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -86,10 +87,10 @@ export default async function OpportunityPage({ params, searchParams }: { params
           </>
         }
       >
-        <div className="mt-4">
+        <div className="mt-6">
           <StagePath id={o.id} stage={stage} canEdit={d.perms.edit} lossReasons={options.lossReasons} poNumber={o.poNumber} />
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
           <Metric label="Deal value (TCV)" value={<span className="text-lg font-semibold">{inr(o.amount)}</span>} sub={o.revenueModel === "ARR" && o.arrAmount ? `${inr(o.arrAmount)} ARR · ${o.contractTermMonths} mo` : REVENUE_MODEL_LABEL[o.revenueModel]} />
           <Metric label="Weighted" value={inr((o.amount * o.probability) / 100)} sub={`${o.probability}% probability`} />
           <Metric
@@ -101,43 +102,28 @@ export default async function OpportunityPage({ params, searchParams }: { params
           <Metric label="Health" value={<HealthBadge label={o.healthLabel} score={o.healthScore} />} sub={`Last activity ${relativeDays(o.lastActivityAt)}`} />
           <Metric label="Margin" value={d.perms.viewCost ? (d.totals.marginPct !== null ? pct(d.totals.marginPct, 1) : o.expectedMarginPct !== null ? `${pct(o.expectedMarginPct, 1)} est.` : "—") : "Restricted"} sub={d.totals.marginPct !== null ? "From priced BOQ" : "Expected"} />
         </div>
-        <nav className="-mb-4 mt-5 flex gap-1 overflow-x-auto">
-          {TABS.map((t) => (
-            <Link
-              key={t.key}
-              href={`/opportunities/${o.id}${t.key === "overview" ? "" : `?tab=${t.key}`}`}
-              scroll={false}
-              className={cn(
-                "whitespace-nowrap border-b-2 px-3 pb-2.5 text-[13px] transition-colors",
-                tab === t.key ? "border-ink font-medium text-ink" : "border-transparent text-ink-3 hover:text-ink",
-              )}
-            >
-              {t.label}
-              {counts[t.key] !== undefined && <span className="ml-1.5 rounded-full bg-surface-2 px-1.5 text-[11px] tabular">{counts[t.key]}</span>}
-            </Link>
-          ))}
-        </nav>
       </PageHeader>
       <PageBody>
         {tab === "overview" && <Overview d={d} options={options} />}
         {tab === "boq" && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-6">
             <Workflow d={d} options={options} compact />
-            <BoqEditor
+            <LineItemsEditor
               oppId={o.id}
               initial={d.lines}
               perms={d.perms}
+              products={options.products}
+              bus={options.bus}
+              categories={options.categories}
               oems={options.oems}
               distributors={options.distributors}
               defaultTerm={o.contractTermMonths}
-              defaultOemId={o.oem?.id ?? null}
-              buId={o.businessUnit.id}
-              categoryId={o.category.id}
+              locked={stage === "WON"}
             />
           </div>
         )}
         {tab === "activity" && (
-          <div className="grid gap-4 lg:grid-cols-5">
+          <div className="grid gap-6 lg:grid-cols-5">
             <div className="lg:col-span-2"><ActivityComposer opportunityId={o.id} contacts={o.contacts.map((c) => c.contact)} /></div>
             <div className="lg:col-span-3"><ActivityTimeline items={o.activities} /></div>
           </div>
@@ -171,7 +157,7 @@ function Overview({ d, options }: { d: OppDetail; options: Opts }) {
   const flags = sortFlags(o.flags);
   const tasks = o.activities.filter((a) => a.type === "TASK" && !a.completedAt);
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="grid gap-6 lg:grid-cols-3">
       <div className="flex flex-col gap-4 lg:col-span-2">
         {o.healthLabel !== "CLOSED" && (
           <Card>
@@ -257,7 +243,7 @@ function Overview({ d, options }: { d: OppDetail; options: Opts }) {
           </CardContent>
         </Card>
       </div>
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-6">
         <Card>
           <CardHeader title="Next step" />
           <CardContent>
@@ -377,7 +363,6 @@ function Workflow({ d, options, compact }: { d: OppDetail; options: Opts; compac
         d.perms.quote && !closed && d.lines.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
             <CreateQuoteButton oppId={o.id} disabledReason={!d.totals.fullyCosted ? "Waiting for costs from purchase" : !d.totals.fullyPriced ? "Set a sell price on every line" : undefined} />
-            {d.totals.fullyPriced && Math.round(d.totals.totalPrice) !== Math.round(o.amount) && <SyncAmountButton oppId={o.id} />}
           </div>
         ) : undefined,
     },
@@ -475,7 +460,7 @@ function HistoryTab({ d }: { d: OppDetail }) {
     BOQ_UPDATED: "Updated the BOQ", CONTACTS: "Updated the buying group", DELETE: "Deleted",
   };
   return (
-    <div className="grid gap-4 lg:grid-cols-5">
+    <div className="grid gap-6 lg:grid-cols-5">
       <Card className="lg:col-span-2">
         <CardHeader title="Stage journey" description="Days spent in each stage" />
         <CardContent>

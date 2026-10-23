@@ -78,8 +78,8 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
       >
         <div className="mt-4"><Pills param="view" sp={sp} path="/requests" allLabel="Open" options={[{ value: "closed", label: "Completed" }]} /></div>
       </PageHeader>
-      <PageBody className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <PageBody className="flex flex-col gap-6">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {showPresales && <StatTile label="Open BOQ requests" value={view === "open" ? presales.length : "—"} sub={overdueP ? `${overdueP} overdue` : "None overdue"} accent="var(--s7)" />}
           {showPresales && <StatTile label="Avg BOQ turnaround" value={avgBoq === null ? "—" : `${avgBoq.toFixed(1)} days`} sub="Last 90 days · SLA 7 days" />}
           {showPricing && <StatTile label="Open pricing requests" value={view === "open" ? pricing.length : "—"} sub={overdueQ ? `${overdueQ} overdue` : "None overdue"} accent="var(--s4)" />}
@@ -87,7 +87,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
         </div>
 
         {isManager(user) && view === "open" && (
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-6 md:grid-cols-2">
             <Workload title="Presales workload" rows={workload(presalesAll)} />
             <Workload title="Purchase workload" rows={workload(pricingAll)} />
           </div>

@@ -6,7 +6,7 @@ import type { StageKey, ForecastKey } from "./constants";
 import type { Prisma } from "@prisma/client";
 
 const ruleInclude = {
-  lineItems: { select: { quantity: true, unitCost: true, unitPrice: true, recurring: true, termMonths: true } },
+  lineItems: { select: { quantity: true, unitCost: true, unitPrice: true, billingFrequency: true, termMonths: true } },
   _count: { select: { contacts: true } },
   pricingRequests: { where: { status: { in: ["REQUESTED", "IN_PROGRESS"] } }, select: { dueDate: true } },
   presalesRequests: { where: { status: { in: ["REQUESTED", "IN_PROGRESS"] } }, select: { dueDate: true } },

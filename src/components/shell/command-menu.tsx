@@ -3,11 +3,11 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
 import * as D from "@radix-ui/react-dialog";
-import { Briefcase, Building2, User, LayoutDashboard, KanbanSquare, Plus, History, Inbox, BarChart3, Search } from "lucide-react";
+import { Briefcase, Building2, User, LayoutDashboard, KanbanSquare, Plus, History, Inbox, BarChart3, Search, Package } from "lucide-react";
 import type { Role } from "@prisma/client";
 import { globalSearch, type SearchHit } from "@/server/actions/search";
 
-const ICON = { opportunity: Briefcase, account: Building2, contact: User };
+const ICON = { opportunity: Briefcase, account: Building2, contact: User, product: Package };
 
 export function CommandMenu({ open, setOpen, role }: { open: boolean; setOpen: (o: boolean) => void; role: Role }) {
   const router = useRouter();
