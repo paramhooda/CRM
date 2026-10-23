@@ -10,26 +10,13 @@ import { notify } from "@/lib/notify";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { CLOSED_STAGES } from "@/lib/constants";
 import { applyStageChange, UserError } from "@/server/domain/stage";
-import { lineInputSchema, resolveSpec, rollUpDeal } from "@/server/domain/lines";
+import { lineInputSchema, resolveSpec, rollUpDeal, draftLineSchema, createEstimateLine, type DraftLine } from "@/server/domain/lines";
 import { z } from "zod";
 import { toNumber } from "@/lib/format";
 
-const draftLineSchema = z.object({
-  productId: z.string().min(1),
-  quantity: z.coerce.number().positive().max(1e7),
-  unitPrice: z.coerce.number().min(0).nullish(),
-  billingFrequency: z.enum(["ONE_TIME", "MONTHLY", "QUARTERLY", "ANNUAL"]),
-  termMonths: z.coerce.number().int().min(1).max(120).nullish(),
-});
-
 function parseDraftLines(form: FormData) {
-  const raw = form.get("lines");
-  if (!raw) return { ok: true as const, lines: [] };
   try {
-    const parsed = z
-      .array(draftLineSchema)
-      .max(100)
-      .safeParse(JSON.parse(String(raw)));
+    const parsed = z.array(draftLineSchema).min(1).max(100).safeParse(JSON.parse(String(form.get("lines") ?? "[]")));
     return parsed.success ? { ok: true as const, lines: parsed.data } : { ok: false as const };
   } catch {
     return { ok: false as const };
@@ -78,23 +65,26 @@ const AUDITED = [
   "poDate",
 ];
 
-function toData(v: OpportunityInput) {
+/** Header classification and value come from the line items (`Derived`), the rest from the form. */
+type Derived = { amount: number; businessUnitId: string; categoryId: string; oemId: string | null };
+
+function toData(v: OpportunityInput, d: Derived) {
   const arrAmount =
     v.revenueModel === "ARR"
-      ? (v.arrAmount ?? (v.contractTermMonths ? Math.round(v.amount / (v.contractTermMonths / 12)) : null))
+      ? (v.arrAmount ?? (v.contractTermMonths ? Math.round(d.amount / (v.contractTermMonths / 12)) : null))
       : null;
   return {
     name: v.name,
     accountId: v.accountId,
     primaryContactId: v.primaryContactId ?? null,
-    businessUnitId: v.businessUnitId,
-    categoryId: v.categoryId,
-    oemId: v.oemId ?? null,
+    businessUnitId: d.businessUnitId,
+    categoryId: d.categoryId,
+    oemId: d.oemId,
     accountType: v.accountType,
     revenueModel: v.revenueModel,
     dealType: v.dealType,
     procurementMode: v.procurementMode,
-    amount: new Prisma.Decimal(v.amount),
+    amount: new Prisma.Decimal(d.amount),
     arrAmount: arrAmount === null ? null : new Prisma.Decimal(arrAmount),
     contractTermMonths:
       v.revenueModel === "ARR" ? (v.contractTermMonths ?? null) : (v.contractTermMonths ?? null),
@@ -121,6 +111,17 @@ function toData(v: OpportunityInput) {
   };
 }
 
+async function headerFromFirstLine(tx: Prisma.TransactionClient, d: DraftLine): Promise<Derived> {
+  if (d.kind === "estimate") {
+    const cat = await tx.category.findUnique({ where: { id: d.categoryId }, select: { businessUnitId: true } });
+    if (!cat) throw new UserError("A selected category no longer exists.");
+    return { amount: d.value, businessUnitId: cat.businessUnitId, categoryId: d.categoryId, oemId: d.oemId };
+  }
+  const p = await tx.product.findUnique({ where: { id: d.productId } });
+  if (!p || !p.active) throw new UserError("A selected product is no longer in the catalogue.");
+  return { amount: 1, businessUnitId: p.businessUnitId, categoryId: p.categoryId, oemId: p.oemId };
+}
+
 async function loadEditable(user: CurrentUser, id: string) {
   const opp = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] } });
   if (!opp) throw new Error("Opportunity not found or not accessible");
@@ -139,7 +140,10 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
     return { ok: false, error: "Create the deal in an open stage, then close it." };
   const drafts = parseDraftLines(form);
   if (!drafts.ok)
-    return { ok: false, error: "One of the line items is invalid. Check products and quantities." };
+    return {
+      ok: false,
+      error: "Add at least one line item: a catalogue product, or a quick estimate with OEM, category and value.",
+    };
 
   let id: string;
   try {
@@ -148,7 +152,8 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
       const code = await nextCode(tx, "OPP", now);
       const opp = await tx.opportunity.create({
         data: {
-          ...toData(v),
+          // Placeholder classification from the first line; rollUpDeal below sets the real primary BU/OEM and value
+          ...toData(v, await headerFromFirstLine(tx, drafts.lines[0]!)),
           code,
           stage: v.stage,
           originalCloseDate: v.expectedCloseDate,
@@ -165,6 +170,16 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
         });
       }
       for (const [i, d] of drafts.lines.entries()) {
+        if (d.kind === "estimate") {
+          const cat = await tx.category.findUnique({ where: { id: d.categoryId }, select: { businessUnitId: true } });
+          if (!cat) throw new UserError("A selected category no longer exists.");
+          await createEstimateLine(tx, {
+            opportunityId: opp.id, lineNo: i + 1, categoryId: d.categoryId, businessUnitId: cat.businessUnitId, oemId: d.oemId,
+            value: d.value, billingFrequency: d.billingFrequency, termMonths: d.termMonths ?? v.contractTermMonths ?? null,
+            description: d.description, userId: user.id,
+          });
+          continue;
+        }
         const product = await tx.product.findUnique({ where: { id: d.productId } });
         if (!product || !product.active)
           throw new UserError("A selected product is no longer in the catalogue.");
@@ -190,7 +205,7 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
           },
         });
       }
-      if (drafts.lines.length) await rollUpDeal(tx, opp.id, user.id);
+      await rollUpDeal(tx, opp.id, user.id);
       const created = await tx.opportunity.findUniqueOrThrow({
         where: { id: opp.id },
         select: { amount: true },
@@ -241,18 +256,17 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
   if (!can.reassignOpportunity(user)) v.salesOwnerId = before.salesOwnerId;
-  const lineCount = await db.opportunityLineItem.count({ where: { opportunityId: id } });
-  if (lineCount > 0) {
-    // Value and primary classification roll up from the line items
-    v.amount = toNumber(before.amount);
-    v.businessUnitId = before.businessUnitId;
-    v.categoryId = before.categoryId;
-    v.oemId = before.oemId ?? undefined;
-  }
+  // Value and primary classification roll up from the line items (edited on the Line items tab)
+  const derived: Derived = {
+    amount: toNumber(before.amount),
+    businessUnitId: before.businessUnitId,
+    categoryId: before.categoryId,
+    oemId: before.oemId,
+  };
 
   let warning: string | undefined;
   await db.$transaction(async (tx) => {
-    const data = toData(v);
+    const data = toData(v, derived);
     const now = new Date();
     // Slip tracking: pushing the close date out counts as a slip.
     let slip = before.closeDateSlipCount;

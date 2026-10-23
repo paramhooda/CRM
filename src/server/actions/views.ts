@@ -20,3 +20,13 @@ export async function deleteView(id: string): Promise<ActionResult> {
   revalidatePath("/opportunities");
   return { ok: true };
 }
+
+/** The signed-in user's saved views for one page (filter bar "Views" menu). */
+export async function listViews(page: string): Promise<{ id: string; name: string; query: string }[]> {
+  const user = await requireUser();
+  return db.savedView.findMany({
+    where: { userId: user.id, page: page.slice(0, 40) },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, name: true, query: true },
+  });
+}

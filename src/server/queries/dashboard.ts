@@ -9,7 +9,8 @@ import { toNumber } from "@/lib/format";
 import { FLAG_META, SEVERITY_RANK, type FlagCode } from "@/lib/rules/flags";
 import { ensureRulesFresh } from "@/lib/opportunity-service";
 import { reviewChanges } from "./reviews";
-import { attribute, rollup, type AttrSlice } from "@/lib/attribution";
+import { rollup, rollupWithId, type AttrSlice } from "@/lib/attribution";
+import { attributeDeal, attributionLineSelect } from "./attributed";
 import { buildInsights } from "./insights";
 
 const DAY = 86_400_000;
@@ -27,13 +28,7 @@ const oppSelect = {
   presalesOwnerId: true,
   closeDateSlipCount: true,
   accountType: true,
-  lineItems: {
-    select: {
-      quantity: true, unitPrice: true, billingFrequency: true, termMonths: true,
-      product: { select: { name: true, listPrice: true } },
-      businessUnit: { select: { name: true } }, category: { select: { name: true } }, oem: { select: { name: true } },
-    },
-  },
+  lineItems: attributionLineSelect,
 } as const;
 
 export async function getDashboard(user: CurrentUser, sp: SearchParams) {
@@ -42,16 +37,12 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
   const f = parseOppFilters(sp);
   const scope = { AND: [opportunityScope(user), oppWhere(f, { ignore: ["period"] })] };
   const opps = (await db.opportunity.findMany({ where: scope, select: oppSelect })).map((o) => {
-    const amount = toNumber(o.amount);
-    // Line-level attribution: multi-OEM / multi-BU deals are split by line value
-    const slices = attribute(
-      { amount, businessUnit: o.businessUnit.name, category: o.category.name, oem: o.oem?.name ?? null },
-      o.lineItems.map((l) => ({
-        quantity: l.quantity, unitPrice: l.unitPrice, listPrice: l.product?.listPrice ?? null, billingFrequency: l.billingFrequency,
-        termMonths: l.termMonths, businessUnit: l.businessUnit.name, category: l.category.name, oem: l.oem.name, product: l.product?.name ?? null,
-      })),
-    );
-    return { ...o, amount, arrAmount: o.arrAmount === null ? null : toNumber(o.arrAmount), slices, lineItems: undefined };
+    // Line-level attribution: multi-OEM / multi-BU deals are split by line value, and a BU / category / OEM
+    // filter narrows each deal to its matching lines, so every total below is that filter's share.
+    const { amount, dealAmount, slices } = attributeDeal(o, f);
+    const share = dealAmount > 0 ? amount / dealAmount : 1;
+    const arr = o.arrAmount === null ? null : toNumber(o.arrAmount) * share;
+    return { ...o, amount, dealAmount, arrAmount: arr, slices, lineItems: undefined };
   });
   type O = (typeof opps)[number];
 
@@ -126,22 +117,47 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
     };
   });
 
+  // Pipeline split by line-item BU, category or OEM, stacked by forecast category; open value and weighted
+  const stackBy = (dim: "businessUnit" | "category" | "oem") => {
+    const idKey = ({ businessUnit: "businessUnitId", category: "categoryId", oem: "oemId" } as const)[dim];
+    const m = new Map<string, { key: string; id: string | null; open: Record<"Commit" | "Upside" | "Pipeline", number>; weighted: Record<"Commit" | "Upside" | "Pipeline", number> }>();
+    for (const o of open) {
+      const fc = o.forecastCategory === "COMMIT" ? "Commit" : o.forecastCategory === "UPSIDE" ? "Upside" : o.forecastCategory === "PIPELINE" ? "Pipeline" : null;
+      if (!fc) continue;
+      for (const sl of o.slices) {
+        const r = m.get(sl[dim]) ?? { key: sl[dim], id: sl[idKey] ?? null, open: { Commit: 0, Upside: 0, Pipeline: 0 }, weighted: { Commit: 0, Upside: 0, Pipeline: 0 } };
+        r.open[fc] += sl.amount;
+        r.weighted[fc] += (sl.amount * o.probability) / 100;
+        m.set(sl[dim], r);
+      }
+    }
+    const rows = [...m.values()].map((r) => ({ ...r, total: r.open.Commit + r.open.Upside + r.open.Pipeline, wTotal: r.weighted.Commit + r.weighted.Upside + r.weighted.Pipeline }));
+    if (dim === "businessUnit") return rows.sort((a, b) => BU_ORDER.indexOf(a.key) - BU_ORDER.indexOf(b.key));
+    return rows.sort((a, b) => b.total - a.total).slice(0, 8);
+  };
+  const pipelineBy = { bu: stackBy("businessUnit"), category: stackBy("category"), oem: stackBy("oem") };
+
   const months = lastMonths(12, now);
   const trend = months.map((m) => {
     const xs = won.filter((o) => inRange(o.closedAt, m));
     const p = fiscalPeriod(new Date(m.start.getTime() + 2 * DAY));
     return {
       month: m.label,
+      period: `M${m.key}`,
       won: sum(xs),
       target: targetsApplicable ? targetFor(p.fiscalYear, p.quarter) / 3 : 0,
       deals: xs.length,
     };
   });
 
-  const reps = new Map<string, { id: string; name: string; won: number; open: number; weighted: number; commit: number; target: number; deals: number }>();
+  const reps = new Map<string, { id: string; name: string; won: number; open: number; weighted: number; commit: number; target: number; deals: number; wonN: number; lostN: number }>();
   for (const o of opps) {
-    const r = reps.get(o.salesOwner.id) ?? { id: o.salesOwner.id, name: o.salesOwner.name, won: 0, open: 0, weighted: 0, commit: 0, target: 0, deals: 0 };
-    if (o.stage === "WON" && inRange(o.closedAt, bookingsRange)) r.won += o.amount;
+    const r = reps.get(o.salesOwner.id) ?? { id: o.salesOwner.id, name: o.salesOwner.name, won: 0, open: 0, weighted: 0, commit: 0, target: 0, deals: 0, wonN: 0, lostN: 0 };
+    if (o.stage === "WON" && inRange(o.closedAt, bookingsRange)) {
+      r.won += o.amount;
+      r.wonN++;
+    }
+    if ((o.stage === "LOST" || o.stage === "DROPPED") && inRange(o.closedAt, bookingsRange)) r.lostN++;
     if (isActive(o)) {
       r.open += o.amount;
       r.weighted += (o.amount * o.probability) / 100;
@@ -154,28 +170,31 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
   const leaderboard = [...reps.values()].sort((a, b) => b.won - a.won || b.open - a.open);
 
   const agingBuckets = [
-    { label: "0–30d", min: 0, max: 30 },
-    { label: "31–60d", min: 31, max: 60 },
-    { label: "61–90d", min: 61, max: 90 },
-    { label: "91–180d", min: 91, max: 180 },
-    { label: "180d+", min: 181, max: Infinity },
+    { label: "0–30d", min: 0, max: 30, key: "0-30" },
+    { label: "31–60d", min: 31, max: 60, key: "31-60" },
+    { label: "61–90d", min: 61, max: 90, key: "61-90" },
+    { label: "91–180d", min: 91, max: 180, key: "91-180" },
+    { label: "180d+", min: 181, max: Infinity, key: "181-" },
   ];
   const aging = agingBuckets.map((b) => {
     const xs = open.filter((o) => {
       const age = (now.getTime() - o.createdAt.getTime()) / DAY;
       return age >= b.min && age <= b.max;
     });
-    return { bucket: b.label, count: xs.length, amount: sum(xs) };
+    return { bucket: b.label, age: b.key, count: xs.length, amount: sum(xs) };
   });
 
-  const oemSorted = rollup(open.flatMap((o) => o.slices), "oem");
-  const oemMix = oemSorted.slice(0, 7).map((r) => ({ name: r.key, amount: r.amount }));
-  if (oemSorted.length > 7) oemMix.push({ name: "Other", amount: oemSorted.slice(7).reduce((a, r) => a + r.amount, 0) });
+  const oemSorted = rollupWithId(open.flatMap((o) => o.slices), "oem");
+  const oemMix: { name: string; id: string | null; amount: number }[] = oemSorted.slice(0, 7).map((r) => ({ name: r.key, id: r.id, amount: r.amount }));
+  if (oemSorted.length > 7) oemMix.push({ name: "Other", id: null, amount: oemSorted.slice(7).reduce((a, r) => a + r.amount, 0) });
 
+  // A deal counts toward a BU's win rate when any of its lines is in that BU
+  const buIds = new Map(opps.flatMap((o) => o.slices.map((sl) => [sl.businessUnit, sl.businessUnitId ?? null] as const)));
+  const inBu = (o: O, bu: string) => o.slices.some((sl) => sl.businessUnit === bu);
   const winByBu = buNames.map((bu) => {
-    const w = won12.filter((o) => o.businessUnit.name === bu).length;
-    const l = lost12.filter((o) => o.businessUnit.name === bu).length;
-    return { bu, rate: w + l ? Math.round((w / (w + l)) * 100) : 0, won: w, lost: l };
+    const w = won12.filter((o) => inBu(o, bu)).length;
+    const l = lost12.filter((o) => inBu(o, bu)).length;
+    return { bu, id: buIds.get(bu) ?? null, rate: w + l ? Math.round((w / (w + l)) * 100) : 0, won: w, lost: l };
   });
 
   const openWithHold = period ? opps.filter((o) => (isActive(o) || o.stage === "HOLD") && closeIn(o, period)) : opps.filter((o) => isActive(o) || o.stage === "HOLD");
@@ -211,8 +230,9 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
       healthScore: o.healthScore, flags: o.flags, owner: o.salesOwner.name, expectedCloseDate: o.expectedCloseDate,
       lastActivityAt: o.lastActivityAt, forecastCategory: o.forecastCategory, nextStep: o.nextStep,
     }));
-  const hot = pick(openWithHold.filter((o) => o.healthLabel === "HOT").sort((a, b) => b.amount - a.amount).slice(0, 6));
-  const dying = pick(openWithHold.filter((o) => o.healthLabel === "DYING").sort((a, b) => b.amount - a.amount).slice(0, 6));
+  // Up to 20 each: the card sorts locally (value / close date / idle) and shows the top 6
+  const hot = pick(openWithHold.filter((o) => o.healthLabel === "HOT").sort((a, b) => b.amount - a.amount).slice(0, 20));
+  const dying = pick(openWithHold.filter((o) => o.healthLabel === "DYING").sort((a, b) => b.amount - a.amount).slice(0, 20));
   const closingSoon = pick(
     openAll
       .filter((o) => o.expectedCloseDate >= new Date(now.getTime() - DAY) && o.expectedCloseDate <= new Date(now.getTime() + 30 * DAY))
@@ -247,6 +267,7 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
   // ── Overview extras: sparklines, deltas, forecast, calendar, flow, bookings mix ──
   const monthly = months.map((m) => ({
     label: m.label,
+    period: `M${m.key}`,
     created: sum(opps.filter((o) => inRange(o.createdAt, m))),
     won: sum(won.filter((o) => inRange(o.closedAt, m))),
   }));
@@ -262,10 +283,13 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
   const nextQ = cur.quarter === 4 ? { fiscalYear: cur.fiscalYear + 1, quarter: 1 } : { fiscalYear: cur.fiscalYear, quarter: cur.quarter + 1 };
   const nq = quarterRange(nextQ.fiscalYear, nextQ.quarter);
   const forecastRows = [
-    { label: periodLabel(cur), range: q, target: qTarget, fy: cur.fiscalYear, qtr: cur.quarter },
-    { label: `Q${nextQ.quarter} ${fyLabel(nextQ.fiscalYear)}`, range: nq, target: targetsApplicable ? targetFor(nextQ.fiscalYear, nextQ.quarter) : 0, fy: nextQ.fiscalYear, qtr: nextQ.quarter },
+    { label: periodLabel(cur), range: q, target: qTarget, period: "this-q", scope: "quarter" },
+    { label: `Q${nextQ.quarter} ${fyLabel(nextQ.fiscalYear)}`, range: nq, target: targetsApplicable ? targetFor(nextQ.fiscalYear, nextQ.quarter) : 0, period: "next-q", scope: "quarter" },
+    { label: fyLabel(cur.fiscalYear), range: fy, target: fyTarget, period: "this-fy", scope: "year" },
   ].map((r) => ({
     label: r.label,
+    period: r.period,
+    scope: r.scope as "quarter" | "year",
     target: r.target,
     won: sum(won.filter((o) => inRange(o.closedAt, r.range))),
     commit: sum(openAll.filter((o) => o.forecastCategory === "COMMIT" && closeIn(o, r.range))),
@@ -278,16 +302,21 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
   const closingCalendar = Array.from({ length: 8 }, (_, i) => {
     const r = { start: new Date(weekStart.getTime() + i * 7 * DAY), end: new Date(weekStart.getTime() + (i + 1) * 7 * DAY) };
     const xs = openAll.filter((o) => closeIn(o, r));
-    return { week: i === 0 ? "This wk" : r.start.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }), amount: sum(xs), count: xs.length, commit: sum(xs.filter((o) => o.forecastCategory === "COMMIT")) };
+    const iso = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    return {
+      week: i === 0 ? "This wk" : r.start.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }),
+      period: `R${iso(r.start)}_${iso(new Date(r.end.getTime() - DAY))}`,
+      amount: sum(xs), count: xs.length, commit: sum(xs.filter((o) => o.forecastCategory === "COMMIT")),
+    };
   });
   const overdueOpen = sum(openAll.filter((o) => o.expectedCloseDate < now));
 
   const wonSlices: AttrSlice[] = wonInRange.flatMap((o) => o.slices);
   const bookingsMix = {
-    bu: rollup(wonSlices, "businessUnit"),
-    oem: rollup(wonSlices, "oem").slice(0, 8),
+    bu: rollupWithId(wonSlices, "businessUnit"),
+    oem: rollupWithId(wonSlices, "oem").slice(0, 8),
     product: rollup(wonSlices.filter((sl) => sl.product), "product").slice(0, 10),
-    category: rollup(wonSlices, "category").slice(0, 8),
+    category: rollupWithId(wonSlices, "category").slice(0, 8),
   };
 
   const insights = buildInsights({
@@ -306,6 +335,7 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
       winRatePrior,
     },
     forecastRows,
+    pipelineBy,
     closingCalendar,
     overdueOpen,
     bookingsMix,

@@ -18,6 +18,7 @@ export const lineInputSchema = z
     oemId: z.string().nullish(),
     partNumber: z.string().max(80).nullish(),
     description: z.string().trim().min(2, "Each line needs a description").max(500),
+    isEstimate: z.boolean().optional(),
     quantity: z.coerce.number().positive("Quantity must be positive").max(1e7),
     unit: z.string().max(20).default("Nos"),
     billingFrequency: z.enum(["ONE_TIME", "MONTHLY", "QUARTERLY", "ANNUAL"]).default("ONE_TIME"),
@@ -53,6 +54,8 @@ export async function resolveSpec(tx: Tx, l: LineInput, fallbackTerm: number | n
     oemId: product?.oemId ?? l.oemId!,
     partNumber: l.partNumber || product?.code || null,
     description: l.description,
+    // Picking a catalogue product turns an estimate into a real line
+    isEstimate: !product && !!l.isEstimate,
     quantity: new Prisma.Decimal(l.quantity),
     unit: l.unit,
     billingFrequency: l.billingFrequency,
@@ -61,6 +64,68 @@ export async function resolveSpec(tx: Tx, l: LineInput, fallbackTerm: number | n
     gstRatePct: product ? product.gstRatePct : l.gstRatePct === null || l.gstRatePct === undefined ? null : new Prisma.Decimal(l.gstRatePct),
     notes: l.notes || null,
   };
+}
+
+export const BILLING_FREQUENCIES = ["ONE_TIME", "MONTHLY", "QUARTERLY", "ANNUAL"] as const;
+
+/** Lines captured on the New opportunity form: a catalogue product, or a quick estimate (OEM + category + value). */
+export const draftLineSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("product"),
+    productId: z.string().min(1),
+    quantity: z.coerce.number().positive().max(1e7),
+    unitPrice: z.coerce.number().min(0).nullish(),
+    billingFrequency: z.enum(BILLING_FREQUENCIES),
+    termMonths: z.coerce.number().int().min(1).max(120).nullish(),
+  }),
+  z.object({
+    kind: z.literal("estimate"),
+    oemId: z.string().min(1, "Choose an OEM"),
+    categoryId: z.string().min(1, "Choose a category"),
+    /** Total value of the line over its term */
+    value: z.coerce.number().positive("Enter an estimated value").max(1e11),
+    billingFrequency: z.enum(BILLING_FREQUENCIES),
+    termMonths: z.coerce.number().int().min(1).max(120).nullish(),
+    description: z.string().trim().max(200).nullish(),
+  }),
+]);
+export type DraftLine = z.infer<typeof draftLineSchema>;
+
+/**
+ * Create a quick-estimate line. The value is the total over the term, so recurring estimates store the
+ * per-period price (value / periods) to keep line maths identical to catalogue lines.
+ */
+export async function createEstimateLine(
+  tx: Tx,
+  e: {
+    opportunityId: string; lineNo: number; categoryId: string; businessUnitId: string; oemId: string; value: number;
+    billingFrequency: (typeof BILLING_FREQUENCIES)[number]; termMonths: number | null; description?: string | null; userId: string;
+  },
+) {
+  const [oem, cat] = await Promise.all([
+    tx.oem.findUniqueOrThrow({ where: { id: e.oemId }, select: { name: true } }),
+    tx.category.findUniqueOrThrow({ where: { id: e.categoryId }, select: { name: true } }),
+  ]);
+  const term = e.billingFrequency === "ONE_TIME" ? null : (e.termMonths ?? 12);
+  const periods = lineMultiplier({ quantity: 1, billingFrequency: e.billingFrequency, termMonths: term });
+  return tx.opportunityLineItem.create({
+    data: {
+      opportunityId: e.opportunityId,
+      lineNo: e.lineNo,
+      businessUnitId: e.businessUnitId,
+      categoryId: e.categoryId,
+      oemId: e.oemId,
+      description: e.description?.trim() || `Estimate · ${oem.name} · ${cat.name}`,
+      isEstimate: true,
+      quantity: new Prisma.Decimal(1),
+      unit: "Lot",
+      billingFrequency: e.billingFrequency,
+      termMonths: term,
+      unitPrice: new Prisma.Decimal(Math.round((e.value / periods) * 100) / 100),
+      createdById: e.userId,
+      updatedById: e.userId,
+    },
+  });
 }
 
 /**

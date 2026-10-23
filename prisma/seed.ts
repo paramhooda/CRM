@@ -547,7 +547,34 @@ async function main() {
         }
       }
     }
-    void lineCount;
+    // Every deal has at least one line: OEM lives on line items. Early deals start with a quick estimate
+    // (OEM + category + value) that presales later replaces; won deals without a BOQ get one priced product line.
+    if (lineCount === 0) {
+      const pr = (productsByCat[catKey] ?? []).find((x) => x.oem === oemName) ?? productsByCat[catKey]?.[0];
+      if (p.stage === "WON" && pr) {
+        const lineTerm = pr.tpl.freq === "ONE_TIME" ? null : term ?? pr.tpl.term ?? 12;
+        const periods = billingPeriods({ billingFrequency: pr.tpl.freq, termMonths: lineTerm });
+        const unitPrice = Math.round(amount / periods);
+        const cat = pr.catKey.split("|") as [string, string];
+        await db.opportunityLineItem.create({
+          data: {
+            opportunityId: opp.id, lineNo: 1, productId: pr.id, businessUnitId: bus[cat[0]]!.id, categoryId: bus[cat[0]]!.cats[cat[1]]!,
+            oemId: oems[pr.oem]!, partNumber: pr.code, description: `${pr.oem} ${pr.tpl.name}`, quantity: 1, unit: "Lot",
+            billingFrequency: pr.tpl.freq, termMonths: lineTerm, hsnSac: pr.tpl.hsn, gstRatePct: 18,
+            unitCost: Math.round(unitPrice * (1 - marginTarget)), unitPrice, pricingStatus: "QUOTED", createdById: owner.id,
+          },
+        });
+      } else {
+        await db.opportunityLineItem.create({
+          data: {
+            opportunityId: opp.id, lineNo: 1, businessUnitId: bus[buName]!.id, categoryId: bus[buName]!.cats[catName]!, oemId: oems[oemName]!,
+            description: `Estimate · ${oemName} · ${catName}`, isEstimate: true, quantity: 1, unit: "Lot", billingFrequency: "ONE_TIME",
+            unitPrice: amount, createdById: owner.id, createdAt,
+          },
+        });
+      }
+      lineCount++;
+    }
     if (p.stage === "WON" && lineCount > 0) {
       await lockForBilling(db as unknown as Parameters<typeof lockForBilling>[0], opp.id, {
         poDate: closedAt, contractStart: arr ? closedAt : null, now: closedAt!, userId: owner.id,

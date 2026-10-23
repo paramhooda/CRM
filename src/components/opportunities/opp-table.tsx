@@ -25,7 +25,7 @@ const COLS: Col[] = [
       </div>
     ),
   },
-  { id: "amount", label: "Amount", sort: "amount", align: "right", def: true, render: (o) => <span className="font-medium tabular">{inr(o.amount)}</span> },
+  { id: "amount", label: "Deal value", sort: "amount", align: "right", def: true, render: (o) => <span className="font-medium tabular">{inr(o.amount)}</span> },
   { id: "stage", label: "Stage", sort: "stage", def: true, render: (o) => <StageBadge stage={o.stage} /> },
   { id: "health", label: "Health", sort: "health", def: true, render: (o) => <HealthBadge label={o.healthLabel} score={o.healthScore} /> },
   { id: "flags", label: "Concerns", def: false, className: "min-w-[180px]", render: (o) => <FlagChips flags={o.flags} max={2} /> },
@@ -52,9 +52,11 @@ const COLS: Col[] = [
 const STORAGE_KEY = "crm.oppTable.cols.v2";
 
 export function OppTable({
-  rows, total, page, pageSize, sortKey, dir, hideCost,
+  rows, total, page, pageSize, sortKey, dir, hideCost, scopeLabel,
 }: {
   rows: OppRow[]; total: number; page: number; pageSize: number; sortKey: string; dir: "asc" | "desc"; hideCost?: boolean;
+  /** Active BU / category / OEM filter name: adds a "<name> value" column with each deal's matching share */
+  scopeLabel?: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -72,6 +74,17 @@ export function OppTable({
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
   };
   const cols = COLS.filter((c) => visible.includes(c.id) && !(hideCost && c.id === "margin"));
+  if (scopeLabel) {
+    const at = Math.max(1, cols.findIndex((c) => c.id === "amount") + 1);
+    cols.splice(at, 0, {
+      id: "scoped", label: `${scopeLabel} value`, align: "right", def: true,
+      render: (o) => (
+        <span className={cn("font-medium tabular text-[var(--t-blue)]", o.scopedAmount !== null && Math.round(o.scopedAmount) === Math.round(o.amount) && "text-ink-2")}>
+          {o.scopedAmount === null ? "—" : inr(o.scopedAmount)}
+        </span>
+      ),
+    });
+  }
 
   const go = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(sp.toString());
@@ -108,7 +121,7 @@ export function OppTable({
                 {c.sort ? (
                   <button
                     onClick={() => go({ sort: c.sort!, dir: sortKey === c.sort && dir === "desc" ? "asc" : "desc", page: null })}
-                    className={cn("inline-flex items-center gap-1 uppercase hover:text-ink cursor-pointer", sortKey === c.sort && "text-ink")}
+                    className={cn("inline-flex items-center gap-1 hover:text-ink cursor-pointer", sortKey === c.sort && "text-ink")}
                   >
                     {c.label}
                     {sortKey === c.sort && (dir === "desc" ? <ArrowDown className="size-3" /> : <ArrowUp className="size-3" />)}

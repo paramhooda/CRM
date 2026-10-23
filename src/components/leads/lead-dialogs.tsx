@@ -72,10 +72,10 @@ export function LeadDialog({
 }
 
 export function ConvertLeadDialog({
-  id, company, requirement, estimatedValue, buId, accounts, categories,
+  id, company, requirement, estimatedValue, buId, accounts, categories, oems,
 }: {
   id: string; company: string; requirement: string | null; estimatedValue: number | null; buId: string | null;
-  accounts: Opt[]; categories: (Opt & { buId: string; buName: string })[];
+  accounts: Opt[]; categories: (Opt & { buId: string; buName: string })[]; oems: Opt[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -116,8 +116,14 @@ export function ConvertLeadDialog({
               {cats.map((c) => <option key={c.id} value={c.id}>{c.buName} · {c.name}</option>)}
             </Select>
           </Field>
+          <Field label="OEM" required error={errors.oemId} hint="Starts the deal with one estimate line. Presales replaces it with products in the BOQ.">
+            <Select name="oemId" defaultValue="">
+              <option value="" disabled>Select</option>
+              {oems.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </Select>
+          </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Amount (INR)" required error={errors.amount}><Input name="amount" type="number" defaultValue={estimatedValue ?? ""} /></Field>
+            <Field label="Estimated value (INR)" required error={errors.amount}><Input name="amount" type="number" defaultValue={estimatedValue ?? ""} /></Field>
             <Field label="Expected close" required><Input name="expectedCloseDate" type="date" defaultValue={isoDate(new Date(Date.now() + 90 * 86_400_000))} /></Field>
           </div>
           <div className="flex justify-end gap-2">

@@ -121,11 +121,13 @@ export async function emitEvent(tx: Tx, type: string, aggregateType: string, agg
 export async function billingReadinessIssues(tx: Tx, opportunityId: string): Promise<string[]> {
   const lines = await tx.opportunityLineItem.findMany({
     where: { opportunityId },
-    select: { lineNo: true, unitPrice: true, hsnSac: true, product: { select: { hsnSac: true } } },
+    select: { lineNo: true, unitPrice: true, hsnSac: true, isEstimate: true, product: { select: { hsnSac: true } } },
     orderBy: { lineNo: "asc" },
   });
   if (!lines.length) return ["Add at least one line item. Won deals are billed line by line."];
   const issues: string[] = [];
+  const estimates = lines.filter((l) => l.isEstimate).map((l) => l.lineNo);
+  if (estimates.length) return [`Replace estimate line ${estimates.join(", ")} with catalogue products.`];
   const unpriced = lines.filter((l) => l.unitPrice === null).map((l) => l.lineNo);
   const noHsn = lines.filter((l) => !(l.hsnSac || l.product?.hsnSac)).map((l) => l.lineNo);
   if (unpriced.length) issues.push(`Set a sell price on line ${unpriced.join(", ")}.`);

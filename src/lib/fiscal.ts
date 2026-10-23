@@ -53,6 +53,39 @@ export function parsePeriodKey(key: string | undefined, now = new Date()): { sta
     return { ...quarterRange(n.fiscalYear, n.quarter), label: periodLabel(n) };
   }
   if (key === "this-fy") return { ...fiscalYearRange(cur.fiscalYear), label: fyLabel(cur.fiscalYear) };
+  if (key === "last-q") {
+    const p = cur.quarter === 1 ? { fiscalYear: cur.fiscalYear - 1, quarter: 4 as const } : { fiscalYear: cur.fiscalYear, quarter: (cur.quarter - 1) as 1 | 2 | 3 | 4 };
+    return { ...quarterRange(p.fiscalYear, p.quarter), label: periodLabel(p) };
+  }
+  if (key === "last-fy") return { ...fiscalYearRange(cur.fiscalYear - 1), label: fyLabel(cur.fiscalYear - 1) };
+  // Rolling windows from today: next-30 / next-60 / next-90
+  const next = /^next-(\d{1,3})$/.exec(key);
+  if (next) {
+    const { year, month } = istParts(now);
+    const day = Number(now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(8, 10));
+    const start = istDate(year, month, day);
+    return { start, end: new Date(start.getTime() + (Number(next[1]) + 1) * 86_400_000), label: `Next ${next[1]} days` };
+  }
+  // Calendar month: M2026-08
+  const mon = /^M(\d{4})-(\d{2})$/.exec(key);
+  if (mon) {
+    const y = Number(mon[1]);
+    const mo = Number(mon[2]);
+    if (mo < 1 || mo > 12) return null;
+    const start = istDate(y, mo, 1);
+    const end = mo === 12 ? istDate(y + 1, 1, 1) : istDate(y, mo + 1, 1);
+    return { start, end, label: start.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short", year: "numeric" }) };
+  }
+  // Custom date range, both ends inclusive: R2026-10-01_2026-12-31
+  const range = /^R(\d{4})-(\d{2})-(\d{2})_(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (range) {
+    const [, y1, m1, d1, y2, m2, d2] = range.map(Number) as number[];
+    const start = istDate(y1!, m1!, d1!);
+    const end = new Date(istDate(y2!, m2!, d2!).getTime() + 86_400_000);
+    if (!(end > start)) return null;
+    const fmt = (d: Date) => d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" });
+    return { start, end, label: `${fmt(start)} – ${fmt(new Date(end.getTime() - 86_400_000))}` };
+  }
   const m = /^FY(\d{2})(?:-Q([1-4]))?$/.exec(key);
   if (!m) return null;
   const fy = 2000 + Number(m[1]);
@@ -82,17 +115,26 @@ export function lastMonths(n: number, now = new Date()) {
 /** Period options for filter chips: this/next quarter, this FY, plus each quarter of current and previous FY. */
 export function periodOptions(now = new Date()) {
   const cur = fiscalPeriod(now);
-  const out = [
-    { value: "this-q", label: `This quarter (${periodLabel(cur)})` },
-    { value: "next-q", label: "Next quarter" },
-    { value: "this-fy", label: `This year (${fyLabel(cur.fiscalYear)})` },
+  const out: { value: string; label: string; group: string }[] = [
+    { value: "this-q", label: `This quarter (${periodLabel(cur)})`, group: "Quick" },
+    { value: "next-q", label: "Next quarter", group: "Quick" },
+    { value: "last-q", label: "Last quarter", group: "Quick" },
+    { value: "this-fy", label: `This year (${fyLabel(cur.fiscalYear)})`, group: "Quick" },
+    { value: "last-fy", label: `Last year (${fyLabel(cur.fiscalYear - 1)})`, group: "Quick" },
+    { value: "next-30", label: "Next 30 days", group: "Rolling" },
+    { value: "next-60", label: "Next 60 days", group: "Rolling" },
+    { value: "next-90", label: "Next 90 days", group: "Rolling" },
   ];
   for (const fy of [cur.fiscalYear, cur.fiscalYear - 1]) {
     for (const q of [1, 2, 3, 4]) {
       if (fy === cur.fiscalYear && q > cur.quarter + 1) continue;
-      out.push({ value: `FY${String(fy).slice(-2)}-Q${q}`, label: `Q${q} ${fyLabel(fy)}` });
+      out.push({ value: `FY${String(fy).slice(-2)}-Q${q}`, label: `Q${q} ${fyLabel(fy)}`, group: fyLabel(fy) });
     }
-    if (fy !== cur.fiscalYear) out.push({ value: `FY${String(fy).slice(-2)}`, label: fyLabel(fy) });
   }
   return out;
+}
+
+/** Period key for a custom inclusive date range (yyyy-mm-dd strings). */
+export function rangeKey(from: string, to: string): string {
+  return `R${from}_${to}`;
 }

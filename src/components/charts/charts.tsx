@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ComposedChart, Line, Legend,
 } from "recharts";
@@ -12,12 +13,16 @@ const axisTick = { fill: "var(--ink-3)", fontSize: 11 };
 function TooltipBox({
   title,
   rows,
+  hint,
 }: {
   title: string;
   rows: { label: string; value: string; color?: string; dash?: boolean }[];
+  /** e.g. "Click to view deals" when the mark is clickable */
+  hint?: string;
 }) {
   return (
     <div className="min-w-40 rounded-md border border-border bg-surface px-2.5 py-2 text-xs shadow-lg">
+
       <p className="mb-1 font-medium text-ink">{title}</p>
       {rows.map((r) => (
         <div key={r.label} className="flex items-center justify-between gap-4 py-0.5">
@@ -33,8 +38,19 @@ function TooltipBox({
           <span className="tabular font-medium text-ink">{r.value}</span>
         </div>
       ))}
+      {hint && <p className="mt-1 border-t border-border pt-1 text-[10px] text-ink-3">{hint}</p>}
     </div>
   );
+}
+
+const CLICK_HINT = "Click to view deals";
+/** Navigate to a row's href when a Recharts bar is clicked. */
+function useBarNav() {
+  const router = useRouter();
+  return (d: unknown) => {
+    const href = (d as { payload?: { href?: string } } | undefined)?.payload?.href;
+    if (href) router.push(href);
+  };
 }
 
 function LegendRow({ items }: { items: { label: string; color: string; dash?: boolean }[] }) {
@@ -104,7 +120,19 @@ export function StackedBuChart({ data }: { data: { bu: string; Commit: number; U
 }
 
 /** Monthly bookings (columns) against target run-rate (line). One axis, both INR. */
-export function WonTrendChart({ data, showTarget }: { data: { month: string; won: number; target: number; deals: number }[]; showTarget: boolean }) {
+export function WonTrendChart({
+  data,
+  showTarget,
+  metric = "won",
+}: {
+  data: { month: string; won: number; target: number; deals: number; href?: string }[];
+  showTarget: boolean;
+  /** Value (INR) or number of deals */
+  metric?: "won" | "deals";
+}) {
+  const nav = useBarNav();
+  const deals = metric === "deals";
+  showTarget = showTarget && !deals;
   return (
     <div>
       <LegendRow
@@ -118,7 +146,7 @@ export function WonTrendChart({ data, showTarget }: { data: { month: string; won
           <ComposedChart data={data} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
             <CartesianGrid vertical={false} stroke="var(--grid)" />
             <XAxis dataKey="month" tick={axisTick} tickLine={false} axisLine={{ stroke: "var(--axis)" }} interval="preserveStartEnd" minTickGap={8} />
-            <YAxis tick={axisTick} tickLine={false} axisLine={false} tickFormatter={inrAxis} width={48} />
+            <YAxis tick={axisTick} tickLine={false} axisLine={false} tickFormatter={deals ? (v: number) => String(v) : inrAxis} width={48} allowDecimals={false} />
             <RTooltip
               cursor={{ fill: "var(--surface-hover)" }}
               content={({ active, payload, label }) => {
@@ -127,6 +155,7 @@ export function WonTrendChart({ data, showTarget }: { data: { month: string; won
                 return (
                   <TooltipBox
                     title={String(label)}
+                    hint={row.href ? CLICK_HINT : undefined}
                     rows={[
                       { label: `Closed-won (${row.deals})`, value: inr(row.won), color: "var(--s1)" },
                       ...(showTarget ? [{ label: "Target run-rate", value: inr(row.target), color: "var(--ink-3)", dash: true }] : []),
@@ -135,7 +164,7 @@ export function WonTrendChart({ data, showTarget }: { data: { month: string; won
                 );
               }}
             />
-            <Bar dataKey="won" fill="var(--s1)" maxBarSize={24} radius={[4, 4, 0, 0]} />
+            <Bar dataKey={metric} fill="var(--s1)" maxBarSize={24} radius={[4, 4, 0, 0]} cursor="pointer" onClick={nav} />
             {showTarget && (
               <Line type="stepAfter" dataKey="target" stroke="var(--ink-3)" strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: "var(--chart-surface)", strokeWidth: 2 }} />
             )}
@@ -149,6 +178,7 @@ export function WonTrendChart({ data, showTarget }: { data: { month: string; won
 
 /** Column chart for a single series (e.g. pipeline aging). */
 export function ColumnChart({ data, x, y, sub }: { data: Record<string, unknown>[]; x: string; y: string; sub?: string }) {
+  const nav = useBarNav();
   return (
     <div className="h-48">
       <ResponsiveContainer width="100%" height="100%">
@@ -162,6 +192,7 @@ export function ColumnChart({ data, x, y, sub }: { data: Record<string, unknown>
               active && payload?.length ? (
                 <TooltipBox
                   title={String(label)}
+                  hint={(payload[0]!.payload as { href?: string }).href ? CLICK_HINT : undefined}
                   rows={[
                     { label: "Value", value: inr(payload[0]!.value), color: "var(--s1)" },
                     ...(sub ? [{ label: "Deals", value: String((payload[0]!.payload as Record<string, unknown>)[sub]) }] : []),
@@ -170,7 +201,7 @@ export function ColumnChart({ data, x, y, sub }: { data: Record<string, unknown>
               ) : null
             }
           />
-          <Bar dataKey={y} fill="var(--s1)" maxBarSize={24} radius={[4, 4, 0, 0]} />
+          <Bar dataKey={y} fill="var(--s1)" maxBarSize={24} radius={[4, 4, 0, 0]} cursor="pointer" onClick={nav} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -326,7 +357,7 @@ export function Sparkline({ values, color = "var(--s1)", height = 36, label }: {
 export function ForecastBullets({
   rows,
 }: {
-  rows: { label: string; target: number; won: number; commit: number; upside: number; pipeline: number }[];
+  rows: { label: string; target: number; won: number; commit: number; upside: number; pipeline: number; hrefs?: Partial<Record<"won" | "commit" | "upside" | "pipeline", string>> }[];
 }) {
   const max = Math.max(1, ...rows.map((r) => Math.max(r.target, r.won + r.commit + r.upside)));
   const series = [
@@ -353,9 +384,13 @@ export function ForecastBullets({
                 <div className="absolute inset-y-0 left-0 flex w-full gap-[2px]">
                   {series.map((s) => {
                     const v = r[s.key];
+                    const href = r.hrefs?.[s.key];
+                    const seg = <div className="h-full w-full transition-opacity hover:opacity-80" style={{ background: s.color }} />;
                     return v > 0 ? (
-                      <Tooltip key={s.key} content={`${s.label}: ${inr(v)}`}>
-                        <div className="h-full shrink-0 first:rounded-l-md last:rounded-r-[4px]" style={{ width: `${(v / max) * 100}%`, background: s.color }} />
+                      <Tooltip key={s.key} content={`${s.label}: ${inr(v)}${href ? " · click to view deals" : ""}`}>
+                        <div className="h-full shrink-0 overflow-hidden first:rounded-l-md last:rounded-r-[4px]" style={{ width: `${(v / max) * 100}%` }}>
+                          {href ? <Link href={href} aria-label={`${r.label} ${s.label} deals`} className="block h-full">{seg}</Link> : seg}
+                        </div>
                       </Tooltip>
                     ) : null;
                   })}
@@ -366,7 +401,13 @@ export function ForecastBullets({
                   </Tooltip>
                 )}
               </div>
-              {r.pipeline > 0 && <p className="mt-1.5 text-xs text-ink-3">+ {inr(r.pipeline)} early-stage pipeline also expected to close</p>}
+              {r.pipeline > 0 && (
+                <p className="mt-1.5 text-xs text-ink-3">
+                  +{" "}
+                  {r.hrefs?.pipeline ? <Link href={r.hrefs.pipeline} className="underline decoration-dotted underline-offset-2 hover:text-ink">{inr(r.pipeline)} early-stage pipeline</Link> : <>{inr(r.pipeline)} early-stage pipeline</>}{" "}
+                  also expected to close
+                </p>
+              )}
             </div>
           );
         })}
@@ -376,7 +417,11 @@ export function ForecastBullets({
 }
 
 /** Horizontal stacked bars per business unit by forecast category (HTML, labels never clipped). */
-export function BuStackBars({ data }: { data: { bu: string; Commit: number; Upside: number; Pipeline: number; total: number }[] }) {
+export function BuStackBars({
+  data,
+}: {
+  data: { bu: string; Commit: number; Upside: number; Pipeline: number; total: number; href?: string; hrefs?: Partial<Record<"Commit" | "Upside" | "Pipeline", string>> }[];
+}) {
   const series = [
     { key: "Commit", color: "var(--s1)" },
     { key: "Upside", color: "var(--s2)" },
@@ -389,18 +434,23 @@ export function BuStackBars({ data }: { data: { bu: string; Commit: number; Upsi
       <div className="mt-5 flex flex-col gap-4">
         {data.map((d) => (
           <div key={d.bu}>
-            <div className="mb-1.5 flex items-baseline justify-between">
-              <span className="text-[13px]">{d.bu}</span>
+            <div className="mb-1.5 flex items-baseline justify-between gap-3">
+              {d.href ? <Link href={d.href} className="truncate text-[13px] hover:text-primary hover:underline">{d.bu}</Link> : <span className="truncate text-[13px]">{d.bu}</span>}
               <span className="text-[13px] font-medium tabular">{inr(d.total)}</span>
             </div>
             <div className="flex h-2.5 gap-[2px]" style={{ width: `${Math.max(2, (d.total / max) * 100)}%` }}>
-              {series.map((s) =>
-                d[s.key] > 0 ? (
-                  <Tooltip key={s.key} content={`${d.bu} · ${s.key}: ${inr(d[s.key])}`}>
-                    <div className="h-full first:rounded-l-full last:rounded-r-full" style={{ width: `${(d[s.key] / d.total) * 100}%`, background: s.color }} />
+              {series.map((s) => {
+                if (!(d[s.key] > 0)) return null;
+                const href = d.hrefs?.[s.key];
+                const bar = <div className="h-full w-full transition-opacity hover:opacity-80" style={{ background: s.color }} />;
+                return (
+                  <Tooltip key={s.key} content={`${d.bu} · ${s.key}: ${inr(d[s.key])}${href ? " · click to view deals" : ""}`}>
+                    <div className="h-full overflow-hidden first:rounded-l-full last:rounded-r-full" style={{ width: `${(d[s.key] / d.total) * 100}%` }}>
+                      {href ? <Link href={href} aria-label={`${d.bu} ${s.key} deals`} className="block h-full">{bar}</Link> : bar}
+                    </div>
                   </Tooltip>
-                ) : null,
-              )}
+                );
+              })}
             </div>
           </div>
         ))}
@@ -410,7 +460,12 @@ export function BuStackBars({ data }: { data: { bu: string; Commit: number; Upsi
 }
 
 /** Two-series grouped columns on one axis, e.g. pipeline created vs won per month. */
-export function FlowChart({ data }: { data: { label: string; created: number; won: number }[] }) {
+export function FlowChart({ data }: { data: { label: string; created: number; won: number; hrefCreated?: string; hrefWon?: string }[] }) {
+  const router = useRouter();
+  const go = (key: "hrefCreated" | "hrefWon") => (d: unknown) => {
+    const href = (d as { payload?: Record<string, string | undefined> })?.payload?.[key];
+    if (href) router.push(href);
+  };
   return (
     <div>
       <LegendRow items={[{ label: "Pipeline created", color: "var(--s1)" }, { label: "Closed-won", color: "var(--s3)" }]} />
@@ -426,6 +481,7 @@ export function FlowChart({ data }: { data: { label: string; created: number; wo
                 active && payload?.length ? (
                   <TooltipBox
                     title={String(label)}
+                    hint={CLICK_HINT}
                     rows={[
                       { label: "Pipeline created", value: inr(payload.find((p) => p.dataKey === "created")?.value ?? 0), color: "var(--s1)" },
                       { label: "Closed-won", value: inr(payload.find((p) => p.dataKey === "won")?.value ?? 0), color: "var(--s3)" },
@@ -434,8 +490,8 @@ export function FlowChart({ data }: { data: { label: string; created: number; wo
                 ) : null
               }
             />
-            <Bar dataKey="created" fill="var(--s1)" maxBarSize={14} radius={[4, 4, 0, 0]} />
-            <Bar dataKey="won" fill="var(--s3)" maxBarSize={14} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="created" fill="var(--s1)" maxBarSize={14} radius={[4, 4, 0, 0]} cursor="pointer" onClick={go("hrefCreated")} />
+            <Bar dataKey="won" fill="var(--s3)" maxBarSize={14} radius={[4, 4, 0, 0]} cursor="pointer" onClick={go("hrefWon")} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -444,7 +500,8 @@ export function FlowChart({ data }: { data: { label: string; created: number; wo
 }
 
 /** Weekly closing calendar: expected close value per week, commit highlighted within each column. */
-export function ClosingCalendar({ data }: { data: { week: string; amount: number; count: number; commit: number }[] }) {
+export function ClosingCalendar({ data }: { data: { week: string; amount: number; count: number; commit: number; href?: string }[] }) {
+  const nav = useBarNav();
   const rows = data.map((d) => ({ ...d, other: d.amount - d.commit }));
   return (
     <div>
@@ -460,11 +517,11 @@ export function ClosingCalendar({ data }: { data: { week: string; amount: number
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
                 const r = payload[0]!.payload as (typeof rows)[number];
-                return <TooltipBox title={`Week of ${label}`} rows={[{ label: "Commit", value: inr(r.commit), color: "var(--s1)" }, { label: "Other open", value: inr(r.other), color: "var(--o1)" }, { label: "Deals", value: String(r.count) }]} />;
+                return <TooltipBox title={`Week of ${label}`} hint={r.href ? CLICK_HINT : undefined} rows={[{ label: "Commit", value: inr(r.commit), color: "var(--s1)" }, { label: "Other open", value: inr(r.other), color: "var(--o1)" }, { label: "Deals", value: String(r.count) }]} />;
               }}
             />
-            <Bar dataKey="commit" stackId="a" fill="var(--s1)" maxBarSize={24} stroke="var(--chart-surface)" strokeWidth={2} />
-            <Bar dataKey="other" stackId="a" fill="var(--o1)" maxBarSize={24} radius={[4, 4, 0, 0]} stroke="var(--chart-surface)" strokeWidth={2} />
+            <Bar dataKey="commit" stackId="a" fill="var(--s1)" maxBarSize={24} stroke="var(--chart-surface)" strokeWidth={2} cursor="pointer" onClick={nav} />
+            <Bar dataKey="other" stackId="a" fill="var(--o1)" maxBarSize={24} radius={[4, 4, 0, 0]} stroke="var(--chart-surface)" strokeWidth={2} cursor="pointer" onClick={nav} />
           </BarChart>
         </ResponsiveContainer>
       </div>

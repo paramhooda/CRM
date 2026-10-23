@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { billingPeriods, lineMultiplier } from "@/lib/boq";
 import { BILLING_FREQUENCY_LABEL, LINE_BILLING_STATUS_LABEL } from "@/lib/constants";
 import { toNumber } from "@/lib/format";
+import { parseOppFilters } from "@/lib/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -28,8 +29,15 @@ export async function GET(req: NextRequest) {
   let lines: string[];
   if (lineMode) {
     // One row per line item: the billing-ready view (same fields as the BillableLine contract)
+    // With a BU / category / OEM filter only the matching lines are exported (e.g. just the Dell lines)
+    const f = parseOppFilters(sp);
     const items = await db.opportunityLineItem.findMany({
-      where: { opportunityId: { in: rows.map((r) => r.id) } },
+      where: {
+        opportunityId: { in: rows.map((r) => r.id) },
+        ...(f.bu.length ? { businessUnitId: { in: f.bu } } : {}),
+        ...(f.cat.length ? { categoryId: { in: f.cat } } : {}),
+        ...(f.oem.length ? { oemId: { in: f.oem } } : {}),
+      },
       orderBy: [{ opportunityId: "asc" }, { lineNo: "asc" }],
       include: {
         businessUnit: { select: { name: true } }, category: { select: { name: true } }, oem: { select: { name: true } },
@@ -58,14 +66,14 @@ export async function GET(req: NextRequest) {
     });
   } else {
     header = [
-      "Code", "Opportunity", "Account", "Business Unit", "Category", "OEM", "Account Type", "Revenue Model", "Amount (INR)",
+      "Code", "Opportunity", "Account", "Primary Business Unit", "Primary Category", "Primary OEM", "Account Type", "Revenue Model", "Amount (INR)", "In-filter Value (INR)",
       "ARR (INR)", "Stage", "Probability %", "Forecast", "Expected Close", "Sales Person", "Presales Owner", "Health",
       "Health Score", "Concerns", "Last Activity", "Created",
     ];
     lines = rows.map((o) =>
       [
         o.code, o.name, o.account.name, o.businessUnit.name, o.category.name, o.oem?.name, ACCOUNT_TYPE_LABEL[o.accountType],
-        REVENUE_MODEL_LABEL[o.revenueModel], o.amount, o.arrAmount ?? "", STAGE_META[o.stage as StageKey].label, o.probability,
+        REVENUE_MODEL_LABEL[o.revenueModel], o.amount, o.scopedAmount === null ? "" : Math.round(o.scopedAmount), o.arrAmount ?? "", STAGE_META[o.stage as StageKey].label, o.probability,
         FORECAST_LABEL[o.forecastCategory], isoDate(o.expectedCloseDate), o.salesOwner.name, o.presalesOwner?.name ?? "",
         HEALTH_LABEL[o.healthLabel], o.healthScore, o.flags.map((f) => FLAG_META[f as FlagCode]?.label ?? f).join("; "),
         isoDate(o.lastActivityAt), isoDate(o.createdAt),

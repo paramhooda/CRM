@@ -30,12 +30,9 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
     <div className="mx-auto max-w-[820px] rounded-lg border border-border bg-white p-10 text-[13px] text-neutral-900 shadow-sm print:border-0 print:p-0 print:shadow-none">
       <div className="mb-2 flex justify-end no-print"><PrintButton /></div>
       <header className="flex items-start justify-between border-b border-neutral-200 pb-6">
-        <div className="flex items-center gap-3">
-          <Logo size={36} />
-          <div>
-            <p className="text-lg font-semibold">Progression</p>
-            <p className="text-xs text-neutral-500">Systems Integration · Cloud · Managed Services · Cybersecurity</p>
-          </div>
+        <div className="flex flex-col gap-2">
+          <Logo height={32} forceLight />
+          <p className="text-xs text-neutral-500">Systems Integration · Cloud · Managed Services · Cybersecurity</p>
         </div>
         <div className="text-right">
           <p className="text-xl font-semibold tracking-tight">Quotation</p>

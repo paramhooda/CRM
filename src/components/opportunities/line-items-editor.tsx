@@ -57,7 +57,7 @@ export function LineItemsEditor({
   const pickProduct = (key: string, p: ProductOption | null) => {
     if (!p) return set(key, { productId: null, _custom: true });
     set(key, {
-      productId: p.id, _custom: false, businessUnitId: p.businessUnitId, categoryId: p.categoryId, oemId: p.oemId, oemName: p.oemName,
+      productId: p.id, _custom: false, isEstimate: false, businessUnitId: p.businessUnitId, categoryId: p.categoryId, oemId: p.oemId, oemName: p.oemName,
       buName: p.buName, categoryName: p.categoryName, partNumber: p.code, description: p.name, unit: p.unit,
       billingFrequency: p.billingFrequency, termMonths: p.billingFrequency === "ONE_TIME" ? null : defaultTerm ?? p.defaultTermMonths ?? 12,
       hsnSac: p.hsnSac, gstRatePct: p.gstRatePct, listPrice: p.listPrice, standardCost: p.standardCost,
@@ -67,7 +67,7 @@ export function LineItemsEditor({
     setLines((ls) => [
       ...ls,
       {
-        _key: k(), _custom: false, id: "", lineNo: ls.length + 1, productId: null, businessUnitId: "", categoryId: "", oemId: "",
+        _key: k(), _custom: false, isEstimate: false, id: "", lineNo: ls.length + 1, productId: null, businessUnitId: "", categoryId: "", oemId: "",
         oemName: "", buName: "", categoryName: "", partNumber: "", description: "", quantity: 1, unit: "Nos", billingFrequency: "ONE_TIME",
         termMonths: null, hsnSac: null, gstRatePct: 18, unitCost: null, distributor: null, oemQuoteRef: null, leadTimeDays: null,
         pricingStatus: "PENDING", unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
@@ -120,7 +120,7 @@ export function LineItemsEditor({
           oppId,
           lines.map((l) => ({
             id: l.id || undefined, productId: l.productId, businessUnitId: l.businessUnitId || null, categoryId: l.categoryId || null,
-            oemId: l.oemId || null, partNumber: l.partNumber, description: l.description, quantity: l.quantity, unit: l.unit,
+            oemId: l.oemId || null, partNumber: l.partNumber, description: l.description, isEstimate: l.isEstimate, quantity: l.quantity, unit: l.unit,
             billingFrequency: l.billingFrequency, termMonths: l.termMonths, hsnSac: l.hsnSac, gstRatePct: l.gstRatePct,
             unitCost: l.unitCost, distributor: l.distributor, oemQuoteRef: l.oemQuoteRef, leadTimeDays: l.leadTimeDays,
             unitPrice: l.unitPrice, notes: l.notes,
@@ -212,6 +212,11 @@ export function LineItemsEditor({
                       {can.spec ? (
                         <ProductPicker products={products} value={l.productId ?? (l._custom ? "custom" : null)} onChange={(p) => pickProduct(l._key, p)} />
                       ) : null}
+                      {l.isEstimate && (
+                        <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]">
+                          Estimate{can.spec ? " · pick a product above to replace it" : " · presales will replace it with products"}
+                        </span>
+                      )}
                       {can.spec && (l._custom || !l.productId) ? (
                         <Input value={l.description} onChange={(e) => set(l._key, { description: e.target.value })} className="h-7 text-xs" placeholder="Description" aria-label={`Line ${i + 1} description`} />
                       ) : !can.spec ? (
@@ -299,7 +304,7 @@ export function LineItemsEditor({
                   )}
                   {can.spec && (
                     <td className="px-1 py-2">
-                      <button onClick={() => remove(l._key)} className="rounded p-1.5 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label="Remove line">
+                      <button onClick={() => remove(l._key)} disabled={lines.length === 1} title={lines.length === 1 ? "A deal needs at least one line item" : undefined} className="rounded p-1.5 disabled:pointer-events-none disabled:opacity-30 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label="Remove line">
                         <Trash2 className="size-3.5" />
                       </button>
                     </td>

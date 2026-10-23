@@ -57,6 +57,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     categoryName: l.category.name,
     partNumber: l.partNumber,
     description: l.description,
+    isEstimate: l.isEstimate,
     quantity: toNumber(l.quantity),
     unit: l.unit,
     billingFrequency: l.billingFrequency,

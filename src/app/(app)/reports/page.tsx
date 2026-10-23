@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { getReports } from "@/server/queries/reports";
@@ -9,9 +10,9 @@ import { BarList } from "@/components/charts/charts";
 import { Avatar } from "@/components/crm/badges";
 import { Tooltip } from "@/components/ui/tooltip";
 import { inr, pct } from "@/lib/format";
-import { periodOptions } from "@/lib/fiscal";
+import { periodOptions, rangeKey } from "@/lib/fiscal";
 import { ACCOUNT_TYPE_LABEL } from "@/lib/constants";
-import type { SearchParams } from "@/lib/filters";
+import { withParams, type SearchParams } from "@/lib/filters";
 
 export const metadata = { title: "Reports" };
 
@@ -19,23 +20,26 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const user = await requireUser();
   const sp = await searchParams;
   const [r, options] = await Promise.all([getReports(user, sp), getOptions()]);
+  // Closed-deal metrics cover the selected period, or the trailing 12 months
+  const closedPeriod = typeof sp.period === "string" ? sp.period : trailingYearKey();
   const maxCell = Math.max(1, ...r.matrix.map((m) => m.open));
   const buGroups = [...new Set(r.matrix.map((m) => m.bu))];
   const qMax = Math.max(1, ...r.quarters.map((q) => Math.max(q.target, q.won + q.commit + q.upside)));
+  const link = (extra: Record<string, string | null>, path = "/opportunities") => withParams(sp, extra, path);
 
   return (
     <>
       <PageHeader title="Reports" description={`Closed-deal metrics for ${r.periodLabel}. Pipeline metrics show all open deals.`}>
         <div className="mt-4">
-          <Suspense><FilterBar options={options} periods={periodOptions()} dims={["bu", "cat", "sales", "oem", "atype", "rev"]} hideSales={user.role === "SALES"} /></Suspense>
+          <Suspense><FilterBar me={user.id} options={options} periods={periodOptions()} dims={["bu", "cat", "sales", "oem", "atype", "rev"]} hideSales={user.role === "SALES"} /></Suspense>
         </div>
       </PageHeader>
       <PageBody className="flex flex-col gap-6">
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <StatTile label="Won" value={inr(r.totals.won)} sub={`${r.totals.wonN} deals`} accent="var(--s6)" />
-          <StatTile label="Lost / dropped" value={inr(r.totals.lost)} sub={`${r.totals.lostN} deals`} accent="var(--s8)" />
-          <StatTile label="Win rate" value={r.totals.winRate === null ? "—" : `${r.totals.winRate}%`} sub="By count" />
-          <StatTile label="Open pipeline" value={inr(r.totals.open)} accent="var(--s1)" />
+          <StatTile label="Won" href={link({ status: "won", period: closedPeriod })} value={inr(r.totals.won)} sub={`${r.totals.wonN} deals`} accent="var(--s6)" />
+          <StatTile label="Lost / dropped" href={link({ status: "lost", period: closedPeriod })} value={inr(r.totals.lost)} sub={`${r.totals.lostN} deals`} accent="var(--s8)" />
+          <StatTile label="Win rate" href={link({ status: "won,lost", period: closedPeriod })} value={r.totals.winRate === null ? "—" : `${r.totals.winRate}%`} sub="By count" />
+          <StatTile label="Open pipeline" href={link({ status: "open", period: null })} value={inr(r.totals.open)} accent="var(--s1)" />
         </div>
 
         <Card>
@@ -57,8 +61,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                       <div className="absolute inset-0 flex gap-[2px]">
                         {[["won", q.won, "var(--s6)"], ["commit", q.past ? 0 : q.commit, "var(--s1)"], ["upside", q.past ? 0 : q.upside, "var(--s2)"]].map(([k, v, c]) =>
                           Number(v) > 0 ? (
-                            <Tooltip key={String(k)} content={`${String(k)[0]!.toUpperCase() + String(k).slice(1)}: ${inr(Number(v))}`}>
-                              <div className="h-6 first:rounded-l last:rounded-r-[4px]" style={{ width: `${(Number(v) / qMax) * 100}%`, minWidth: 3, flexShrink: 0, background: String(c) }} />
+                            <Tooltip key={String(k)} content={`${String(k)[0]!.toUpperCase() + String(k).slice(1)}: ${inr(Number(v))} · click to view deals`}>
+                              <Link
+                                href={link(k === "won" ? { status: "won", period: q.period } : { status: "open", fc: String(k).toUpperCase(), period: q.period })}
+                                aria-label={`${q.label} ${String(k)} deals`}
+                                className="h-6 transition-opacity hover:opacity-80 first:rounded-l last:rounded-r-[4px]"
+                                style={{ width: `${(Number(v) / qMax) * 100}%`, minWidth: 3, flexShrink: 0, background: String(c) }}
+                              />
                             </Tooltip>
                           ) : null,
                         )}
@@ -80,11 +89,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             <CardHeader title="Stage velocity" description="Average days deals spend in each stage vs the stale threshold" />
             <CardContent className="flex flex-col gap-2.5">
               {r.velocity.map((v) => (
-                <div key={v.key} className="grid grid-cols-[140px_1fr_90px] items-center gap-3">
+                <Link key={v.key} href={link({ stage: v.key, status: null, period: null })} className="grid grid-cols-[140px_1fr_90px] items-center gap-3 rounded-md px-1 py-0.5 hover:bg-surface-hover">
                   <span className="truncate text-xs text-ink-2">{v.stage}</span>
                   <Meter value={v.avgDays} max={Math.max(60, ...r.velocity.map((x) => x.avgDays))} color={v.avgDays > v.benchmark ? "var(--serious)" : "var(--s1)"} />
                   <span className="text-right text-xs tabular">{v.avgDays}d <span className="text-ink-3">/ {v.benchmark}d</span></span>
-                </div>
+                </Link>
               ))}
             </CardContent>
           </Card>
@@ -115,10 +124,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                       const bg = t === 0 ? "var(--surface-2)" : `color-mix(in srgb, var(--s1) ${Math.round(12 + t * 70)}%, var(--surface))`;
                       return (
                         <Tooltip key={m.category} content={`${m.category}: ${inr(m.open)} open (${m.openCount} deals) · ${inr(m.won)} won · win rate ${m.winRate === null ? "n/a" : m.winRate + "%"}`}>
-                          <div className="flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs" style={{ background: bg, color: t > 0.55 ? "white" : "var(--ink)" }}>
+                          <Link href={link({ status: "open", cat: m.catId, bu: null, period: null })} className="flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs transition-opacity hover:opacity-85" style={{ background: bg, color: t > 0.55 ? "white" : "var(--ink)" }}>
                             <span className="truncate">{m.category}</span>
                             <span className="tabular">{inr(m.open)}</span>
-                          </div>
+                          </Link>
                         </Tooltip>
                       );
                     })}
@@ -140,7 +149,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             <CardHeader title="New logo vs existing" description="Win rate and bookings by account type" />
             <CardContent className="flex flex-col gap-4">
               {r.byAccountType.map((a) => (
-                <div key={a.type}>
+                <Link key={a.type} href={link({ atype: a.type, status: "won,lost", period: closedPeriod })} className="block rounded-md p-1 hover:bg-surface-hover">
                   <div className="flex items-baseline justify-between">
                     <span className="text-[13px]">{ACCOUNT_TYPE_LABEL[a.type]}</span>
                     <span className="text-xs tabular text-ink-2">{inr(a.won)} · {a.count} won</span>
@@ -149,7 +158,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                     <Meter value={a.rate ?? 0} max={100} color={a.type === "NEW_LOGO" ? "var(--s1)" : "var(--s3)"} />
                     <span className="w-10 text-right text-xs font-medium tabular">{a.rate === null ? "—" : `${a.rate}%`}</span>
                   </div>
-                </div>
+                </Link>
               ))}
             </CardContent>
           </Card>
@@ -192,7 +201,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                   const cov = gap > 0 ? p.open / gap : null;
                   return (
                     <tr key={p.id} className="border-b border-border last:border-0">
-                      <td className="px-4 py-2"><span className="flex items-center gap-2"><Avatar name={p.name} />{p.name}</span></td>
+                      <td className="px-4 py-2"><Link href={link({ sales: p.id }, "/dashboard")} className="flex items-center gap-2 hover:text-primary"><Avatar name={p.name} />{p.name}</Link></td>
                       <td className="px-3 py-2 text-right font-medium tabular">{inr(p.won)}</td>
                       <td className="px-3 py-2">{att !== null && <div className="flex items-center gap-2"><Meter value={p.won} max={p.target} color={att >= 100 ? "var(--good)" : "var(--s1)"} /><span className="w-9 text-right text-xs tabular">{Math.round(att)}%</span></div>}</td>
                       <td className="px-3 py-2 text-right tabular">{p.wonN + p.lostN ? pct((p.wonN / (p.wonN + p.lostN)) * 100) : "—"}</td>
@@ -211,4 +220,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       </PageBody>
     </>
   );
+}
+
+function trailingYearKey() {
+  const iso = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const now = new Date();
+  return rangeKey(iso(new Date(now.getTime() - 365 * 86_400_000)), iso(now));
 }

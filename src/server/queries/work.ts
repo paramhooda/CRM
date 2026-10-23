@@ -63,7 +63,7 @@ export async function getPresalesWork(user: CurrentUser) {
   const [open, waiting, delivered, base] = await Promise.all([
     db.presalesRequest.findMany({
       where: { assignedToId: user.id, status: { in: [...OPEN] } },
-      include: { opportunity: { select: { ...oppSelect, _count: { select: { lineItems: true } } } }, requestedBy: { select: { name: true } } },
+      include: { opportunity: { select: { ...oppSelect, lineItems: { select: { oem: { select: { name: true } } } } } }, requestedBy: { select: { name: true } } },
     }),
     db.pricingRequest.findMany({
       where: { status: { in: [...OPEN] }, OR: [{ requestedById: user.id }, { presalesRequest: { assignedToId: user.id } }] },
@@ -81,7 +81,8 @@ export async function getPresalesWork(user: CurrentUser) {
   const queue: QueueItem[] = open
     .map((r) => ({
       id: r.id, status: r.status, priority: r.priority, dueDate: r.dueDate, createdAt: r.createdAt, note: r.scope,
-      requestedBy: r.requestedBy.name, lines: r.opportunity._count.lineItems,
+      requestedBy: r.requestedBy.name, lines: r.opportunity.lineItems.length,
+      oems: [...new Set(r.opportunity.lineItems.map((l) => l.oem.name))],
       opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, amount: toNumber(r.opportunity.amount), salesOwner: r.opportunity.salesOwner.name },
       ...classify(r.dueDate, r.status, now),
     }))

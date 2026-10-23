@@ -1,10 +1,10 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   LayoutDashboard, KanbanSquare, Briefcase, Building2, Users, UserPlus, Inbox, History, BarChart3, Settings,
-  Menu, X, Search, Package, PanelLeftClose, PanelLeftOpen, ClipboardList, Calculator,
+  Menu, X, Search, Package, PanelLeft, ClipboardList, Calculator,
 } from "lucide-react";
 import type { Role } from "@prisma/client";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { Logo } from "@/components/crm/logo";
 import { Avatar } from "@/components/crm/badges";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ROLE_LABEL } from "@/lib/constants";
+import { SIDEBAR_COOKIE, TOGGLE_SIDEBAR_EVENT } from "@/lib/ui-prefs";
 import { UserMenu } from "./user-menu";
 import { NotificationBell } from "./notification-bell";
 import { CommandMenu } from "./command-menu";
@@ -88,34 +89,51 @@ function navFor(role: Role, requests: number): NavSection[] {
   return sections;
 }
 
-const COLLAPSE_KEY = "crm.sidebar.collapsed";
 
 export function AppShell({
   user,
   counts,
+  sidebar,
   children,
 }: {
   user: { id: string; name: string; email: string; role: Role; title: string | null };
   counts: { unread: number; requests: number };
+  /** Saved sidebar state from the cookie; null when the user never chose */
+  sidebar: "rail" | "full" | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(sidebar === "rail");
+  const [mod, setMod] = useState("Ctrl+");
   useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
-    } catch {}
+    if (/Mac|iPhone|iPad/.test(navigator.platform)) setMod("⌘");
   }, []);
-  const toggleCollapsed = () => {
+  useEffect(() => {
+    // No saved preference: tablets start with the icon rail to leave room for content
+    if (sidebar === null && window.matchMedia("(min-width: 768px) and (max-width: 1279px)").matches) setCollapsed(true);
+  }, [sidebar]);
+  const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => {
-      try {
-        localStorage.setItem(COLLAPSE_KEY, c ? "0" : "1");
-      } catch {}
+      document.cookie = `${SIDEBAR_COOKIE}=${c ? "full" : "rail"}; path=/; max-age=31536000; samesite=lax`;
       return !c;
     });
-  };
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleCollapsed();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener(TOGGLE_SIDEBAR_EVENT, toggleCollapsed);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(TOGGLE_SIDEBAR_EVENT, toggleCollapsed);
+    };
+  }, [toggleCollapsed]);
   const sections = navFor(user.role, counts.requests);
   const rail = collapsed && !open;
 
@@ -140,19 +158,15 @@ export function AppShell({
                 >
                   <it.icon className={cn("size-4 shrink-0", active ? "text-primary" : "text-ink-3")} />
                   {!rail && <span className="flex-1 truncate">{it.label}</span>}
-                  {!!it.badge && (
-                    <span
-                      className={cn(
-                        "rounded-full bg-primary text-[10px] font-semibold leading-4 text-primary-ink tabular",
-                        rail ? "absolute right-1 top-1 min-w-4 px-1 text-center" : "px-1.5",
-                      )}
-                    >
-                      {it.badge}
-                    </span>
-                  )}
+                  {!!it.badge &&
+                    (rail ? (
+                      <span className="absolute right-3 top-2 size-2 rounded-full bg-primary ring-2 ring-page" aria-label={`${it.badge} open`} />
+                    ) : (
+                      <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold leading-4 text-primary-ink tabular">{it.badge}</span>
+                    ))}
                 </Link>
               );
-              return <li key={it.href}>{rail ? <Tooltip content={it.label}>{link}</Tooltip> : link}</li>;
+              return <li key={it.href}>{rail ? <Tooltip content={it.badge ? `${it.label} · ${it.badge}` : it.label} side="right">{link}</Tooltip> : link}</li>;
             })}
           </ul>
         </div>
@@ -169,20 +183,26 @@ export function AppShell({
           rail ? "w-[64px]" : "w-[232px]",
         )}
       >
-        <div className={cn("flex h-16 items-center gap-2.5 px-5", rail && "justify-center px-0")}>
-          <Logo size={26} />
-          {!rail && (
-            <>
-              <span className="text-[15px] font-semibold tracking-tight">Progression</span>
-              <span className="rounded-md border border-border px-1.5 text-[10px] font-medium text-ink-3">CRM</span>
-            </>
-          )}
+        <div className={cn("flex h-16 items-center gap-2 px-5", rail && "justify-center px-0")}>
+          <Link href="/dashboard" className="flex items-center gap-2" aria-label="Progression CRM home">
+            {rail ? <Logo variant="mark" height={24} /> : <Logo height={22} />}
+            {!rail && <span className="rounded-md border border-border px-1.5 text-[10px] font-medium leading-4 text-ink-3">CRM</span>}
+          </Link>
           <button className="ml-auto md:hidden" onClick={() => setOpen(false)} aria-label="Close menu">
             <X className="size-4" />
           </button>
         </div>
+        {/* Edge handle: click the sidebar border to collapse or expand */}
+        <button
+          onClick={toggleCollapsed}
+          aria-label={rail ? "Expand sidebar" : "Collapse sidebar"}
+          title={`${rail ? "Expand" : "Collapse"} sidebar (${mod}B)`}
+          className="group absolute inset-y-0 -right-1.5 hidden w-3 cursor-col-resize md:block"
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-primary/60" />
+        </button>
         {nav}
-        <div className={cn("flex items-center gap-2.5 border-t border-border p-3", rail && "flex-col")}>
+        <div className={cn("flex items-center gap-2.5 border-t border-border p-3", rail && "justify-center")}>
           <Avatar name={user.name} className="size-8" />
           {!rail && (
             <div className="min-w-0 flex-1">
@@ -190,14 +210,6 @@ export function AppShell({
               <p className="truncate text-xs text-ink-3">{ROLE_LABEL[user.role]}</p>
             </div>
           )}
-          <button
-            onClick={toggleCollapsed}
-            className="hidden rounded-md p-1.5 text-ink-3 hover:bg-surface-hover hover:text-ink md:block cursor-pointer"
-            aria-label={rail ? "Expand sidebar" : "Collapse sidebar"}
-            title={rail ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {rail ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-          </button>
         </div>
       </aside>
       {open && <div className="fixed inset-0 z-30 bg-black/20 md:hidden" onClick={() => setOpen(false)} />}
@@ -207,6 +219,16 @@ export function AppShell({
           <button className="md:hidden" onClick={() => setOpen(true)} aria-label="Open menu">
             <Menu className="size-5" />
           </button>
+          <Tooltip content={`${rail ? "Expand" : "Collapse"} sidebar · ${mod}B`}>
+            <button
+              onClick={toggleCollapsed}
+              aria-label={rail ? "Expand sidebar" : "Collapse sidebar"}
+              aria-pressed={!rail}
+              className="-ml-2 hidden size-9 shrink-0 items-center justify-center rounded-lg text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink md:inline-flex cursor-pointer"
+            >
+              <PanelLeft className="size-[18px]" />
+            </button>
+          </Tooltip>
           <button
             onClick={() => setCmdOpen(true)}
             className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-ink-3 transition-colors hover:border-border-strong cursor-pointer"

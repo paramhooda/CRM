@@ -1,21 +1,21 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { History, Plus, Wallet, Target, Trophy, Percent, Sparkles, Layers, LineChart, Medal } from "lucide-react";
+import { History, Plus, Wallet, Target, Trophy, Percent, Sparkles } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getPresalesWork, getPurchaseWork } from "@/server/queries/work";
 import { PresalesHome, PurchaseHome } from "@/components/home/work-home";
 import { getDashboard, type Dashboard } from "@/server/queries/dashboard";
 import { getOptions } from "@/server/queries/options";
 import { describeStage, describeForecast } from "@/server/queries/reviews";
-import { PageHeader, PageBody, StatTile, Meter, EmptyState } from "@/components/crm/page";
+import { PageHeader, PageBody, StatTile, Meter } from "@/components/crm/page";
 import { Section } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FilterBar } from "@/components/filters/filter-bar";
-import { Sparkline, ForecastBullets, WonTrendChart, BuStackBars } from "@/components/charts/charts";
+import { Sparkline } from "@/components/charts/charts";
+import { ForecastCard, TrendCard, PipelineByCard, PerformersCard } from "@/components/dashboard/cards";
 import { NeedsAttention } from "@/components/dashboard/needs-attention";
 import { InsightList } from "@/components/dashboard/insight-list";
 import { dashboardTabs } from "@/components/dashboard/tabs";
-import { Avatar } from "@/components/crm/badges";
 import { inr, pct } from "@/lib/format";
 import { withParams, type SearchParams } from "@/lib/filters";
 import { periodOptions } from "@/lib/fiscal";
@@ -36,6 +36,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const [d, options] = await Promise.all([getDashboard(user, sp), getOptions()]);
   const link = (extra: Record<string, string | null>, path = "/opportunities") => withParams(sp, extra, path);
+  // Pipeline-by rows link to open deals with that line BU / category / OEM, optionally one forecast category
+  const stackLinks = (r: Dashboard["pipelineBy"]["bu"][number], key: "bu" | "cat" | "oem") => {
+    const base = { status: "open", period: d.periodLabel ? (sp.period as string) : null, [key]: r.id };
+    return {
+      ...r,
+      href: link(base),
+      hrefs: { Commit: link({ ...base, fc: "COMMIT" }), Upside: link({ ...base, fc: "UPSIDE" }), Pipeline: link({ ...base, fc: "PIPELINE" }) },
+    };
+  };
 
   return (
     <>
@@ -61,7 +70,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       >
         <div className="mt-6">
           <Suspense>
-            <FilterBar
+            <FilterBar me={user.id}
               options={options}
               periods={periodOptions()}
               dims={["bu", "cat", "sales", "presales", "oem", "fc", "atype", "rev"]}
@@ -72,7 +81,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </div>
       </PageHeader>
       <PageBody className="flex flex-col gap-6">
-        <Kpis d={d} />
+        <Kpis
+          d={d}
+          links={{
+            open: link({ status: "open" }),
+            commit: link({ status: "open", fc: "COMMIT", period: "this-q" }),
+            won: link({ status: "won", period: "this-q" }),
+            winRate: link({}, "/reports"),
+          }}
+        />
 
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="min-w-0 lg:col-span-2">
@@ -91,26 +108,37 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <Section title="Quarter forecast" description="Won, commit and upside against target" icon={<Target />} tone="blue">
-            <ForecastBullets rows={d.forecastRows} />
-          </Section>
-          <Section
-            title="Bookings trend"
-            description={d.targetsApplicable ? "Closed-won by month against target run-rate" : "Closed-won by month"}
-            icon={<LineChart />}
-            tone="green"
-          >
-            <WonTrendChart data={d.trend} showTarget={d.targetsApplicable} />
-          </Section>
+          <ForecastCard
+            rows={d.forecastRows.map((r) => ({
+              ...r,
+              hrefs: {
+                won: link({ status: "won", period: r.period }),
+                commit: link({ status: "open", fc: "COMMIT", period: r.period }),
+                upside: link({ status: "open", fc: "UPSIDE", period: r.period }),
+                pipeline: link({ status: "open", fc: "PIPELINE", period: r.period }),
+              },
+            }))}
+          />
+          <TrendCard data={d.trend.map((t) => ({ ...t, href: link({ status: "won", period: t.period }) }))} showTarget={d.targetsApplicable} />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-5">
-          <Section className="lg:col-span-3" title="Pipeline by business unit" description="Open value split by line item, stacked by forecast category" icon={<Layers />} tone="aqua">
-            <BuStackBars data={d.byBu.filter((b) => b.total > 0)} />
-          </Section>
-          <Section className="lg:col-span-2" title="Top performers" description={`${d.fyLabel} bookings${d.targetsApplicable ? " and attainment" : ""}`} icon={<Medal />} tone="amber">
-            <TopPerformers d={d} hrefFor={(id) => link({ sales: id }, "/dashboard")} />
-          </Section>
+          <div className="min-w-0 lg:col-span-3">
+            <PipelineByCard
+              by={{
+                bu: d.pipelineBy.bu.map((r) => stackLinks(r, "bu")),
+                category: d.pipelineBy.category.map((r) => stackLinks(r, "cat")),
+                oem: d.pipelineBy.oem.map((r) => stackLinks(r, "oem")),
+              }}
+            />
+          </div>
+          <div className="min-w-0 lg:col-span-2">
+            <PerformersCard
+              rows={d.leaderboard.map((r) => ({ ...r, href: link({ sales: r.id }, "/dashboard") }))}
+              fyLabel={d.fyLabel}
+              targetsApplicable={d.targetsApplicable}
+            />
+          </div>
         </div>
       </PageBody>
     </>
@@ -134,7 +162,7 @@ function changeSummary(c: Change) {
   return { id: c.id, name: c.name, account: c.account, owner: c.owner, amount: c.amount, summary, tone };
 }
 
-function Kpis({ d }: { d: Dashboard }) {
+function Kpis({ d, links }: { d: Dashboard; links: Record<"open" | "commit" | "won" | "winRate", string> }) {
   const k = d.kpis;
   const qAtt = k.qTarget ? (k.wonQtd / k.qTarget) * 100 : null;
   const commitCover = k.qTarget ? ((k.wonQtd + k.commitQ) / k.qTarget) * 100 : null;
@@ -144,6 +172,7 @@ function Kpis({ d }: { d: Dashboard }) {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatTile
         label="Open pipeline"
+        href={links.open}
         value={inr(k.openPipeline)}
         icon={<Wallet />}
         tone="blue"
@@ -153,6 +182,7 @@ function Kpis({ d }: { d: Dashboard }) {
       />
       <StatTile
         label={`Commit · ${d.quarterLabel}`}
+        href={links.commit}
         value={inr(k.commitQ)}
         icon={<Target />}
         tone="violet"
@@ -161,6 +191,7 @@ function Kpis({ d }: { d: Dashboard }) {
       />
       <StatTile
         label={`Won · ${d.quarterLabel}`}
+        href={links.won}
         value={inr(k.wonQtd)}
         icon={<Trophy />}
         tone="green"
@@ -170,6 +201,7 @@ function Kpis({ d }: { d: Dashboard }) {
       />
       <StatTile
         label="Win rate"
+        href={links.winRate}
         value={k.winRate === null ? "—" : pct(k.winRate)}
         icon={<Percent />}
         tone="amber"
@@ -178,40 +210,5 @@ function Kpis({ d }: { d: Dashboard }) {
         sub={<>{k.winRateValue === null ? "No closed deals" : `${pct(k.winRateValue)} by value`} · trailing 12 mo vs prior</>}
       />
     </div>
-  );
-}
-
-function TopPerformers({ d, hrefFor }: { d: Dashboard; hrefFor: (id: string) => string }) {
-  const rows = d.leaderboard.filter((r) => r.won > 0 || r.open > 0).slice(0, 6);
-  if (!rows.length) return <EmptyState title="No sales activity in scope" />;
-  const max = Math.max(1, ...rows.map((r) => r.won));
-  return (
-    <ul className="flex flex-col gap-4">
-      {rows.map((r, i) => {
-        const att = r.target ? (r.won / r.target) * 100 : null;
-        return (
-          <li key={r.id}>
-            <Link href={hrefFor(r.id)} className="group grid grid-cols-[20px_28px_1fr_auto] items-center gap-3">
-              <span className="text-xs tabular text-ink-3">{i + 1}</span>
-              <Avatar name={r.name} className="size-7" />
-              <div className="min-w-0">
-                <p className="truncate text-[13px] font-medium group-hover:text-primary">{r.name}</p>
-                <div className="mt-1.5">
-                  {att !== null ? (
-                    <Meter value={r.won} max={r.target} color={att >= 100 ? "var(--good)" : "var(--s1)"} />
-                  ) : (
-                    <Meter value={r.won} max={max} />
-                  )}
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-[13px] font-semibold tabular">{inr(r.won)}</p>
-                <p className="text-[11px] tabular text-ink-3">{att !== null ? `${Math.round(att)}% of target` : `${inr(r.open)} open`}</p>
-              </div>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
   );
 }

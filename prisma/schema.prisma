@@ -552,6 +552,8 @@ model OpportunityLineItem {
   oem              Oem               @relation(fields: [oemId], references: [id])
   partNumber       String?
   description      String
+  /// Rough placeholder (OEM + category + value) added at deal creation; presales replaces it with catalogue products
+  isEstimate       Boolean           @default(false)
   quantity         Decimal           @db.Decimal(12, 2)
   unit             String            @default("Nos")
   billingFrequency BillingFrequency  @default(ONE_TIME)

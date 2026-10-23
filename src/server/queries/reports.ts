@@ -6,6 +6,7 @@ import { oppWhere, parseOppFilters, type SearchParams } from "@/lib/filters";
 import { ACTIVE_STAGES, STAGE_META, type StageKey } from "@/lib/constants";
 import { fiscalPeriod, quarterRange, parsePeriodKey, fyLabel } from "@/lib/fiscal";
 import { toNumber } from "@/lib/format";
+import { attributeDeal, attributionLineSelect } from "./attributed";
 
 const DAY = 86_400_000;
 
@@ -19,12 +20,17 @@ export async function getReports(user: CurrentUser, sp: SearchParams) {
       select: {
         id: true, amount: true, stage: true, probability: true, forecastCategory: true, expectedCloseDate: true, closedAt: true,
         createdAt: true, lossReason: true, competitors: true, accountType: true, healthLabel: true, revenueModel: true,
-        businessUnit: { select: { name: true } }, category: { select: { name: true } },
+        businessUnit: { select: { name: true } }, category: { select: { name: true } }, oem: { select: { name: true } },
+        lineItems: attributionLineSelect,
         salesOwner: { select: { id: true, name: true } },
         stageHistory: { select: { toStage: true, changedAt: true }, orderBy: { changedAt: "asc" } },
       },
     })
-  ).map((o) => ({ ...o, amount: toNumber(o.amount) }));
+  ).map((o) => {
+    // In-scope value: with a BU / category / OEM filter, only the matching lines' share counts
+    const { amount, slices } = attributeDeal(o, f);
+    return { ...o, amount, slices, lineItems: undefined };
+  });
   type O = (typeof opps)[number];
   const cur = fiscalPeriod(now);
   const period = parsePeriodKey(f.period, now) ?? { start: new Date(now.getTime() - 365 * DAY), end: new Date(now.getTime() + DAY), label: "Trailing 12 months" };
@@ -73,6 +79,7 @@ export async function getReports(user: CurrentUser, sp: SearchParams) {
     const inQ = open.filter((o) => o.expectedCloseDate >= r.start && o.expectedCloseDate < r.end);
     return {
       label: `Q${q}`,
+      period: `FY${String(cur.fiscalYear).slice(-2)}-Q${q}`,
       current: q === cur.quarter,
       past: r.end <= now,
       target: targetsApplicable ? targets.filter((t) => t.quarter === q).reduce((a, t) => a + toNumber(t.targetAmount), 0) : 0,
@@ -114,15 +121,18 @@ export async function getReports(user: CurrentUser, sp: SearchParams) {
 
   // BU x Category matrix
   const cats = await db.category.findMany({ where: { active: true }, include: { businessUnit: true }, orderBy: [{ businessUnit: { sortOrder: "asc" } }, { sortOrder: "asc" }] });
+  // Split by line items, so a deal spanning two categories counts in both cells with its share of value
   const matrix = cats.map((c) => {
-    const xs = opps.filter((o) => o.category.name === c.name && o.businessUnit.name === c.businessUnit.name);
+    const part = (o: O) => o.slices.filter((sl) => sl.categoryId === c.id).reduce((a, sl) => a + sl.amount, 0);
+    const xs = opps.filter((o) => o.slices.some((sl) => sl.categoryId === c.id));
     const w = xs.filter((o) => o.stage === "WON" && inP(o.closedAt));
     const l = xs.filter((o) => (o.stage === "LOST" || o.stage === "DROPPED") && inP(o.closedAt));
+    const openXs = xs.filter((o) => ACTIVE_STAGES.includes(o.stage as StageKey));
     return {
-      bu: c.businessUnit.name, category: c.name,
-      open: sum(xs.filter((o) => ACTIVE_STAGES.includes(o.stage as StageKey))),
-      openCount: xs.filter((o) => ACTIVE_STAGES.includes(o.stage as StageKey)).length,
-      won: sum(w), winRate: rate(w, l),
+      bu: c.businessUnit.name, buId: c.businessUnitId, category: c.name, catId: c.id,
+      open: openXs.reduce((a, o) => a + part(o), 0),
+      openCount: openXs.length,
+      won: w.reduce((a, o) => a + part(o), 0), winRate: rate(w, l),
     };
   });
 

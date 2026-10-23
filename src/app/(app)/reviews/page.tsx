@@ -68,7 +68,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
         }
       >
         <div className="mt-4">
-          <Suspense><FilterBar options={options} showPeriod={false} dims={["bu", "cat", "sales", "oem", "fc", "atype", "rev"]} hideSales={user.role === "SALES"} /></Suspense>
+          <Suspense><FilterBar me={user.id} options={options} showPeriod={false} dims={["bu", "cat", "sales", "oem", "fc", "atype", "rev"]} hideSales={user.role === "SALES"} /></Suspense>
         </div>
       </PageHeader>
       <PageBody className="flex flex-col gap-6">

@@ -13,6 +13,8 @@ import { Kanban } from "@/components/opportunities/kanban";
 import { Button } from "@/components/ui/button";
 import { periodOptions } from "@/lib/fiscal";
 import { inr, toNumber } from "@/lib/format";
+import { hasLineFilter } from "@/lib/attribution";
+import { attributeDeal, attributionLineSelect } from "@/server/queries/attributed";
 
 export const metadata = { title: "Pipeline" };
 
@@ -28,12 +30,17 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
         id: true, name: true, code: true, amount: true, stage: true, probability: true, healthLabel: true, healthScore: true, flags: true,
         expectedCloseDate: true, salesOwnerId: true, presalesOwnerId: true, forecastCategory: true,
         account: { select: { name: true } }, salesOwner: { select: { name: true } },
+        businessUnit: { select: { name: true } }, category: { select: { name: true } }, oem: { select: { name: true } },
+        lineItems: attributionLineSelect,
       },
     }),
     getOptions(),
   ]);
+  const lineScoped = hasLineFilter(f);
   const cards = rows.map((r) => ({
-    id: r.id, name: r.name, code: r.code, account: r.account.name, amount: toNumber(r.amount), stage: r.stage, probability: r.probability,
+    id: r.id, name: r.name, code: r.code, account: r.account.name,
+    // With a BU / category / OEM filter the board sums each deal's matching share
+    amount: attributeDeal(r, f).amount, dealAmount: lineScoped ? toNumber(r.amount) : undefined, stage: r.stage, probability: r.probability,
     healthLabel: r.healthLabel, healthScore: r.healthScore, flags: r.flags, expectedCloseDate: r.expectedCloseDate.toISOString(),
     owner: r.salesOwner.name, salesOwnerId: r.salesOwnerId, forecastCategory: r.forecastCategory,
   }));
@@ -53,7 +60,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
       >
         <div className="mt-6">
           <Suspense>
-            <FilterBar options={options} periods={periodOptions()} dims={["bu", "cat", "sales", "presales", "oem", "fc", "health", "flag", "atype", "rev"]} hideSales={user.role === "SALES"} />
+            <FilterBar me={user.id} options={options} periods={periodOptions()} dims={["bu", "cat", "sales", "presales", "oem", "fc", "health", "flag", "atype", "rev"]} hideSales={user.role === "SALES"} />
           </Suspense>
         </div>
       </PageHeader>

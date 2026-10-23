@@ -83,7 +83,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                           sources={options.leadSources} bus={options.bus} owners={options.sales} canReassign={isManager(user)} currentUserId={user.id}
                         />
                         {l.status !== "UNQUALIFIED" && (
-                          <ConvertLeadDialog id={l.id} company={l.company} requirement={l.requirement} estimatedValue={l.estimatedValue ? toNumber(l.estimatedValue) : null} buId={l.businessUnitId} accounts={accounts} categories={options.categories} />
+                          <ConvertLeadDialog id={l.id} company={l.company} requirement={l.requirement} estimatedValue={l.estimatedValue ? toNumber(l.estimatedValue) : null} buId={l.businessUnitId} accounts={accounts} categories={options.categories} oems={options.oems} />
                         )}
                       </div>
                     )}

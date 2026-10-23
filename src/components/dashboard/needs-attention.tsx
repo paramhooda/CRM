@@ -7,6 +7,7 @@ import { FlagChips, SeverityIcon } from "@/components/crm/flag-chips";
 import { FLAG_META, type FlagCode } from "@/lib/rules/flags";
 import { inr, relativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { MiniSelect } from "@/components/ui/segmented";
 
 type Deal = {
   id: string; name: string; account: string; amount: number; healthLabel: string; healthScore: number; flags: string[];
@@ -29,6 +30,21 @@ export function NeedsAttention({
     { key: "concerns", label: "Concerns", icon: AlertTriangle, color: "var(--warning)", n: concerns.reduce((a, c) => a + c.count, 0) },
   ] as const;
   const [tab, setTab] = useState<(typeof tabs)[number]["key"]>("dying");
+  // Local filters for the deal lists: sort and owner. Lists come pre-sorted by value, up to 20 each.
+  const [sort, setSort] = useState<"value" | "close" | "idle">("value");
+  const [owner, setOwner] = useState("all");
+  const owners = [...new Set([...hot, ...dying].map((d) => d.owner))].sort();
+  const shape = (xs: Deal[]) =>
+    xs
+      .filter((d) => owner === "all" || d.owner === owner)
+      .sort((a, b) =>
+        sort === "close"
+          ? new Date(a.expectedCloseDate).getTime() - new Date(b.expectedCloseDate).getTime()
+          : sort === "idle"
+            ? new Date(a.lastActivityAt ?? 0).getTime() - new Date(b.lastActivityAt ?? 0).getTime()
+            : b.amount - a.amount,
+      )
+      .slice(0, 6);
   const blurb = {
     dying: "No activity in 21+ days, stuck in stage, or well past the close date",
     hot: "Late stage, engaged in the last 7 days and on schedule",
@@ -64,7 +80,20 @@ export function NeedsAttention({
       </div>
       <div className="flex-1">
         {(tab === "hot" || tab === "dying") && (
-          <DealList deals={tab === "hot" ? hot : dying} mode={tab} empty={tab === "hot" ? "No hot deals right now." : "Nothing dying. Nice."} />
+          <>
+            <div className="flex flex-wrap items-center gap-2 px-5 pb-3">
+              <MiniSelect
+                label="Sort deals"
+                value={sort}
+                onChange={setSort}
+                options={[{ value: "value", label: "Largest first" }, { value: "close", label: "Closing soonest" }, { value: "idle", label: "Longest idle" }]}
+              />
+              {owners.length > 1 && (
+                <MiniSelect label="Sales person" value={owner} onChange={setOwner} options={[{ value: "all", label: "All sales people" }, ...owners.map((o) => ({ value: o, label: o }))]} />
+              )}
+            </div>
+            <DealList deals={shape(tab === "hot" ? hot : dying)} mode={tab} empty={owner !== "all" ? "None for this sales person." : tab === "hot" ? "No hot deals right now." : "Nothing dying. Nice."} />
+          </>
         )}
         {tab === "changes" && (
           changes.length === 0 ? <Empty text="No changes since your last review." /> : (

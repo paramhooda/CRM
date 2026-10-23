@@ -3,9 +3,10 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
 import * as D from "@radix-ui/react-dialog";
-import { Briefcase, Building2, User, LayoutDashboard, KanbanSquare, Plus, History, Inbox, BarChart3, Search, Package } from "lucide-react";
+import { Briefcase, Building2, User, LayoutDashboard, KanbanSquare, Plus, History, Inbox, BarChart3, Search, Package, PanelLeft } from "lucide-react";
 import type { Role } from "@prisma/client";
 import { globalSearch, type SearchHit } from "@/server/actions/search";
+import { TOGGLE_SIDEBAR_EVENT } from "@/lib/ui-prefs";
 
 const ICON = { opportunity: Briefcase, account: Building2, contact: User, product: Package };
 
@@ -96,6 +97,22 @@ export function CommandMenu({ open, setOpen, role }: { open: boolean; setOpen: (
                       {n.label}
                     </Command.Item>
                   ))}
+                </Command.Group>
+              )}
+              {q.trim().length < 2 && (
+                <Command.Group heading="Actions">
+                  <Command.Item
+                    value="toggle-sidebar"
+                    onSelect={() => {
+                      setOpen(false);
+                      window.dispatchEvent(new Event(TOGGLE_SIDEBAR_EVENT));
+                    }}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-[13px] data-[selected=true]:bg-surface-hover"
+                  >
+                    <PanelLeft className="size-4 text-ink-3" />
+                    Toggle sidebar
+                    <kbd className="ml-auto rounded border border-border px-1 font-mono text-[10px] text-ink-3">Ctrl/⌘ B</kbd>
+                  </Command.Item>
                 </Command.Group>
               )}
             </Command.List>

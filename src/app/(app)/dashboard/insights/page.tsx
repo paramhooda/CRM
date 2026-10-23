@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import {
-  Workflow, CalendarRange, Filter, Repeat2, HeartPulse, Flame, Skull, AlertTriangle, Boxes, Factory, Package, Layers, Hourglass,
+  Workflow, Filter, Repeat2, HeartPulse, Flame, Skull, AlertTriangle, Boxes, Factory, Package, Layers, Hourglass,
   Percent, RefreshCcw, Sparkles, CalendarClock, ClipboardList, Calculator,
 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
@@ -12,10 +12,11 @@ import { getOptions } from "@/server/queries/options";
 import { PageHeader, PageBody, EmptyState, Meter } from "@/components/crm/page";
 import { Section } from "@/components/ui/card";
 import { FilterBar } from "@/components/filters/filter-bar";
-import { FlowChart, ClosingCalendar, Funnel, BarList, ColumnChart, SegmentBar } from "@/components/charts/charts";
+import { FlowChart, Funnel, BarList, ColumnChart, SegmentBar } from "@/components/charts/charts";
 import { StageBadge } from "@/components/crm/badges";
 import { InsightList } from "@/components/dashboard/insight-list";
 import { dashboardTabs } from "@/components/dashboard/tabs";
+import { CalendarCard, OemMixCard } from "@/components/dashboard/cards";
 import { inr, fmtDate } from "@/lib/format";
 import { withParams, type SearchParams } from "@/lib/filters";
 import { periodOptions } from "@/lib/fiscal";
@@ -30,6 +31,8 @@ export default async function InsightsPage({ searchParams }: { searchParams: Pro
   const [d, r, options] = await Promise.all([getDashboard(user, sp), getReports(user, sp), getOptions()]);
   const link = (extra: Record<string, string | null>, path = "/opportunities") => withParams(sp, extra, path);
   const mixTotal = d.revenueMix.oneTime + d.revenueMix.arr;
+  // Bookings default to the fiscal year to date unless a period filter is set
+  const bookingsPeriod = typeof sp.period === "string" ? sp.period : "this-fy";
 
   return (
     <>
@@ -40,7 +43,7 @@ export default async function InsightsPage({ searchParams }: { searchParams: Pro
       >
         <div className="mt-6">
           <Suspense>
-            <FilterBar
+            <FilterBar me={user.id}
               options={options}
               periods={periodOptions()}
               dims={["bu", "cat", "sales", "presales", "oem", "fc", "atype", "rev"]}
@@ -61,21 +64,14 @@ export default async function InsightsPage({ searchParams }: { searchParams: Pro
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Section title="Pipeline flow" description="Value of new pipeline created vs closed-won, by month" icon={<Workflow />} tone="blue">
-            <FlowChart data={d.monthly} />
+            <FlowChart data={d.monthly.map((m) => ({ ...m, hrefCreated: link({ created: m.period, period: null }), hrefWon: link({ status: "won", period: m.period }) }))} />
           </Section>
-          <Section
-            title="Closing calendar"
-            description={d.overdueOpen > 0 ? `Expected closes for the next 8 weeks · ${inr(d.overdueOpen)} already past its close date` : "Expected closes for the next 8 weeks"}
-            icon={<CalendarRange />}
-            tone="amber"
-          >
-            <ClosingCalendar data={d.closingCalendar} />
-          </Section>
+          <CalendarCard data={d.closingCalendar.map((w) => ({ ...w, href: link({ status: "open", period: w.period }) }))} overdue={d.overdueOpen} />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Section title="Stage funnel" description="Open value and count per stage" icon={<Filter />} tone="blue">
-            <Funnel data={d.funnel.map((f) => ({ ...f, href: link({ stage: f.key }) }))} />
+            <Funnel data={d.funnel.map((f) => ({ ...f, href: link({ stage: f.key, status: null }) }))} />
           </Section>
           <Section title="Stage conversion" description="Share of deals that reached a stage and moved on to the next" icon={<Repeat2 />} tone="aqua">
             <div className="flex flex-col gap-4">
@@ -99,15 +95,15 @@ export default async function InsightsPage({ searchParams }: { searchParams: Pro
             <div className="grid gap-8 lg:grid-cols-3">
               <div>
                 <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-ink-2"><Layers className="size-3.5" /> Business unit</p>
-                <BarList color="var(--s6)" data={d.bookingsMix.bu.map((x) => ({ label: x.key, value: x.amount }))} />
+                <BarList color="var(--s6)" data={d.bookingsMix.bu.map((x) => ({ label: x.key, value: x.amount, href: x.id ? link({ status: "won", bu: x.id, period: bookingsPeriod }) : undefined }))} />
               </div>
               <div>
                 <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-ink-2"><Factory className="size-3.5" /> OEM</p>
-                <BarList color="var(--s6)" data={d.bookingsMix.oem.map((x) => ({ label: x.key, value: x.amount }))} />
+                <BarList color="var(--s6)" data={d.bookingsMix.oem.map((x) => ({ label: x.key, value: x.amount, href: x.id ? link({ status: "won", oem: x.id, period: bookingsPeriod }) : undefined }))} />
               </div>
               <div>
                 <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-ink-2"><Package className="size-3.5" /> Top products</p>
-                <BarList color="var(--s6)" data={d.bookingsMix.product.map((x) => ({ label: String(x.key), value: x.amount }))} />
+                <BarList color="var(--s6)" data={d.bookingsMix.product.map((x) => ({ label: String(x.key), value: x.amount, href: `/products?q=${encodeURIComponent(String(x.key))}` }))} />
               </div>
             </div>
           )}
@@ -142,28 +138,26 @@ export default async function InsightsPage({ searchParams }: { searchParams: Pro
               <div className="h-full rounded-r-full" style={{ width: `${mixTotal ? (d.revenueMix.arr / mixTotal) * 100 : 50}%`, background: "var(--s3)" }} />
             </div>
             <div className="mt-5 grid grid-cols-2 gap-4">
-              <div>
+              <Link href={link({ status: "open", rev: "ONE_TIME" })} className="rounded-lg p-1 hover:bg-surface-2">
                 <p className="flex items-center gap-1.5 text-xs text-ink-3"><span className="size-2 rounded-sm bg-[var(--s1)]" /> One-time</p>
                 <p className="mt-0.5 text-lg font-semibold tabular">{inr(d.revenueMix.oneTime)}</p>
-              </div>
-              <div>
+              </Link>
+              <Link href={link({ status: "open", rev: "ARR" })} className="rounded-lg p-1 hover:bg-surface-2">
                 <p className="flex items-center gap-1.5 text-xs text-ink-3"><span className="size-2 rounded-sm bg-[var(--s3)]" /> Recurring (TCV)</p>
                 <p className="mt-0.5 text-lg font-semibold tabular">{inr(d.revenueMix.arr)}</p>
                 <p className="text-xs text-ink-3">{inr(d.revenueMix.arrAnnual)} per year</p>
-              </div>
+              </Link>
             </div>
           </Section>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
-          <Section title="Open pipeline by OEM" description="Split by line item, top 7" icon={<Factory />} tone="blue">
-            <BarList data={d.oemMix.map((o) => ({ label: o.name, value: o.amount }))} />
-          </Section>
+          <OemMixCard rows={d.oemMix.map((o) => ({ label: o.name, value: o.amount, href: o.id ? link({ status: "open", oem: o.id }) : undefined }))} />
           <Section title="Pipeline aging" description="Open value by deal age" icon={<Hourglass />} tone="amber">
-            <ColumnChart data={d.aging} x="bucket" y="amount" sub="count" />
+            <ColumnChart data={d.aging.map((a) => ({ ...a, href: link({ age: a.age }) }))} x="bucket" y="amount" sub="count" />
           </Section>
           <Section title="Win rate by business unit" description="Won ÷ (won + lost), trailing 12 months" icon={<Percent />} tone="green">
-            <BarList color="var(--s3)" data={d.winByBu.map((w) => ({ label: w.bu, value: w.rate, secondary: `${w.won}W · ${w.lost}L` }))} format="pct" />
+            <BarList color="var(--s3)" data={d.winByBu.map((w) => ({ label: w.bu, value: w.rate, secondary: `${w.won}W · ${w.lost}L`, href: w.id ? link({ status: "won,lost", bu: w.id, period: null }) : undefined }))} format="pct" />
           </Section>
         </div>
 

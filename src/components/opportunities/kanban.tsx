@@ -12,7 +12,7 @@ import { sortFlags, FLAG_META } from "@/lib/rules/flags";
 import { cn } from "@/lib/utils";
 
 export type Card = {
-  id: string; name: string; code: string; account: string; amount: number; stage: string; probability: number; healthLabel: string;
+  id: string; name: string; code: string; account: string; amount: number; /** Whole deal, when amount is a filtered share */ dealAmount?: number; stage: string; probability: number; healthLabel: string;
   healthScore: number; flags: string[]; expectedCloseDate: string; owner: string; salesOwnerId: string; forecastCategory: string;
 };
 
@@ -84,7 +84,10 @@ export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: str
                     <Link href={`/opportunities/${c.id}`} className="block text-[13px] font-medium leading-snug hover:text-primary">{c.name}</Link>
                     <p className="mt-0.5 truncate text-xs text-ink-3">{c.account}</p>
                     <div className="mt-2 flex items-center justify-between">
-                      <span className="text-[13px] font-semibold tabular">{inr(c.amount)}</span>
+                      <span className="text-[13px] font-semibold tabular" title={c.dealAmount && c.dealAmount !== c.amount ? `Filtered share of a ${inr(c.dealAmount)} deal` : undefined}>
+                        {inr(c.amount)}
+                        {c.dealAmount !== undefined && Math.round(c.dealAmount) !== Math.round(c.amount) && <span className="ml-1 text-[11px] font-normal text-ink-3">of {inr(c.dealAmount)}</span>}
+                      </span>
                       <HealthBadge label={c.healthLabel} score={c.healthScore} compact />
                     </div>
                     <div className="mt-2 flex items-center gap-2 text-xs text-ink-3">

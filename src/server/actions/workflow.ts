@@ -233,6 +233,7 @@ export async function saveBoq(oppId: string, rawLines: unknown[]): Promise<Actio
   if (!opp) return { ok: false, error: "Opportunity not found." };
   const parsed = z.array(lineInputSchema).max(200).safeParse(rawLines);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  if (!parsed.data.length) return { ok: false, error: "A deal needs at least one line item. Its OEM, BU and value come from the lines." };
   const spec = can.editBoqSpec(user, opp);
   const cost = can.editBoqCost(user);
   const price = can.editBoqPrice(user, opp);
@@ -302,6 +303,8 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
     include: { oem: { select: { name: true } }, product: { select: { hsnSac: true } } },
   });
   const t = boqTotals(lines);
+  const estimates = lines.filter((l) => l.isEstimate).map((l) => l.lineNo);
+  if (estimates.length) return { ok: false, error: `Replace estimate line ${estimates.join(", ")} with catalogue products before quoting.` };
   if (!t.fullyPriced) return { ok: false, error: "Every BOQ line needs a sell price before quoting." };
   if (!t.fullyCosted) return { ok: false, error: "Pricing from Purchase is incomplete." };
   try {

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Hourglass, PackageCheck, CheckSquare, Bell, PackageSearch, CalendarX2, ArrowRight } from "lucide-react";
 import { PageHeader, PageBody } from "@/components/crm/page";
 import { Section } from "@/components/ui/card";
-import { WorkQueue } from "./work-queue";
+import { WorkQueue, RfqByOem } from "./work-queue";
 import type { getPresalesWork, getPurchaseWork } from "@/server/queries/work";
 import { fmtDate, relativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -110,7 +110,6 @@ export function PurchaseHome({ name, data }: { name: string; data: Purchase }) {
   const summary = data.queue.length
     ? `${plural(data.queue.length, "BOQ")} to price${overdue ? ` · ${overdue} overdue` : ""} · ${plural(uncosted, "line")} still need a cost`
     : "No pricing requests waiting on you right now.";
-  const max = Math.max(1, ...data.rfqByOem.map((r) => r.lines));
   return (
     <>
       <PageHeader title={`${greeting()}, ${name.split(" ")[0]}`} description={summary} />
@@ -120,20 +119,8 @@ export function PurchaseHome({ name, data }: { name: string; data: Purchase }) {
             <WorkQueue kind="purchase" items={data.queue} />
           </div>
           <div className="flex min-w-0 flex-col gap-6">
-            <Section title="Quotes to request, by OEM" description="Uncosted lines across your queue. Batch one RFQ per OEM." icon={<PackageSearch />} tone="blue">
-              {data.rfqByOem.length === 0 ? <p className="text-[13px] text-ink-3">Every line in your queue has a cost.</p> : (
-                <ul className="flex flex-col gap-2.5">
-                  {data.rfqByOem.map((r) => (
-                    <li key={r.oem} className="grid grid-cols-[110px_1fr_auto] items-center gap-3">
-                      <span className="truncate text-[13px]">{r.oem}</span>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-[var(--t-blue-bg)]">
-                        <div className="h-full rounded-full bg-[var(--s1)]" style={{ width: `${(r.lines / max) * 100}%` }} />
-                      </div>
-                      <span className="text-xs tabular text-ink-3">{plural(r.lines, "line")} · {plural(r.deals, "deal")}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <Section title="Quotes to request, by OEM" description="Uncosted lines across your queue. Batch one RFQ per OEM; click one to filter your queue." icon={<PackageSearch />} tone="blue">
+              <RfqByOem rows={data.rfqByOem} />
             </Section>
             <Section title="Supplier quotes expiring" description="Open deals whose supplier pricing lapses within 10 days, or lapsed in the last 30" icon={<CalendarX2 />} tone="red" flush>
               {data.expiring.length === 0 ? <Empty text="No supplier quotes expiring soon." /> : (

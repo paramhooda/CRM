@@ -85,7 +85,7 @@
 }
 
 @theme inline {
-  --font-sans: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Inter Variable", Inter, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
   --color-page: var(--page);
@@ -113,13 +113,16 @@
   html, body { height: 100%; }
   body {
     background: var(--page);
-    letter-spacing: -0.003em;
+    letter-spacing: -0.006em;
     color: var(--ink);
     font-family: var(--font-sans);
+    /* Inter's optical sizes give SF-style display cuts on large numbers and titles */
+    font-optical-sizing: auto;
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
+  h1, h2, h3 { letter-spacing: -0.018em; }
   ::selection { background: var(--primary-soft); }
   :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
   input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.5; }
@@ -134,4 +137,9 @@
 @media print {
   .no-print { display: none !important; }
   body { background: white; }
+}
+
+@keyframes crm-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
 }

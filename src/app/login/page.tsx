@@ -21,12 +21,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   return (
     <main className="flex min-h-screen items-center justify-center bg-page px-4 py-10">
       <div className="w-full max-w-[400px]">
-        <div className="mb-6 flex items-center gap-2.5">
-          <Logo />
-          <div>
-            <p className="text-[15px] font-semibold tracking-tight">Progression CRM</p>
-            <p className="text-xs text-ink-3">Systems integration and managed services</p>
-          </div>
+        <div className="mb-8 flex flex-col items-center gap-3 text-center">
+          <Logo height={36} />
+          <p className="text-[13px] text-ink-3">CRM · Systems integration and managed services</p>
         </div>
         <LoginForm next={next} demo={demo.filter((d): d is NonNullable<typeof d> => !!d)} />
         <p className="mt-6 text-center text-xs text-ink-3">Protected system. Access is logged and audited.</p>

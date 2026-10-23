@@ -61,6 +61,21 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("Presales notified")).toBeVisible();
   });
 
+  test("filtering by OEM shows that OEM's share of the mixed deal", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto(`/opportunities?q=${encodeURIComponent(dealName)}`);
+    await page.getByRole("button", { name: /^OEM/ }).click();
+    await page.getByPlaceholder("Search oem…").fill("Fortinet");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(/oem=/);
+    await expect(page.getByRole("columnheader", { name: "Fortinet value" })).toBeVisible();
+    const row = page.locator("tr", { hasText: dealName });
+    await expect(row).toContainText("₹43.5 L"); // whole deal
+    await expect(row).toContainText("₹18.2 L"); // Fortinet lines only: 2 × 9,10,800
+    await expect(page.getByText(/Fortinet's share of each deal/)).toBeVisible();
+  });
+
   test("presales sees it on the My work home, adds a line and submits to purchase", async ({ page }) => {
     await login(page, PRESALES.email);
     await expect(page.getByRole("heading", { name: "My BOQ queue" })).toBeVisible();
@@ -89,6 +104,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await login(page, PURCHASE.email);
     await expect(page.getByRole("heading", { name: "My pricing queue" })).toBeVisible();
     await expect(page.getByText("Quotes to request, by OEM")).toBeVisible();
+    // Local queue search narrows the list without touching the page URL
+    await page.getByLabel("Search queue").fill(dealName);
+    await expect(page.getByTestId("work-queue").locator("li")).toHaveCount(1);
     await page.getByTestId("work-queue").locator("li", { hasText: dealName }).getByRole("link", { name: /Price it/ }).click();
     await page.waitForURL(/tab=boq/);
     await page.getByRole("button", { name: "Standard costs" }).click();
@@ -184,5 +202,51 @@ test.describe("Roles and permissions", () => {
   test("unauthenticated API access is rejected", async ({ request }) => {
     const r = await request.get("/api/export/opportunities", { maxRedirects: 0 });
     expect(r.status()).toBe(401);
+  });
+
+  test("logo and favicon load before sign-in", async ({ request }) => {
+    for (const path of ["/brand/progression-logo.png", "/brand/progression-logo-dark.png", "/icon.png"]) {
+      const r = await request.get(path, { maxRedirects: 0 });
+      expect(r.status(), path).toBe(200);
+    }
+  });
+});
+
+test.describe("Line items, navigation and filters", () => {
+  test("a deal can start from a quick estimate; OEM lives on the line", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    await expect(page.locator("#oemId")).toHaveCount(0); // no OEM on the deal header
+    const name = `E2E Estimate - Server Refresh ${Date.now().toString().slice(-6)}`;
+    await page.fill("#name", name);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByRole("button", { name: "Quick estimate" }).click();
+    await page.getByLabel("New line 1 OEM").selectOption({ label: "Dell" });
+    await page.getByLabel("New line 1 category").selectOption({ label: "Server" });
+    await page.getByLabel("New line 1 value").fill("2500000");
+    await expect(page.getByText("· Dell").first()).toBeVisible();
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    await expect(page.getByText("₹25 L").first()).toBeVisible();
+    await page.goto(`${new URL(page.url()).pathname}?tab=boq`);
+    await expect(page.getByText(/^Estimate ·/).first()).toBeVisible();
+  });
+
+  test("dashboard tiles open the matching filtered list", async ({ page }) => {
+    await login(page, HEAD);
+    await page.getByRole("link", { name: /Commit · Q/ }).click();
+    await expect(page).toHaveURL(/\/opportunities\?.*fc=COMMIT/);
+    await expect(page.getByLabel("Active filters")).toContainText("Commit");
+    await expect(page.getByLabel("Active filters")).toContainText("Open");
+  });
+
+  test("sidebar collapses with Ctrl+B and stays collapsed after reload", async ({ page }) => {
+    await login(page, HEAD);
+    await page.keyboard.press("Control+b");
+    await expect(page.getByRole("button", { name: "Expand sidebar" }).first()).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Expand sidebar" }).first()).toBeVisible();
+    await page.keyboard.press("Control+b");
+    await expect(page.getByRole("button", { name: "Collapse sidebar" }).first()).toBeVisible();
   });
 });

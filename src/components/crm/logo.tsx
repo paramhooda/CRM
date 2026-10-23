@@ -1,9 +1,32 @@
-export function Logo({ size = 32 }: { size?: number }) {
+/* eslint-disable @next/next/no-img-element -- tiny static brand assets; next/image adds nothing here */
+import { cn } from "@/lib/utils";
+
+// Brand assets live in public/brand. Drop in higher-resolution files with the same names to upgrade them.
+const FULL = { light: "/brand/progression-logo.png", dark: "/brand/progression-logo-dark.png", ratio: 184 / 32 };
+const MARK = { src: "/brand/progression-mark.png", ratio: 33 / 31 };
+
+/** Progression logo. `full` is the swoosh + wordmark (switches to a light wordmark in dark mode); `mark` is the swoosh alone. */
+export function Logo({
+  variant = "full",
+  height = 24,
+  className,
+  forceLight,
+}: {
+  variant?: "full" | "mark";
+  height?: number;
+  className?: string;
+  /** Always use the light-background version (print) */
+  forceLight?: boolean;
+}) {
+  if (variant === "mark") {
+    return <img src={MARK.src} alt="Progression" width={Math.round(height * MARK.ratio)} height={height} className={cn("shrink-0 select-none", className)} draggable={false} />;
+  }
+  const width = Math.round(height * FULL.ratio);
+  if (forceLight) return <img src={FULL.light} alt="Progression" width={width} height={height} className={cn("shrink-0 select-none", className)} draggable={false} />;
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
-      <rect width="32" height="32" rx="8" fill="var(--primary)" />
-      <path d="M9 22V10h7.2a4.4 4.4 0 0 1 0 8.8H13" stroke="white" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="21.5" cy="22" r="2" fill="var(--s3)" />
-    </svg>
+    <span className={cn("inline-flex shrink-0 select-none", className)} style={{ width, height }}>
+      <img src={FULL.light} alt="Progression" width={width} height={height} className="dark:hidden" draggable={false} />
+      <img src={FULL.dark} alt="Progression" width={width} height={height} className="hidden dark:block" draggable={false} />
+    </span>
   );
 }

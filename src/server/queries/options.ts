@@ -10,7 +10,7 @@ export const getOptions = cache(async () => {
       orderBy: { sortOrder: "asc" },
       include: { categories: { where: { active: true }, orderBy: { sortOrder: "asc" } } },
     }),
-    db.oem.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
+    db.oem.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" }, include: { _count: { select: { lineItems: true } } } }),
     db.user.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true, role: true } }),
     db.picklistValue.findMany({ where: { active: true }, orderBy: [{ type: "asc" }, { sortOrder: "asc" }] }),
     db.product.findMany({
@@ -23,7 +23,7 @@ export const getOptions = cache(async () => {
   return {
     bus: bus.map((b) => ({ id: b.id, name: b.name, code: b.code })),
     categories: bus.flatMap((b) => b.categories.map((c) => ({ id: c.id, name: c.name, buId: b.id, buName: b.name }))),
-    oems: oems.map((o) => ({ id: o.id, name: o.name })),
+    oems: oems.map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems })),
     sales: users.filter((u) => u.role === "SALES" || u.role === "SALES_HEAD").map(({ id, name }) => ({ id, name })),
     presales: users.filter((u) => u.role === "PRESALES").map(({ id, name }) => ({ id, name })),
     purchase: users.filter((u) => u.role === "PURCHASE").map(({ id, name }) => ({ id, name })),

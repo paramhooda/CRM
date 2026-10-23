@@ -40,12 +40,13 @@ APP_PORT=8080 docker compose up -d  # run on another port
 - Stage gates. Closed-Won needs a PO number and date. Lost or Dropped needs a reason. ARR needs a contract term. RFPs need a submission date. Pushing a close date out counts as a slip.
 
 **Line items and product catalogue**
-- One opportunity holds many line items, and each line carries its own BU, category and OEM. A single deal can mix, for example, Dell servers, VMware licences and Progression implementation services.
+- OEM lives on line items, not on the deal. One opportunity holds many line items, and each line carries its own BU, category and OEM. A single deal can mix, for example, Dell servers, VMware licences and Progression implementation services.
 - Lines are picked from the **product catalogue** (Catalogue → Products): SKU, name, BU, category, OEM, product type, unit, billing frequency and default term, list price, standard cost, HSN/SAC and GST %. Everyone can browse it. Only Admin can add, edit or deactivate products.
 - A custom line is still allowed for one-off items, but it must have a BU, category and OEM.
 - Each line bills One-time, Monthly, Quarterly or Annually, over a term in months.
-- Line items are optional when creating a deal. Once a deal has lines, its value rolls up from them automatically, and its primary BU, category and OEM come from the largest line. Every roll-up change is audited, so it shows in "changes since last review".
-- Dashboards and reports split multi-OEM deals by line value, so BU, OEM and product figures are accurate. BU, category and OEM filters match a deal if its header or any of its lines matches.
+- Every deal has at least one line. When the products are not known yet, add a **Quick estimate**: OEM, category and an estimated value. Presales later replaces it with catalogue products; estimate lines cannot be quoted or closed as won.
+- The deal value always rolls up from the lines, and its primary BU, category and OEM come from the largest line. Every roll-up change is audited, so it shows in "changes since last review".
+- **Filtering by OEM (or BU, or category)** matches deals with at least one line for it, and values show that OEM's share. A ₹1 Cr deal with ₹40 L of Dell lines counts as ₹40 L under a Dell filter. Totals, charts and the pipeline board use the share; the opportunity list shows both the deal value and a "Dell value" column. The line-items export includes only the matching lines.
 
 **Sales → Presales → Purchase workflow**
 1. Sales clicks **Pull in presales** on a deal and picks an engineer, due date and scope. The presales engineer sees it on their **My work** home and is notified.
@@ -80,7 +81,14 @@ No finance integration is built yet, but the data is shaped so one is a thin add
 - **Dashboard, Insights tab**: deals created vs won per month, an 8-week closing calendar, stage funnel and conversion, bookings by BU, OEM and product, pipeline health, one-time vs ARR mix, OEM mix, aging, win rate by BU, closing in 30 days and upcoming renewals.
 - **Insights** are plain-language findings ranked by size, for example a BU's share of pipeline vs its share of bookings, win rate with and without presales, commit already past its close date, slip behaviour on won vs lost deals, account concentration, stuck stages and renewals due.
 - **Reports**: forecast vs target per quarter, stage velocity and conversion, BU × category heatmap, loss reasons, new logo vs existing, win rate by competitor type, and a full sales scorecard.
-- **Filters everywhere**, stored in the URL so views are shareable: BU, category, sales person, presales, OEM, stage, forecast, health, concern, account type, revenue model, fiscal period and search.
+- **Filters everywhere**, stored in the URL so views are shareable: BU, category, sales person, presales, OEM, stage, forecast, health, concern, account type, revenue model, period and search.
+  - Quick views in one click (My deals, Closing this quarter, Commit, Hot, Dying, ₹1 Cr+, Needs attention) and saved views on every page.
+  - Searchable pickers with "Only" and Select all, a period picker with fiscal presets, rolling windows and a custom date range, removable chips for every active filter, and a Filters sheet on phones. Press `/` to search.
+  - Dashboard cards have their own small toggles (for example Quarters / Year, 6M / 12M, BU / Category / OEM, Bookings / Pipeline / Win rate) that do not change the page filters. The presales and purchase queues have search, sort and sales-person / OEM filters.
+- **Click-through dashboards**: every tile, bar, segment and row opens the matching filtered list, for example the Commit tile, a month in the bookings trend, an OEM in the pipeline mix or a week in the closing calendar.
+- **Sidebar**: collapse it to an icon rail with the button in the top bar or **Ctrl/⌘ + B**; the choice is remembered.
+
+**Branding**: the Progression logo is used in the sidebar, login page, quotations, 404 page and as the favicon. The files live in `public/brand/` and `src/app/icon.png`; drop in higher-resolution versions with the same names to upgrade them. The interface uses the Inter typeface, bundled with the app.
 
 **Conventions**
 - Currency is INR in lakh and crore (₹48.6 L, ₹1.25 Cr). The fiscal year runs April–March (Q1 Apr–Jun, FY27 = Apr 2026–Mar 2027). Dates display in IST.

@@ -2,7 +2,8 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Save, Loader2, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Save, Loader2, Plus, Trash2, Calculator, ArrowRight } from "lucide-react";
 import { ProductPicker } from "@/components/opportunities/product-picker";
 import type { ProductOption } from "@/server/queries/options";
 import { billingPeriods, type BillingFrequencyKey } from "@/lib/boq";
@@ -21,7 +22,19 @@ type Opt = { id: string; name: string };
 export type OppFormValues = Record<string, string>;
 export type AccountOpt = { id: string; name: string; accountType: "NEW_LOGO" | "EXISTING"; contacts: { id: string; name: string; title: string | null }[] };
 
-type Draft = { key: string; productId: string; quantity: number; unitPrice: number | null; billingFrequency: BillingFrequencyKey; termMonths: number | null };
+/** A line on the New opportunity form: a catalogue product, or a quick estimate (OEM + category + total value). */
+type Draft = {
+  key: string;
+  kind: "product" | "estimate";
+  productId: string;
+  quantity: number;
+  unitPrice: number | null;
+  oemId: string;
+  categoryId: string;
+  value: number | null;
+  billingFrequency: BillingFrequencyKey;
+  termMonths: number | null;
+};
 let draftSeq = 0;
 
 export function OppForm({
@@ -32,7 +45,7 @@ export function OppForm({
   initial: OppFormValues;
   accounts: AccountOpt[];
   options: {
-    bus: Opt[]; categories: (Opt & { buId: string })[]; oems: Opt[]; sales: Opt[]; presales: Opt[];
+    bus: Opt[]; categories: (Opt & { buId: string; buName?: string })[]; oems: Opt[]; sales: Opt[]; presales: Opt[];
     leadSources: string[]; competitors: string[]; lossReasons: string[]; products: ProductOption[];
   };
   canReassign: boolean;
@@ -47,20 +60,44 @@ export function OppForm({
   const account = accounts.find((a) => a.id === v.accountId);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const productById = useMemo(() => new Map(options.products.map((p) => [p.id, p])), [options.products]);
-  const lineMode = drafts.length > 0 || existingLineCount > 0;
+  const nameOf = (xs: Opt[], id: string) => xs.find((x) => x.id === id)?.name ?? "";
+  const draftValue = (d: Draft) => {
+    if (d.kind === "estimate") return d.value ?? 0;
+    const p = productById.get(d.productId);
+    return p ? d.quantity * billingPeriods({ billingFrequency: d.billingFrequency, termMonths: d.termMonths }) * (d.unitPrice ?? p.listPrice ?? 0) : 0;
+  };
   const derived = useMemo(() => {
     let amount = 0;
-    let top: { value: number; p: ProductOption } | null = null;
+    let top: { value: number; label: string } | null = null;
     for (const d of drafts) {
-      const p = productById.get(d.productId);
-      if (!p) continue;
-      const value = d.quantity * billingPeriods({ billingFrequency: d.billingFrequency, termMonths: d.termMonths }) * (d.unitPrice ?? p.listPrice ?? 0);
+      const value = draftValue(d);
       amount += value;
-      if (!top || value > top.value) top = { value, p };
+      let label: string | null = null;
+      if (d.kind === "product") {
+        const p = productById.get(d.productId);
+        if (p) label = `${p.buName} / ${p.categoryName} · ${p.oemName}`;
+      } else if (d.oemId && d.categoryId) {
+        const c = options.categories.find((x) => x.id === d.categoryId);
+        label = `${c?.buName ?? nameOf(options.bus, c?.buId ?? "")} / ${c?.name ?? ""} · ${nameOf(options.oems, d.oemId)}`;
+      }
+      if (label && (!top || value > top.value)) top = { value, label };
     }
-    return { amount: Math.round(amount), top: top?.p ?? null };
-  }, [drafts, productById]);
-  const cats = useMemo(() => options.categories.filter((c) => c.buId === v.businessUnitId), [options.categories, v.businessUnitId]);
+    return { amount: Math.round(amount), top: top?.label ?? null };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, productById, options]);
+  const newDraft = (kind: Draft["kind"]): Draft => ({
+    key: `d${++draftSeq}`, kind, productId: "", quantity: 1, unitPrice: null, oemId: "", categoryId: "", value: null,
+    billingFrequency: "ONE_TIME", termMonths: null,
+  });
+  const categoryGroups = useMemo(() => {
+    const m = new Map<string, (Opt & { buId: string })[]>();
+    for (const c of options.categories) {
+      const g = c.buName ?? nameOf(options.bus, c.buId);
+      m.set(g, [...(m.get(g) ?? []), c]);
+    }
+    return [...m.entries()];
+     
+  }, [options.categories, options.bus]);
   const stage = v.stage as StageKey;
   const stages: StageKey[] = mode === "create" ? OPEN_STAGES : (Object.keys(STAGE_META) as StageKey[]);
   const arr = v.revenueModel === "ARR";
@@ -70,15 +107,21 @@ export function OppForm({
     e.preventDefault();
     const fd = new FormData();
     for (const [k, val] of Object.entries(v)) fd.set(k, val ?? "");
-    if (drafts.length) {
-      if (drafts.some((d) => !d.productId)) return void toast.error("Choose a product on every line, or remove the empty line.");
-      fd.set("amount", String(Math.max(1, derived.amount)));
-      if (derived.top) {
-        fd.set("businessUnitId", derived.top.businessUnitId);
-        fd.set("categoryId", derived.top.categoryId);
-        fd.set("oemId", derived.top.oemId);
-      }
-      fd.set("lines", JSON.stringify(drafts.map((d) => ({ productId: d.productId, quantity: d.quantity, unitPrice: d.unitPrice, billingFrequency: d.billingFrequency, termMonths: d.termMonths }))));
+    if (mode === "create") {
+      if (!drafts.length) return void toast.error("Add at least one line item: a product, or a quick estimate with OEM, category and value.");
+      if (drafts.some((d) => d.kind === "product" && !d.productId)) return void toast.error("Choose a product on every product line, or remove the empty line.");
+      if (drafts.some((d) => d.kind === "estimate" && (!d.oemId || !d.categoryId || !d.value)))
+        return void toast.error("Each quick estimate needs an OEM, a category and a value.");
+      fd.set(
+        "lines",
+        JSON.stringify(
+          drafts.map((d) =>
+            d.kind === "product"
+              ? { kind: "product", productId: d.productId, quantity: d.quantity, unitPrice: d.unitPrice, billingFrequency: d.billingFrequency, termMonths: d.termMonths }
+              : { kind: "estimate", oemId: d.oemId, categoryId: d.categoryId, value: d.value, billingFrequency: d.billingFrequency, termMonths: d.termMonths },
+          ),
+        ),
+      );
     }
     start(async () => {
       const r = mode === "create" ? await createOpportunity(fd) : await updateOpportunity(id!, fd);
@@ -124,36 +167,13 @@ export function OppForm({
             {account?.contacts.map((c) => <option key={c.id} value={c.id}>{c.name}{c.title ? ` · ${c.title}` : ""}</option>)}
           </Select>
         </Field>
-        {lineMode ? (
-          <Field label="Primary BU / category / OEM" hint="Derived from the largest line item" className="sm:col-span-3">
-            <div className="flex h-8 items-center rounded-md border border-dashed border-border px-2.5 text-[13px] text-ink-2">
-              {drafts.length
-                ? derived.top ? `${derived.top.buName} / ${derived.top.categoryName} · ${derived.top.oemName}` : "Choose products below"
-                : `${options.bus.find((b) => b.id === v.businessUnitId)?.name ?? ""} / ${options.categories.find((c) => c.id === v.categoryId)?.name ?? ""} · ${options.oems.find((o) => o.id === v.oemId)?.name ?? "—"}`}
-            </div>
-          </Field>
-        ) : (
-          <>
-        <Field htmlFor="businessUnitId" error={errors.businessUnitId} label="Primary business unit" required>
-          <Select id="businessUnitId" value={v.businessUnitId} onChange={(e) => setV((x) => ({ ...x, businessUnitId: e.target.value, categoryId: "" }))}>
-            <option value="">Select</option>
-            {options.bus.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </Select>
+        <Field label="Primary BU / category / OEM" hint="From the largest line item. OEMs live on line items, so a deal can span several." className="sm:col-span-3">
+          <div className="flex h-9 items-center rounded-lg border border-dashed border-border px-2.5 text-[13px] text-ink-2">
+            {mode === "create"
+              ? (derived.top ?? <span className="text-ink-3">Add a line item below</span>)
+              : `${nameOf(options.bus, v.businessUnitId)} / ${nameOf(options.categories, v.categoryId)} · ${nameOf(options.oems, v.oemId) || "—"}`}
+          </div>
         </Field>
-        <Field htmlFor="categoryId" error={errors.categoryId} label="Primary category" required>
-          <Select id="categoryId" value={v.categoryId} onChange={(e) => set("categoryId", e.target.value)} disabled={!v.businessUnitId}>
-            <option value="">{v.businessUnitId ? "Select" : "Choose BU first"}</option>
-            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
-        </Field>
-        <Field htmlFor="oemId" error={errors.oemId} label="Primary OEM">
-          <Select id="oemId" value={v.oemId} onChange={(e) => set("oemId", e.target.value)}>
-            <option value="">Select</option>
-            {options.oems.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </Select>
-        </Field>
-          </>
-        )}
         <Field htmlFor="accountType" error={errors.accountType} label="Account type" required hint="Defaults from the account">
           <Select id="accountType" value={v.accountType} onChange={(e) => set("accountType", e.target.value)}>
             {Object.entries(ACCOUNT_TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -172,51 +192,97 @@ export function OppForm({
         </Field>
       </Section>
 
-      {mode === "create" && (
-        <Section title="Line items" description="Optional. Add products from the catalogue; deals can span several OEMs and business units. Presales refines these into the BOQ later.">
-          <div className="sm:col-span-3">
-            {drafts.length > 0 && (
-              <div className="mb-2 hidden grid-cols-[minmax(0,1fr)_72px_150px_120px_96px_32px] gap-2 px-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-3 md:grid">
-                <span>Product</span><span className="text-right">Qty</span><span>Billing</span><span className="text-right">Est. unit price</span><span className="text-right">Value</span><span />
-              </div>
-            )}
-            <div className="flex flex-col gap-2">
-              {drafts.map((d, i) => {
-                const p = productById.get(d.productId);
-                const value = p ? d.quantity * billingPeriods({ billingFrequency: d.billingFrequency, termMonths: d.termMonths }) * (d.unitPrice ?? p.listPrice ?? 0) : 0;
-                const upd = (patch: Partial<Draft>) => setDrafts((xs) => xs.map((x) => (x.key === d.key ? { ...x, ...patch } : x)));
-                return (
-                  <div key={d.key} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-2 md:grid-cols-[minmax(0,1fr)_72px_150px_120px_96px_32px] md:items-center md:border-0 md:p-0">
-                    <ProductPicker
-                      products={options.products}
-                      value={d.productId || null}
-                      allowCustom={false}
-                      onChange={(prod) => prod && upd({ productId: prod.id, billingFrequency: prod.billingFrequency, termMonths: prod.billingFrequency === "ONE_TIME" ? null : Number(v.contractTermMonths) || prod.defaultTermMonths || 12 })}
-                    />
-                    <Input type="number" min={1} value={d.quantity} onChange={(e) => upd({ quantity: Math.max(1, Number(e.target.value) || 1) })} className="text-right tabular" aria-label={`New line ${i + 1} quantity`} />
-                    <div className="flex gap-1">
-                      <Select value={d.billingFrequency} onChange={(e) => { const f = e.target.value as BillingFrequencyKey; upd({ billingFrequency: f, termMonths: f === "ONE_TIME" ? null : d.termMonths ?? 12 }); }} className="min-w-0 flex-1 text-xs" aria-label={`New line ${i + 1} billing`}>
-                        {Object.entries(BILLING_FREQUENCY_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                      </Select>
-                      {d.billingFrequency !== "ONE_TIME" && (
-                        <Input type="number" min={1} value={d.termMonths ?? 12} onChange={(e) => upd({ termMonths: Number(e.target.value) || 12 })} className="w-12 px-1 text-right text-xs tabular" title="Term (months)" aria-label={`New line ${i + 1} term`} />
-                      )}
-                    </div>
-                    <Input type="number" min={0} value={d.unitPrice ?? ""} placeholder={p?.listPrice?.toLocaleString("en-IN") ?? "Price"} onChange={(e) => upd({ unitPrice: e.target.value === "" ? null : Number(e.target.value) })} className="text-right tabular" aria-label={`New line ${i + 1} unit price`} />
-                    <span className="text-right text-[13px] font-medium tabular">{inr(value)}</span>
-                    <button type="button" onClick={() => setDrafts((xs) => xs.filter((x) => x.key !== d.key))} className="justify-self-end rounded p-1.5 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label="Remove line">
-                      <Trash2 className="size-3.5" />
-                    </button>
+      {mode === "create" ? (
+        <Section
+          title="Line items"
+          description="At least one. Pick products from the catalogue, or add a quick estimate (OEM, category, value) that presales replaces with products later. A deal can span several OEMs and BUs."
+        >
+          <div className="flex flex-col gap-2 sm:col-span-3">
+            {drafts.map((d, i) => {
+              const upd = (patch: Partial<Draft>) => setDrafts((xs) => xs.map((x) => (x.key === d.key ? { ...x, ...patch } : x)));
+              const p = d.kind === "product" ? productById.get(d.productId) : undefined;
+              const billing = (
+                <div className="flex gap-1">
+                  <Select
+                    value={d.billingFrequency}
+                    onChange={(e) => { const f = e.target.value as BillingFrequencyKey; upd({ billingFrequency: f, termMonths: f === "ONE_TIME" ? null : d.termMonths ?? (Number(v.contractTermMonths) || 12) }); }}
+                    className="min-w-0 flex-1 text-xs"
+                    aria-label={`New line ${i + 1} billing`}
+                  >
+                    {Object.entries(BILLING_FREQUENCY_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </Select>
+                  {d.billingFrequency !== "ONE_TIME" && (
+                    <Input type="number" min={1} value={d.termMonths ?? 12} onChange={(e) => upd({ termMonths: Number(e.target.value) || 12 })} className="w-14 px-1 text-right text-xs tabular" title="Term (months)" aria-label={`New line ${i + 1} term`} />
+                  )}
+                </div>
+              );
+              const removeBtn = (
+                <button type="button" onClick={() => setDrafts((xs) => xs.filter((x) => x.key !== d.key))} className="justify-self-end rounded p-1.5 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label={`Remove line ${i + 1}`}>
+                  <Trash2 className="size-3.5" />
+                </button>
+              );
+              return (
+                <div key={d.key} className="rounded-lg border border-border p-2.5">
+                  <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                    <span className="tabular">Line {i + 1}</span>
+                    <span className={d.kind === "estimate" ? "rounded bg-[var(--t-amber-bg)] px-1.5 text-[var(--t-amber)] normal-case tracking-normal" : "rounded bg-surface-2 px-1.5 normal-case tracking-normal"}>
+                      {d.kind === "estimate" ? "Quick estimate" : "Product"}
+                    </span>
+                    <span className="ml-auto text-[13px] font-semibold normal-case tracking-normal text-ink tabular">{inr(draftValue(d))}</span>
                   </div>
-                );
-              })}
-            </div>
-            <div className="mt-3 flex items-center justify-between">
-              <Button type="button" size="sm" onClick={() => setDrafts((xs) => [...xs, { key: `d${++draftSeq}`, productId: "", quantity: 1, unitPrice: null, billingFrequency: "ONE_TIME", termMonths: null }])}>
+                  {d.kind === "product" ? (
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_72px_150px_130px_32px] md:items-center">
+                      <ProductPicker
+                        products={options.products}
+                        value={d.productId || null}
+                        allowCustom={false}
+                        onChange={(prod) => prod && upd({ productId: prod.id, billingFrequency: prod.billingFrequency, termMonths: prod.billingFrequency === "ONE_TIME" ? null : Number(v.contractTermMonths) || prod.defaultTermMonths || 12 })}
+                      />
+                      <Input type="number" min={1} value={d.quantity} onChange={(e) => upd({ quantity: Math.max(1, Number(e.target.value) || 1) })} className="text-right tabular" aria-label={`New line ${i + 1} quantity`} title="Quantity" />
+                      {billing}
+                      <Input type="number" min={0} value={d.unitPrice ?? ""} placeholder={p?.listPrice?.toLocaleString("en-IN") ?? "Unit price"} onChange={(e) => upd({ unitPrice: e.target.value === "" ? null : Number(e.target.value) })} className="text-right tabular" aria-label={`New line ${i + 1} unit price`} title="Estimated unit price (blank uses list price)" />
+                      {removeBtn}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px_130px_32px] md:items-center">
+                      <Select value={d.oemId} onChange={(e) => upd({ oemId: e.target.value })} aria-label={`New line ${i + 1} OEM`}>
+                        <option value="">OEM</option>
+                        {options.oems.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </Select>
+                      <Select value={d.categoryId} onChange={(e) => upd({ categoryId: e.target.value })} aria-label={`New line ${i + 1} category`}>
+                        <option value="">Business unit · category</option>
+                        {categoryGroups.map(([bu, cs]) => (
+                          <optgroup key={bu} label={bu}>
+                            {cs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </optgroup>
+                        ))}
+                      </Select>
+                      {billing}
+                      <Input type="number" min={0} step={1000} value={d.value ?? ""} placeholder="Total value ₹" onChange={(e) => upd({ value: e.target.value === "" ? null : Number(e.target.value) })} className="text-right tabular" aria-label={`New line ${i + 1} value`} title="Estimated total value over the term" />
+                      {removeBtn}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <Button type="button" size="sm" onClick={() => setDrafts((xs) => [...xs, newDraft("product")])}>
                 <Plus /> Add product
               </Button>
-              {drafts.length > 0 && <span className="text-[13px] text-ink-2">Deal value <span className="font-semibold tabular text-ink">{inr(derived.amount)}</span></span>}
+              <Button type="button" size="sm" variant="ghost" onClick={() => setDrafts((xs) => [...xs, newDraft("estimate")])}>
+                <Calculator /> Quick estimate
+              </Button>
+              {drafts.length > 0 && <span className="ml-auto text-[13px] text-ink-2">Deal value <span className="font-semibold tabular text-ink">{inr(derived.amount)}</span></span>}
             </div>
+          </div>
+        </Section>
+      ) : (
+        <Section title="Line items" description="OEM, business unit and value come from the line items.">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:col-span-3">
+            <p className="text-[13px] text-ink-2">
+              {existingLineCount} line item{existingLineCount === 1 ? "" : "s"} · deal value <span className="font-semibold tabular text-ink">{inr(v.amount)}</span>
+            </p>
+            <Button asChild size="sm"><Link href={`/opportunities/${id}?tab=boq`}>Edit line items <ArrowRight /></Link></Button>
           </div>
         </Section>
       )}
@@ -227,17 +293,11 @@ export function OppForm({
             {Object.entries(REVENUE_MODEL_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </Select>
         </Field>
-        {lineMode ? (
-          <Field label={arr ? "Total contract value" : "Deal value"} hint={drafts.length ? `Sum of ${drafts.length} line item${drafts.length > 1 ? "s" : ""}` : `Rolls up from ${existingLineCount} line items. Edit them on the Line items tab.`}>
-            <div className="flex h-8 items-center rounded-md border border-dashed border-border px-2.5 text-[13px] font-medium tabular">
-              {inr(drafts.length ? derived.amount : v.amount)}
-            </div>
-          </Field>
-        ) : (
-          <Field htmlFor="amount" error={errors.amount} label={arr ? "Total contract value (INR)" : "Amount (INR)"} required hint={v.amount ? inr(v.amount) : "Enter in rupees, or add line items below"}>
-            {text("amount", { type: "number", min: 0, step: 1000, inputMode: "numeric" })}
-          </Field>
-        )}
+        <Field label={arr ? "Total contract value" : "Deal value"} hint={mode === "create" ? "Sum of the line items" : "Rolls up from the line items"}>
+          <div className="flex h-9 items-center rounded-lg border border-dashed border-border px-2.5 text-[13px] font-medium tabular">
+            {inr(mode === "create" ? derived.amount : v.amount)}
+          </div>
+        </Field>
         {arr && (
           <>
             <Field htmlFor="contractTermMonths" error={errors.contractTermMonths} label="Contract term (months)" required>
@@ -308,7 +368,7 @@ export function OppForm({
         )}
       </Section>
 
-      <Section title="Procurement & OEM" description="Tender timelines and OEM deal registration">
+      <Section title="Procurement" description="Tender timelines and OEM deal registration">
         <Field htmlFor="procurementMode" error={errors.procurementMode} label="Procurement mode">
           <Select id="procurementMode" value={v.procurementMode} onChange={(e) => set("procurementMode", e.target.value)}>
             {Object.entries(PROCUREMENT_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
