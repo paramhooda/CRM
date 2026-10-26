@@ -39,12 +39,14 @@ export type OppChange = {
 };
 
 export async function reviewChanges(user: CurrentUser, sp: SearchParams, opts: { summaryOnly?: boolean } = {}) {
-  const reviews = await db.pipelineReview.findMany({
-    where: { reviewedById: user.id },
-    orderBy: { reviewedAt: "desc" },
-    take: 12,
-    select: { id: true, reviewedAt: true, notes: true, snapshot: true },
-  });
+  // Baseline: the latest review that covered everyone (or, for a sales person, covered them)
+  const reviews = (
+    await db.pipelineReview.findMany({
+      orderBy: { reviewedAt: "desc" },
+      take: 50,
+      select: { id: true, reviewedAt: true, notes: true, snapshot: true, subjectIds: true },
+    })
+  ).filter((r) => (user.role === "SALES" ? !r.subjectIds.length || r.subjectIds.includes(user.id) : !r.subjectIds.length));
   const sinceKey = typeof sp.since === "string" ? sp.since : undefined;
   let since: Date;
   let sinceLabel: string;
@@ -122,14 +124,17 @@ export async function reviewChanges(user: CurrentUser, sp: SearchParams, opts: {
       case "salesOwnerId":
         c.ownerChanged = true;
         break;
+      case "healthLabel":
+        if (c.healthFrom === undefined && l.oldValue) c.healthFrom = l.oldValue;
+        break;
     }
   }
 
-  // Health movement against the review snapshot
+  // Health movement against a legacy review snapshot (newer history comes from audited health changes)
   if (snapshot) {
     for (const o of opps) {
       const prev = snapshot[o.id];
-      if (prev && prev.h !== o.healthLabel && o.healthLabel !== "CLOSED") get(o.id).healthFrom = prev.h;
+      if (prev && prev.h !== o.healthLabel && o.healthLabel !== "CLOSED" && !map.get(o.id)?.healthFrom) get(o.id).healthFrom = prev.h;
     }
   }
 
@@ -152,6 +157,7 @@ export async function reviewChanges(user: CurrentUser, sp: SearchParams, opts: {
       else c.closeDir = new Date(c.closeTo) > new Date(c.closeFrom) ? "pushed" : "pulled";
     }
     if (c.forecastFrom && c.forecastFrom === c.forecastTo) c.forecastFrom = c.forecastTo = undefined;
+    if (c.healthFrom && (c.healthFrom === c.healthLabel || c.healthLabel === "CLOSED")) c.healthFrom = undefined;
     const meaningful =
       c.isNew || c.stageDir || c.amountFrom !== undefined || c.closeDir || c.forecastFrom || c.healthFrom || c.ownerChanged;
     if (meaningful) items.push(c);
@@ -194,11 +200,21 @@ export async function reviewChanges(user: CurrentUser, sp: SearchParams, opts: {
     newlyHot: { count: s.newlyHot.length, amount: sumAmt(s.newlyHot) },
   };
 
-  // Active pipeline value at review time, for the same scope and filters (null without a snapshot)
+  // Active pipeline value at the baseline, rebuilt from the audit log for the same scope and filters
   const ACTIVE = new Set(["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"]);
-  const pipelineAtReview = snapshot
-    ? Object.entries(snapshot).reduce((a, [id, x]) => (byId.has(id) && ACTIVE.has(x.s) ? a + x.a : a), 0)
-    : null;
+  const firstOld = new Map<string, string | null>();
+  for (const l of logs) {
+    if (l.action !== "UPDATE" || (l.field !== "stage" && l.field !== "amount")) continue;
+    const k = `${l.entityId}:${l.field}`;
+    if (!firstOld.has(k)) firstOld.set(k, l.oldValue);
+  }
+  const createdInWindow = new Set(logs.filter((l) => l.action === "CREATE").map((l) => l.entityId));
+  const pipelineAtReview = opps.reduce((a, o) => {
+    if (o.createdAt > since || createdInWindow.has(o.id)) return a;
+    const stage = firstOld.get(`${o.id}:stage`) ?? o.stage;
+    const amount = firstOld.has(`${o.id}:amount`) ? Number(firstOld.get(`${o.id}:amount`)) : toNumber(o.amount);
+    return ACTIVE.has(stage) ? a + amount : a;
+  }, 0);
 
   return {
     since,

@@ -250,3 +250,82 @@ test.describe("Line items, navigation and filters", () => {
     await expect(page.getByRole("button", { name: "Collapse sidebar" }).first()).toBeVisible();
   });
 });
+
+test.describe.serial("Pipeline review", () => {
+  test("head reviews one sales person: one-click windows, side panel quick edit", async ({ page }) => {
+    await login(page, HEAD);
+    await page.goto("/reviews");
+    await page.getByRole("button", { name: "Sales person", exact: true }).click();
+    await page.getByRole("button", { name: /^RP Rakesh Pawar/ }).click();
+    await expect(page).toHaveURL(/who=/);
+    await expect(page.getByRole("heading", { name: "Pipeline review · Rakesh Pawar" })).toBeVisible();
+
+    const thirty = page.getByRole("radio", { name: "30 days" });
+    await thirty.click();
+    await expect(thirty).toHaveAttribute("aria-checked", "true"); // registers on the first click
+    await expect(page).toHaveURL(/since=30d/);
+    await expect(page.getByText(/Changes since last 30 days/)).toBeVisible();
+    await expect(page.getByText("Closed in this window")).toBeVisible();
+
+    // Every listed deal belongs to Rakesh, so no owner is shown in the rows
+    const first = page.locator("table button[aria-label^='Open ']").first();
+    const name = (await first.getAttribute("aria-label"))!.replace(/^Open /, "");
+    await first.click();
+    const panel = page.getByRole("dialog");
+    await expect(panel.getByText(name).first()).toBeVisible();
+    await expect(panel.getByText("History", { exact: true })).toBeVisible();
+    await panel.getByLabel("Next step", { exact: true }).fill("E2E: agreed in review call");
+    await panel.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Deal updated")).toBeVisible();
+  });
+
+  test("completing a review for one person records actions and resets only their baseline", async ({ page }) => {
+    await login(page, HEAD);
+    await page.goto("/reviews?since=last");
+    await page.getByRole("button", { name: "Sales person", exact: true }).click();
+    await page.getByRole("button", { name: /^RP Rakesh Pawar/ }).click();
+    await expect(page.getByRole("heading", { name: "Pipeline review · Rakesh Pawar" })).toBeVisible();
+    await page.getByRole("button", { name: "Complete review" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Action 1", { exact: true }).fill("E2E: send revised proposal");
+    await dlg.getByRole("button", { name: "Complete review" }).click();
+    await expect(page.getByText("Review recorded · 1 action assigned")).toBeVisible();
+    await expect(page.getByText("E2E: send revised proposal")).toBeVisible();
+    await expect(page.getByText(/Changes since Rakesh's last review/)).toBeVisible();
+    await expect(page.getByText(/\(today\)/)).toBeVisible();
+
+    // Another rep keeps their own baseline
+    await page.getByRole("button", { name: "Next sales person" }).click();
+    await expect(page.getByRole("heading", { name: /Pipeline review · (?!Rakesh Pawar)/ })).toBeVisible();
+    await expect(page.getByText(/\(today\)/)).toHaveCount(0);
+  });
+
+  test("a sales person reviews only their own pipeline", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/reviews?who=all");
+    await expect(page.getByRole("heading", { name: "Pipeline review · Rakesh Pawar" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sales person", exact: true })).toHaveCount(0);
+  });
+});
+
+test.describe("Navigation", () => {
+  // Regression: in production, a route-group loading.tsx stalled navigations that only change the query string
+  test("filters and search on the same page apply on the first try", async ({ page }) => {
+    await login(page, HEAD);
+    await page.goto("/reports");
+    await page.getByRole("button", { name: /^Period/ }).first().click();
+    await page.getByRole("button", { name: /^Last quarter/ }).click();
+    await expect(page).toHaveURL(/period=last-q/, { timeout: 8000 });
+
+    await page.goto("/accounts");
+    await page.getByRole("textbox").first().fill("Zenith");
+    await expect(page).toHaveURL(/q=Zenith/, { timeout: 8000 });
+    await expect(page.getByText("Zenith Capital Finance Ltd").first()).toBeVisible();
+
+    await page.goto("/reviews");
+    await page.getByRole("radio", { name: "14 days" }).click();
+    await expect(page).toHaveURL(/since=14d/, { timeout: 8000 });
+    await page.getByRole("radio", { name: "This quarter" }).click();
+    await expect(page).toHaveURL(/close=this-q/, { timeout: 8000 });
+  });
+});

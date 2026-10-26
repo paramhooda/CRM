@@ -657,27 +657,31 @@ model Quote {
 }
 
 model Activity {
-  id            String       @id @default(cuid())
+  id            String          @id @default(cuid())
   type          ActivityType
   subject       String
   body          String?
-  occurredAt    DateTime     @default(now())
+  occurredAt    DateTime        @default(now())
   dueAt         DateTime?
   completedAt   DateTime?
   ownerId       String
-  owner         User         @relation(fields: [ownerId], references: [id])
+  owner         User            @relation(fields: [ownerId], references: [id])
   opportunityId String?
-  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  opportunity   Opportunity?    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   accountId     String?
-  account       Account?     @relation(fields: [accountId], references: [id])
+  account       Account?        @relation(fields: [accountId], references: [id])
   contactId     String?
-  contact       Contact?     @relation(fields: [contactId], references: [id])
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  contact       Contact?        @relation(fields: [contactId], references: [id])
+  /// Set when the task was agreed as an action in a pipeline review
+  reviewId      String?
+  review        PipelineReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   @@index([opportunityId, occurredAt])
   @@index([accountId])
   @@index([ownerId, dueAt])
+  @@index([reviewId])
 }
 
 model StageHistory {
@@ -714,13 +718,17 @@ model AuditLog {
 
 /// A pipeline review checkpoint. "Changes since last review" diffs the audit log from reviewedAt.
 model PipelineReview {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
   reviewedById String
-  reviewedBy   User     @relation(fields: [reviewedById], references: [id])
-  reviewedAt   DateTime @default(now())
+  reviewedBy   User       @relation(fields: [reviewedById], references: [id])
+  reviewedAt   DateTime   @default(now())
   notes        String?
-  /// Snapshot of headline numbers at review time for delta comparison
+  /// Sales people this review covered. Empty means everyone. "Since last review" is per person.
+  subjectIds   String[]   @default([])
+  /// Legacy: snapshot of headline numbers at review time (no longer needed; history comes from the audit log)
   snapshot     Json?
+  /// Action items agreed in the review (tasks)
+  actions      Activity[]
 
   @@index([reviewedById, reviewedAt])
 }

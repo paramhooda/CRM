@@ -214,7 +214,6 @@ async function main() {
   plan.sort(() => rnd() - 0.5);
 
   const fyCounters: Record<string, number> = {};
-  const reviewAt = daysAgo(7, 10);
   let repCursor = 0;
   const wonByAccount = new Set<string>();
   const usedNamesByAccount = new Set<string>();
@@ -409,18 +408,34 @@ async function main() {
       prevAt = at;
     }
 
-    // Field changes since the last pipeline review (7 days ago) for the "changes since review" view
-    if (!isClosed && createdAt < reviewAt) {
-      if (chance(0.22)) {
-        const old = roundTo(amount * pick([0.8, 0.85, 1.15, 1.25]), 10000);
-        await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "UPDATE", field: "amount", oldValue: String(old), newValue: String(amount), changedById: owner.id, changedAt: daysAgo(int(1, 6)) } });
+    // Field-change history over the last ~2 months, so 7 / 14 / 30-day and since-review windows differ.
+    // Each change is a real audit row; pipeline reviews rebuild deals as they stood at any past date.
+    if (!isClosed) {
+      const after = (d: Date) => (d > createdAt ? d : new Date(createdAt.getTime() + DAY));
+      if (chance(0.3)) {
+        const old = roundTo(amount * pick([0.75, 0.85, 0.9, 1.1, 1.2, 1.3]), 10000);
+        await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "UPDATE", field: "amount", oldValue: String(old), newValue: String(amount), changedById: owner.id, changedAt: after(daysAgo(int(1, 50), 11)) } });
       }
-      if (slips > 0 && chance(0.5)) {
-        const old = new Date(expectedClose.getTime() - int(14, 30) * DAY);
-        await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "UPDATE", field: "expectedCloseDate", oldValue: old.toISOString(), newValue: expectedClose.toISOString(), changedById: owner.id, changedAt: daysAgo(int(1, 6)) } });
+      // Close-date pushes: a chain of later dates ending at today's close date
+      const pushes = Math.min(slips, 3);
+      if (pushes > 0) {
+        const gaps = Array.from({ length: pushes }, () => int(10, 25) * DAY);
+        const times = Array.from({ length: pushes }, () => int(2, 55)).sort((a, b) => b - a);
+        let newer = expectedClose;
+        const chain: { from: Date; to: Date; at: Date }[] = [];
+        for (let k = pushes - 1; k >= 0; k--) {
+          const older = new Date(newer.getTime() - gaps[k]!);
+          chain.unshift({ from: older, to: newer, at: after(daysAgo(times[k]!, 12)) });
+          newer = older;
+        }
+        for (const c of chain) {
+          await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "UPDATE", field: "expectedCloseDate", oldValue: c.from.toISOString(), newValue: c.to.toISOString(), changedById: owner.id, changedAt: c.at } });
+        }
       }
-      if (forecast === "COMMIT" && chance(0.5)) {
-        await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "UPDATE", field: "forecastCategory", oldValue: "UPSIDE", newValue: "COMMIT", changedById: owner.id, changedAt: daysAgo(int(1, 6)) } });
+      if (forecast === "COMMIT" && chance(0.55)) {
+        await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "UPDATE", field: "forecastCategory", oldValue: "UPSIDE", newValue: "COMMIT", changedById: owner.id, changedAt: after(daysAgo(int(1, 40), 15)) } });
+      } else if (forecast === "UPSIDE" && chance(0.2)) {
+        await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "UPDATE", field: "forecastCategory", oldValue: "COMMIT", newValue: "UPSIDE", changedById: owner.id, changedAt: after(daysAgo(int(1, 30), 16)) } });
       }
     }
 
@@ -666,11 +681,49 @@ async function main() {
   }
   void quarterRange;
 
-  // ── Pipeline reviews: a baseline 7 days ago for managers and reps ──
-  for (const u of [head, admin, ...sales]) {
-    await db.pipelineReview.create({ data: { reviewedById: u.id, reviewedAt: reviewAt, notes: "Weekly pipeline review" } });
-    await db.pipelineReview.create({ data: { reviewedById: u.id, reviewedAt: daysAgo(14, 10), notes: "Weekly pipeline review" } });
+  // ── Pipeline reviews: an all-hands review 3 weeks ago, a team review and two one-to-one reviews since.
+  // "Since last review" is per person, so each rep is compared with the latest review that covered them.
+  const reviewDeals = await db.opportunity.findMany({
+    where: { stage: { in: ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"] } },
+    orderBy: { amount: "desc" },
+    select: { id: true, name: true, salesOwnerId: true },
+  });
+  const dealOf = (userId: string, n = 0) => reviewDeals.filter((d) => d.salesOwnerId === userId)[n] ?? null;
+  const mkReview = async (
+    at: Date, subjects: string[], notes: string,
+    actions: { owner: string; subject: string; dueIn: number; done: boolean; deal?: { id: string } | null }[],
+  ) => {
+    const r = await db.pipelineReview.create({ data: { reviewedById: head.id, reviewedAt: at, subjectIds: subjects, notes } });
+    for (const a of actions) {
+      const due = new Date(at.getTime() + a.dueIn * DAY);
+      await db.activity.create({
+        data: {
+          type: "TASK", subject: a.subject, body: `Agreed in pipeline review on ${at.toISOString().slice(0, 10)}`, occurredAt: at, dueAt: due,
+          completedAt: a.done ? new Date(Math.min(due.getTime(), NOW.getTime() - DAY)) : null, ownerId: a.owner, opportunityId: a.deal?.id ?? null, reviewId: r.id, createdAt: at,
+        },
+      });
+    }
+  };
+  const [r1, r2, r3, r4, r5] = sales;
+  await mkReview(daysAgo(21, 16), [], "Monthly all-hands pipeline review. Focus: clean up past close dates and firm up Q3 commit.", [
+    { owner: r1!.id, subject: "Re-date or close every deal past its close date", dueIn: 7, done: true },
+    { owner: r2!.id, subject: "Confirm budget and decision date with the CIO", dueIn: 10, done: true, deal: dealOf(r2!.id) },
+    { owner: r3!.id, subject: "Get the BOQ submitted to purchase", dueIn: 5, done: false, deal: dealOf(r3!.id) },
+  ]);
+  if (r3 && r4 && r5) {
+    await mkReview(daysAgo(12, 17), [r3.id, r4.id, r5.id], "Enterprise team review. Several deals have no next step; agree owners and dates.", [
+      { owner: r3.id, subject: "Book the solution walkthrough with the IT head", dueIn: 6, done: false, deal: dealOf(r3.id, 1) },
+      { owner: r4.id, subject: "Send revised commercials after the discount discussion", dueIn: 4, done: true, deal: dealOf(r4.id) },
+      { owner: r5.id, subject: "Multi-thread the account: meet procurement and finance", dueIn: 14, done: false, deal: dealOf(r5.id) },
+    ]);
   }
+  await mkReview(daysAgo(9, 11), [r1!.id], "One-to-one. Commit looks light against target; push for two more deals into commit.", [
+    { owner: r1!.id, subject: "Get the PO timeline in writing", dueIn: 5, done: false, deal: dealOf(r1!.id) },
+    { owner: r1!.id, subject: "Escalate pricing to Purchase head for a faster quote", dueIn: 3, done: true, deal: dealOf(r1!.id, 1) },
+  ]);
+  await mkReview(daysAgo(8, 15), [r2!.id], "One-to-one. Good momentum; risk is concentration on one account.", [
+    { owner: r2!.id, subject: "Open a second opportunity outside the main account", dueIn: 21, done: false },
+  ]);
 
   // ── Sequences ──
   for (const [key, value] of Object.entries(fyCounters)) await db.sequence.upsert({ where: { key }, create: { key, value }, update: { value } });
@@ -684,29 +737,25 @@ async function main() {
 
   const n = await recomputeAll(db as unknown as Parameters<typeof recomputeAll>[0], NOW);
 
-  // Snapshot on last week's review, reconstructed from history: deals as they stood at review time, so
-  // "changes since review" can compare pipeline value and health.
-  const all = await db.opportunity.findMany({
-    where: { createdAt: { lt: reviewAt } },
-    select: { id: true, healthLabel: true, amount: true, stage: true, closedAt: true },
+  // Health history: deals that are dying, at risk or hot today got there over the last few weeks. These
+  // audit rows let reviews show "became dying" or "now hot" for any window.
+  const nowHealth = await db.opportunity.findMany({
+    where: { stage: { in: ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION", "HOLD"] } },
+    select: { id: true, healthLabel: true, createdAt: true },
   });
-  const later = await db.auditLog.findMany({
-    where: { entityType: "Opportunity", changedAt: { gt: reviewAt }, field: { in: ["amount", "stage"] } },
-    orderBy: { changedAt: "asc" },
-  });
-  const firstOld = new Map<string, string>();
-  for (const l of later) if (!firstOld.has(`${l.entityId}:${l.field}`) && l.oldValue) firstOld.set(`${l.entityId}:${l.field}`, l.oldValue);
-  const snapshot: Record<string, { h: string; a: number; s: string }> = {};
-  let demoted = 0, promoted = 0;
-  for (const o of all) {
-    const stageThen = firstOld.get(`${o.id}:stage`) ?? o.stage;
-    if (["WON", "LOST", "DROPPED"].includes(stageThen)) continue;
-    let h: string = o.healthLabel === "CLOSED" ? "HEALTHY" : o.healthLabel;
-    if (o.healthLabel === "DYING" && demoted < 3) { h = "AT_RISK"; demoted++; }
-    else if (o.healthLabel === "HOT" && promoted < 3) { h = "HEALTHY"; promoted++; }
-    snapshot[o.id] = { h, a: Number(firstOld.get(`${o.id}:amount`) ?? o.amount), s: stageThen };
+  for (const o of nowHealth) {
+    const at = (d: Date) => (d > o.createdAt ? d : new Date(o.createdAt.getTime() + DAY));
+    if (o.healthLabel === "DYING") {
+      const t2 = at(daysAgo(int(2, 25), 9));
+      await db.auditLog.create({ data: { entityType: "Opportunity", entityId: o.id, action: "UPDATE", field: "healthLabel", oldValue: "AT_RISK", newValue: "DYING", changedAt: t2 } });
+      const t1 = at(new Date(t2.getTime() - int(7, 20) * DAY));
+      if (t1 < t2) await db.auditLog.create({ data: { entityType: "Opportunity", entityId: o.id, action: "UPDATE", field: "healthLabel", oldValue: "HEALTHY", newValue: "AT_RISK", changedAt: t1 } });
+    } else if (o.healthLabel === "HOT" && chance(0.7)) {
+      await db.auditLog.create({ data: { entityType: "Opportunity", entityId: o.id, action: "UPDATE", field: "healthLabel", oldValue: "HEALTHY", newValue: "HOT", changedAt: at(daysAgo(int(1, 12), 10)) } });
+    } else if (o.healthLabel === "AT_RISK" && chance(0.6)) {
+      await db.auditLog.create({ data: { entityType: "Opportunity", entityId: o.id, action: "UPDATE", field: "healthLabel", oldValue: "HEALTHY", newValue: "AT_RISK", changedAt: at(daysAgo(int(3, 35), 14)) } });
+    }
   }
-  await db.pipelineReview.updateMany({ where: { reviewedAt: reviewAt }, data: { snapshot } });
   const counts = await db.opportunity.groupBy({ by: ["healthLabel"], _count: true });
   console.log(`Catalogue: ${productCount} products.`);
   console.log(`Seeded ${ACCOUNTS.length} accounts, ${n} opportunities. Health:`, counts.map((c) => `${c.healthLabel}=${c._count}`).join(" "));

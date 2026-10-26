@@ -52,6 +52,13 @@ export async function recomputeOpportunity(tx: Tx, id: string, now = new Date())
     where: { id },
     data: { healthScore: r.score, healthLabel: r.label, flags: r.flags, rulesEvaluatedAt: now },
   });
+  // Audit health movement (system change) so pipeline reviews can rebuild health at any past date.
+  // Skipped on the very first evaluation, when the stored label is just the column default.
+  if (o.rulesEvaluatedAt && o.healthLabel !== r.label) {
+    await tx.auditLog.create({
+      data: { entityType: "Opportunity", entityId: id, action: "UPDATE", field: "healthLabel", oldValue: o.healthLabel, newValue: r.label, changedAt: now },
+    });
+  }
   return r;
 }
 

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import {
   LayoutDashboard, KanbanSquare, Briefcase, Building2, Users, UserPlus, Inbox, History, BarChart3, Settings,
   Menu, X, Search, Package, PanelLeft, ClipboardList, Calculator,
@@ -16,6 +16,7 @@ import { SIDEBAR_COOKIE, TOGGLE_SIDEBAR_EVENT } from "@/lib/ui-prefs";
 import { UserMenu } from "./user-menu";
 import { NotificationBell } from "./notification-bell";
 import { CommandMenu } from "./command-menu";
+import { NavProgress } from "./nav-progress";
 import { ThemeToggle } from "./theme-toggle";
 
 type NavItem = { href: string; label: string; icon: typeof LayoutDashboard; badge?: number };
@@ -149,6 +150,9 @@ export function AppShell({
               const link = (
                 <Link
                   href={it.href}
+                  // Never prefetch the page you are on: Next keys auto-prefetches of dynamic pages by path, so an
+                  // in-flight prefetch of the current page would stall in-page navigations that change only the query
+                  prefetch={active ? false : undefined}
                   onClick={() => setOpen(false)}
                   className={cn(
                     "relative flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors",
@@ -184,7 +188,7 @@ export function AppShell({
         )}
       >
         <div className={cn("flex h-16 items-center gap-2 px-5", rail && "justify-center px-0")}>
-          <Link href="/dashboard" className="flex items-center gap-2" aria-label="Progression CRM home">
+          <Link href="/dashboard" prefetch={pathname === "/dashboard" ? false : undefined} className="flex items-center gap-2" aria-label="Progression CRM home">
             {rail ? <Logo variant="mark" height={24} /> : <Logo height={22} />}
             {!rail && <span className="rounded-md border border-border px-1.5 text-[10px] font-medium leading-4 text-ink-3">CRM</span>}
           </Link>
@@ -246,6 +250,9 @@ export function AppShell({
         <main className="flex-1">{children}</main>
       </div>
       <CommandMenu open={cmdOpen} setOpen={setCmdOpen} role={user.role} />
+      <Suspense>
+        <NavProgress />
+      </Suspense>
     </div>
   );
 }
