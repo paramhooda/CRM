@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  Pencil, Building2, CalendarClock, User, CheckCircle2, Circle, Clock, AlertCircle, FileText, ExternalLink, ArrowRight,
+  Pencil, Building2, CalendarClock, User, FileText, ExternalLink, ArrowRight,
   History as HistoryIcon,
 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
@@ -16,17 +16,14 @@ import { StagePath } from "@/components/opportunities/stage-path";
 import { LineItemsEditor } from "@/components/opportunities/line-items-editor";
 import { ContactsEditor } from "@/components/opportunities/contacts-editor";
 import { ActivityComposer, ActivityTimeline } from "@/components/crm/activity";
-import {
-  PullPresalesButton, StartPresalesButton, SubmitBoqButton, RequestPricingButton, StartPricingButton, CompletePricingButton,
-  CreateQuoteButton,
-} from "@/components/opportunities/workflow-dialogs";
+import { PullPresalesButton, QuoteResponseButton } from "@/components/opportunities/workflow-dialogs";
+import { WorkflowPanel, QUOTE_STATUS_LABEL } from "@/components/opportunities/workflow-panel";
 import { inr, pct, fmtDate, fmtDateTime, relativeDays } from "@/lib/format";
 import {
   STAGE_META, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL, DEAL_REG_LABEL,
-  PRESALES_STATUS_LABEL, PRICING_STATUS_LABEL, FORECAST_LABEL, type StageKey,
+  FORECAST_LABEL, type StageKey,
 } from "@/lib/constants";
 import { FLAG_META, sortFlags } from "@/lib/rules/flags";
-import { cn } from "@/lib/utils";
 
 export async function generateMetadata() {
   return { title: "Opportunity" };
@@ -50,7 +47,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
   const o = d.opp;
   const stage = o.stage as StageKey;
   const closed = ["WON", "LOST", "DROPPED"].includes(stage);
-  const openPresales = o.presalesRequests.find((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS");
+  const openPresales = o.presalesRequests.find((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS" || r.status === "NEEDS_INFO");
   const counts: Record<string, number> = {
     boq: d.lines.length,
     activity: o.activities.filter((a) => a.type !== "TASK" || a.completedAt).length,
@@ -76,7 +73,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
         }
         actions={
           <>
-            {d.perms.requestPresales && !openPresales && !o.presalesOwner && !closed && (
+            {d.perms.requestPresales && !openPresales && o.presalesRequests.length === 0 && !closed && (
               <PullPresalesButton oppId={o.id} presales={options.presales} stageBeforeBoq={STAGE_META[stage].order < STAGE_META.BOQ.order} />
             )}
             {d.perms.edit && (
@@ -107,7 +104,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
         {tab === "overview" && <Overview d={d} options={options} />}
         {tab === "boq" && (
           <div className="flex flex-col gap-6">
-            <Workflow d={d} options={options} compact />
+            <WorkflowPanel d={d} options={options} variant="full" />
             <LineItemsEditor
               oppId={o.id}
               initial={d.lines}
@@ -119,6 +116,9 @@ export default async function OpportunityPage({ params, searchParams }: { params
               distributors={options.distributors}
               defaultTerm={o.contractTermMonths}
               locked={stage === "WON"}
+              version={o.boqVersion}
+              lockReason={d.lockReason}
+              oemTbd={options.oemTbd}
             />
           </div>
         )}
@@ -267,7 +267,7 @@ function Overview({ d, options }: { d: OppDetail; options: Opts }) {
             )}
           </CardContent>
         </Card>
-        <Workflow d={d} options={options} />
+        <WorkflowPanel d={d} options={options} variant="summary" />
         <Card>
           <CardHeader title="Deal team" />
           <CardContent className="flex flex-col gap-2.5">
@@ -304,99 +304,9 @@ function TeamRow({ role, name }: { role: string; name?: string | null }) {
   );
 }
 
-function StepIcon({ state }: { state: "done" | "active" | "late" | "todo" }) {
-  if (state === "done") return <CheckCircle2 className="size-4" style={{ color: "var(--good)" }} />;
-  if (state === "late") return <AlertCircle className="size-4" style={{ color: "var(--critical)" }} />;
-  if (state === "active") return <Clock className="size-4 text-primary" />;
-  return <Circle className="size-4 text-ink-3" />;
-}
-
-function Workflow({ d, options, compact }: { d: OppDetail; options: Opts; compact?: boolean }) {
-  const o = d.opp;
-  const now = new Date();
-  const closed = ["WON", "LOST", "DROPPED"].includes(o.stage);
-  const pr = o.presalesRequests[0];
-  const pq = o.pricingRequests[0];
-  const quote = o.quotes[0];
-  const meIsPresales = !!pr && (pr.assignedTo.id === d.viewer.id || d.viewer.role === "ADMIN");
-  const meIsPurchase = !!pq && (pq.assignedTo.id === d.viewer.id || d.viewer.role === "ADMIN");
-  const missingCost = d.lines.filter((l) => l.unitCost === null).length;
-
-  const steps: { title: string; state: "done" | "active" | "late" | "todo"; detail: React.ReactNode; action?: React.ReactNode }[] = [
-    {
-      title: "Presales pulled in",
-      state: pr ? "done" : "todo",
-      detail: pr ? <>{pr.assignedTo.name} by {pr.requestedBy.name} · {fmtDate(pr.createdAt)}</> : "Sales requests a BOQ from presales",
-      action: !pr && d.perms.requestPresales && !closed ? <PullPresalesButton oppId={o.id} presales={options.presales} stageBeforeBoq={STAGE_META[o.stage as StageKey].order < STAGE_META.BOQ.order} size="sm" /> : undefined,
-    },
-    {
-      title: "BOQ prepared",
-      state: !pr ? "todo" : pr.status === "BOQ_SUBMITTED" ? "done" : pr.status === "CANCELLED" ? "todo" : pr.dueDate < now ? "late" : "active",
-      detail: !pr ? `${d.lines.length} lines` : pr.status === "BOQ_SUBMITTED" ? <>{d.lines.length} lines submitted {fmtDate(pr.submittedAt)}</> : <>{PRESALES_STATUS_LABEL[pr.status]} · due {fmtDate(pr.dueDate)} ({relativeDays(pr.dueDate)})</>,
-      action:
-        pr && (pr.status === "REQUESTED" || pr.status === "IN_PROGRESS") && meIsPresales ? (
-          <div className="flex flex-wrap gap-1.5">
-            {pr.status === "REQUESTED" && <StartPresalesButton requestId={pr.id} />}
-            <SubmitBoqButton requestId={pr.id} purchase={options.purchase} lineCount={d.lines.length} />
-          </div>
-        ) : undefined,
-    },
-    {
-      title: "Pricing from purchase",
-      state: !pq ? (d.totals.fullyCosted ? "done" : "todo") : pq.status === "QUOTED" ? "done" : pq.status === "CANCELLED" ? "todo" : pq.dueDate < now ? "late" : "active",
-      detail: !pq ? (d.totals.fullyCosted ? "Costs available" : "Requested when BOQ is submitted") : pq.status === "QUOTED" ? <>Priced by {pq.assignedTo.name} · {fmtDate(pq.quotedAt)}{pq.quoteValidTill && <> · valid till {fmtDate(pq.quoteValidTill)}</>}</> : <>{pq.assignedTo.name} · {PRICING_STATUS_LABEL[pq.status]} · due {fmtDate(pq.dueDate)} ({relativeDays(pq.dueDate)})</>,
-      action:
-        pq && (pq.status === "REQUESTED" || pq.status === "IN_PROGRESS") && meIsPurchase ? (
-          <div className="flex flex-wrap gap-1.5">
-            {pq.status === "REQUESTED" && <StartPricingButton requestId={pq.id} />}
-            <CompletePricingButton requestId={pq.id} missing={missingCost} />
-          </div>
-        ) : (!pq || pq.status === "QUOTED" || pq.status === "CANCELLED") && d.lines.length > 0 && !closed && d.perms.spec && !d.totals.fullyCosted ? (
-          <RequestPricingButton oppId={o.id} purchase={options.purchase} />
-        ) : undefined,
-    },
-    {
-      title: "Customer quote",
-      state: quote ? "done" : d.totals.fullyPriced && d.totals.fullyCosted ? "active" : "todo",
-      detail: quote ? <>{quote.code} v{quote.version} · {inr(quote.totalPrice)} · {quote.status.toLowerCase()}</> : d.totals.fullyCosted ? `${d.totals.priced}/${d.totals.lines} lines have a sell price` : "Sales sets sell price once costs are in",
-      action:
-        d.perms.quote && !closed && d.lines.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            <CreateQuoteButton oppId={o.id} disabledReason={!d.totals.fullyCosted ? "Waiting for costs from purchase" : !d.totals.fullyPriced ? "Set a sell price on every line" : undefined} />
-          </div>
-        ) : undefined,
-    },
-  ];
-
-  return (
-    <Card>
-      <CardHeader title="Sales → Presales → Purchase" description={compact ? undefined : "Solution and pricing workflow"} />
-      <CardContent>
-        <ol className={cn(compact ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-4" : "flex flex-col gap-3")}>
-          {steps.map((s) => (
-            <li key={s.title} className={cn("flex gap-2.5", compact && "rounded-md border border-border p-2.5")}>
-              <StepIcon state={s.state} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium">{s.title}</p>
-                <p className="text-xs text-ink-3">{s.detail}</p>
-                {s.action && <div className="mt-1.5">{s.action}</div>}
-              </div>
-            </li>
-          ))}
-        </ol>
-        {pr?.solutionSummary && !compact && (
-          <div className="mt-3 rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">
-            <span className="font-medium text-ink">Solution: </span>{pr.solutionSummary}
-          </div>
-        )}
-        {pr && !compact && <p className="mt-2 text-xs text-ink-3"><span className="font-medium">Scope:</span> {pr.scope}</p>}
-      </CardContent>
-    </Card>
-  );
-}
-
 function Quotes({ d }: { d: OppDetail }) {
   const qs = d.opp.quotes;
+  const closed = ["WON", "LOST", "DROPPED"].includes(d.opp.stage);
   if (!qs.length) {
     return <Card className="p-8 text-center text-sm text-ink-3">No quotes yet. Quotes are generated from a fully priced BOQ on the BOQ tab.</Card>;
   }
@@ -412,17 +322,21 @@ function Quotes({ d }: { d: OppDetail }) {
           </tr>
         </thead>
         <tbody>
-          {qs.map((q) => (
+          {qs.map((q, i) => (
             <tr key={q.id} className="border-b border-border last:border-0">
               <td className="px-4 py-2.5"><span className="font-mono text-xs">{q.code}</span> <span className="text-ink-3">v{q.version}</span></td>
               <td className="px-4 py-2.5">
-                <Badge tone={q.status === "ACCEPTED" ? "green" : q.status === "REJECTED" ? "red" : q.status === "SUBMITTED" ? "blue" : "slate"}>{q.status.charAt(0) + q.status.slice(1).toLowerCase()}</Badge>
+                <Badge tone={q.status === "ACCEPTED" ? "green" : q.status === "REJECTED" ? "red" : q.status === "SUBMITTED" ? "blue" : q.status === "CHANGES_REQUESTED" ? "amber" : "slate"}>{QUOTE_STATUS_LABEL[q.status]}</Badge>
+                {q.responseNote && <p className="mt-1 max-w-64 text-xs text-ink-3">{q.responseNote}</p>}
               </td>
               <td className="px-4 py-2.5 text-right font-medium tabular">{inr(q.totalPrice)}</td>
               {d.perms.viewCost && <td className="px-4 py-2.5 text-right tabular">{q.marginPct !== null ? pct(q.marginPct, 1) : "—"}</td>}
               <td className="px-4 py-2.5 text-xs">{fmtDate(q.submittedAt ?? q.createdAt)}</td>
               <td className="px-4 py-2.5 text-xs">{fmtDate(q.validTill)}</td>
               <td className="px-4 py-2.5 text-right">
+                {i === 0 && d.perms.quote && !closed && (q.status === "SUBMITTED" || q.status === "CHANGES_REQUESTED") && (
+                  <span className="mr-3 inline-block"><QuoteResponseButton quoteId={q.id} version={q.version} /></span>
+                )}
                 <Link href={`/opportunities/${d.opp.id}/quotes/${q.id}`} target="_blank" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                   <FileText className="size-3.5" /> View <ExternalLink className="size-3" />
                 </Link>
@@ -458,6 +372,9 @@ function HistoryTab({ d }: { d: OppDetail }) {
     CREATE: "Created the opportunity", PRESALES_REQUESTED: "Pulled in presales", BOQ_SUBMITTED: "Submitted the BOQ",
     PRICING_REQUESTED: "Requested pricing", PRICING_COMPLETED: "Completed pricing", QUOTE_ISSUED: "Issued a quote",
     BOQ_UPDATED: "Updated the BOQ", CONTACTS: "Updated the buying group", DELETE: "Deleted",
+    BOQ_REVISION_REQUESTED: "Requested a BOQ revision", PRESALES_QUESTION: "Asked sales a question", PRESALES_ANSWERED: "Answered presales",
+    PRICING_RETURNED: "Sent the BOQ back", REQUEST_REASSIGNED: "Reassigned a request", REQUEST_CANCELLED: "Cancelled a request",
+    QUOTE_RESPONSE: "Recorded the customer response",
   };
   return (
     <div className="grid gap-6 lg:grid-cols-5">

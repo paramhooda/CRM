@@ -25,6 +25,7 @@ export type FilterOptions = {
   sales: { id: string; name: string }[];
   presales: { id: string; name: string }[];
   oems: { id: string; name: string; uses?: number }[];
+  oemTbd?: { id: string; name: string; uses?: number } | null;
 };
 
 const ALL_DIMS = ["bu", "cat", "sales", "presales", "oem", "stage", "fc", "health", "atype", "rev", "flag"] as const;
@@ -97,7 +98,7 @@ export function FilterBar({
       oem: {
         key: "oem",
         label: "OEM",
-        options: [...options.oems].sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0) || a.name.localeCompare(b.name)).map((o) => ({ value: o.id, label: o.name })),
+        options: [...options.oems, ...(options.oemTbd ? [options.oemTbd] : [])].sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0) || a.name.localeCompare(b.name)).map((o) => ({ value: o.id, label: o.name })),
       },
       stage: { key: "stage", label: "Stage", options: (Object.keys(STAGE_META) as StageKey[]).map((s) => ({ value: s, label: STAGE_META[s].label })) },
       fc: { key: "fc", label: "Forecast", options: (["COMMIT", "UPSIDE", "PIPELINE", "OMITTED"] as const).map((f) => ({ value: f, label: FORECAST_LABEL[f] })) },
@@ -313,7 +314,7 @@ export function FilterBar({
 }
 
 function optionLabel(d: string, v: string, options: FilterOptions) {
-  const all = [...options.bus, ...options.categories, ...options.sales, ...options.presales, ...options.oems];
+  const all = [...options.bus, ...options.categories, ...options.sales, ...options.presales, ...options.oems, ...(options.oemTbd ? [options.oemTbd] : [])];
   return all.find((x) => x.id === v)?.name ?? (d === "flag" ? FLAG_META[v as keyof typeof FLAG_META]?.label ?? v : v);
 }
 

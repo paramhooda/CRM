@@ -88,6 +88,7 @@ export async function togglePicklistValue(kind: "OEM" | "CATEGORY" | "VALUE", id
   const admin = await requireAdmin();
   if (kind === "OEM") {
     const o = await db.oem.findUniqueOrThrow({ where: { id } });
+    if (o.isPlaceholder) return { ok: false, error: "\"To be decided\" is a system value used on early estimates and cannot be switched off." };
     await db.oem.update({ where: { id }, data: { active: !o.active } });
   } else if (kind === "CATEGORY") {
     const c = await db.category.findUniqueOrThrow({ where: { id } });

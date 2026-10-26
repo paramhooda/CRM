@@ -2,7 +2,8 @@ import "server-only";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth";
-import { can, opportunityScope } from "@/lib/authz";
+import { can, isManager, opportunityScope } from "@/lib/authz";
+import { deriveWorkflow, specLock, OPEN_PRESALES, OPEN_PRICING } from "@/lib/workflow";
 import { toNumber } from "@/lib/format";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { boqTotals } from "@/lib/boq";
@@ -69,6 +70,8 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     oemQuoteRef: showCost ? l.oemQuoteRef : null,
     leadTimeDays: l.leadTimeDays,
     pricingStatus: l.pricingStatus,
+    /** Costed once, but the specification changed since: purchase must re-confirm */
+    costStale: !l.isEstimate && l.pricingStatus === "PENDING" && l.unitCost !== null,
     unitPrice: l.unitPrice !== null ? toNumber(l.unitPrice) : null,
     listPrice: l.product?.listPrice ? toNumber(l.product.listPrice) : null,
     standardCost: l.product?.standardCost ? toNumber(l.product.standardCost) : null,
@@ -77,7 +80,23 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     notes: l.notes,
   }));
   const totals = boqTotals(o.lineItems);
+  const now = new Date();
+  const ps = o.presalesRequests[0] ?? null;
+  const pq = o.pricingRequests[0] ?? null;
+  const workflow = deriveWorkflow({
+    stage: o.stage,
+    lines: o.lineItems.map((l) => ({ pricingStatus: l.pricingStatus, unitCost: l.unitCost === null ? null : toNumber(l.unitCost), unitPrice: l.unitPrice === null ? null : toNumber(l.unitPrice), isEstimate: l.isEstimate })),
+    presales: ps && { ...ps, assignee: ps.assignedTo.name },
+    pricing: pq && { ...pq, assignee: pq.assignedTo.name },
+    quote: o.quotes[0] ?? null,
+    now,
+  });
+  const openPs = o.presalesRequests.find((r) => (OPEN_PRESALES as readonly string[]).includes(r.status));
+  const openPq = o.pricingRequests.find((r) => (OPEN_PRICING as readonly string[]).includes(r.status));
+  const lockReason = specLock({ presalesOpen: openPs ? { assigneeId: openPs.assignedToId } : null, pricingOpen: !!openPq, userId: user.id, isManager: isManager(user) });
   return {
+    workflow,
+    lockReason,
     opp: {
       ...o,
       amount: toNumber(o.amount),

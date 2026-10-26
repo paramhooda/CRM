@@ -10,6 +10,7 @@ import { STAGE_META, CLOSED_STAGES, type StageKey } from "@/lib/constants";
 import { billingReadinessIssues, lockForBilling, unlockForBilling, BillingLockedError } from "./billing";
 
 const DAY = 86_400_000;
+const LIVE_QUOTE: string[] = ["SUBMITTED", "CHANGES_REQUESTED"];
 
 export class UserError extends Error {}
 
@@ -105,16 +106,36 @@ export async function applyStageChange(
 
   if (to === "WON") {
     await tx.account.update({ where: { id: o.accountId }, data: { accountType: "EXISTING", status: "ACTIVE" } });
-    if (o.quotes[0] && o.quotes[0].status === "SUBMITTED") await tx.quote.update({ where: { id: o.quotes[0].id }, data: { status: "ACCEPTED" } });
+    // The PO is the customer's acceptance of the latest quote they were sent
+    if (o.quotes[0] && LIVE_QUOTE.includes(o.quotes[0].status))
+      await tx.quote.update({ where: { id: o.quotes[0].id }, data: { status: "ACCEPTED", respondedAt: now, responseNote: `PO ${data.poNumber as string}` } });
   }
-  if ((to === "LOST" || to === "DROPPED") && o.quotes[0]?.status === "SUBMITTED") {
-    await tx.quote.update({ where: { id: o.quotes[0].id }, data: { status: "REJECTED" } });
+  if ((to === "LOST" || to === "DROPPED") && o.quotes[0] && LIVE_QUOTE.includes(o.quotes[0].status)) {
+    await tx.quote.update({ where: { id: o.quotes[0].id }, data: { status: "REJECTED", respondedAt: now } });
   }
+  // Anyone still working on the deal is told to stop (closed) or that it is paused (hold)
+  const openWork = { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] as ("REQUESTED" | "IN_PROGRESS" | "NEEDS_INFO")[] } };
+  const [presalesOpen, pricingOpen] = await Promise.all([
+    tx.presalesRequest.findMany({ where: openWork, select: { assignedToId: true } }),
+    tx.pricingRequest.findMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS"] } }, select: { assignedToId: true } }),
+  ]);
+  const workers = [...presalesOpen, ...pricingOpen].map((r) => r.assignedToId);
   if (isClosed) {
-    await tx.presalesRequest.updateMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS"] } }, data: { status: "CANCELLED" } });
-    await tx.pricingRequest.updateMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS"] } }, data: { status: "CANCELLED" } });
+    const cancelReason = `Deal closed as ${stageMeta.label}`;
+    await tx.presalesRequest.updateMany({ where: openWork, data: { status: "CANCELLED", cancelReason } });
+    await tx.pricingRequest.updateMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS"] } }, data: { status: "CANCELLED", cancelReason } });
   }
-  await notify(tx, [o.salesOwnerId, o.presalesOwnerId, isClosed ? o.purchaseOwnerId : null], {
+  const toldWorkers = workers.length > 0 && (isClosed || to === "HOLD");
+  if (toldWorkers) {
+    await notify(tx, workers, {
+      type: "WORKFLOW",
+      title: isClosed ? `Stop work: ${o.name} closed as ${stageMeta.label}` : `On hold: ${o.name}`,
+      body: isClosed ? `${user.name} closed the deal. Your open request was cancelled.` : `${user.name} put the deal on hold. Pause work until it resumes.`,
+      link: `/opportunities/${id}`,
+      exclude: user.id,
+    });
+  }
+  await notify(tx, [o.salesOwnerId, o.presalesOwnerId, isClosed ? o.purchaseOwnerId : null].filter((u) => !toldWorkers || !workers.includes(u ?? "")), {
     type: "STAGE_CHANGE",
     title: `${o.name} moved to ${stageMeta.label}`,
     body: `By ${user.name}`,

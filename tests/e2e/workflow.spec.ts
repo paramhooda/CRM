@@ -92,7 +92,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
 
-    await page.getByRole("button", { name: "Submit BOQ to purchase" }).click();
+    await page.getByRole("button", { name: "Submit BOQ" }).click();
     const dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=solutionSummary]").fill("Cisco SD-WAN edge with Fortinet NGFW at hub, sized for 40 branches.");
     await dlg.locator("select[name=purchaseUserId]").selectOption({ label: PURCHASE.name });
@@ -117,27 +117,131 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
   });
 
+  test("sales asks for a BOQ revision; presales asks a question and sales answers", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await expect(page.getByText("Ready to quote")).toBeVisible();
+    await page.getByRole("button", { name: "Request BOQ revision" }).click();
+    let dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("Request BOQ revision 2")).toBeVisible();
+    await dlg.locator("textarea[name=reason]").fill("Customer wants 12 Cisco edge devices instead of 10.");
+    await dlg.getByRole("button", { name: "Request revision" }).click();
+    await expect(page.getByText("Presales notified")).toBeVisible();
+    await expect(page.getByText("With presales").first()).toBeVisible();
+    // Only the presales assignee edits the specification now
+    await expect(page.getByText("Products and quantities locked")).toBeVisible();
+
+    await login(page, PRESALES.email);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await page.getByLabel("Line 1 quantity").fill("12");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Line items saved")).toBeVisible();
+    await expect(page.getByText("Changed · needs re-pricing")).toBeVisible();
+    await page.getByRole("button", { name: "Ask sales" }).click();
+    dlg = page.getByRole("dialog");
+    await dlg.locator("textarea[name=question]").fill("Do the two extra devices need their own licence?");
+    await dlg.getByRole("button", { name: "Send question" }).click();
+    await expect(page.getByText("Question sent to sales")).toBeVisible();
+
+    await login(page, SALES);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await expect(page.getByText("Waiting on sales").first()).toBeVisible();
+    await page.getByRole("button", { name: "Answer presales" }).click();
+    dlg = page.getByRole("dialog");
+    await dlg.locator("textarea[name=answer]").fill("Yes, add licences for all 12.");
+    await dlg.getByRole("button", { name: "Send answer" }).click();
+    await expect(page.getByText("Answer sent. Presales has resumed.")).toBeVisible();
+
+    await login(page, PRESALES.email);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await page.getByRole("button", { name: "Submit BOQ" }).click();
+    dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("1 of 3 lines need a cost")).toBeVisible(); // unchanged lines keep their cost
+    await dlg.locator("textarea[name=solutionSummary]").fill("Revision 2: 12 edge devices with licences.");
+    await dlg.getByRole("button", { name: "Submit" }).click();
+    await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
+  });
+
+  test("purchase sends the BOQ back; presales resubmits; purchase re-prices only the changed line", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await expect(page.getByText("With purchase").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add line" })).toHaveCount(0); // locked while purchase prices it
+
+    await login(page, PURCHASE.email);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await page.getByRole("button", { name: "Send back" }).click();
+    let dlg = page.getByRole("dialog");
+    await dlg.locator("textarea[name=reason]").fill("Confirm the licence SKU for the two extra devices.");
+    await dlg.getByRole("button", { name: "Send back" }).click();
+    await expect(page.getByText("Sent back", { exact: true })).toBeVisible();
+
+    await login(page, PRESALES.email);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await expect(page.getByText("BOQ · revision 3")).toBeVisible();
+    await page.getByRole("button", { name: "Submit BOQ" }).click();
+    dlg = page.getByRole("dialog");
+    await dlg.locator("textarea[name=solutionSummary]").fill("Licence SKU confirmed with the OEM.");
+    await dlg.getByRole("button", { name: "Submit" }).click();
+    await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
+
+    await login(page, PURCHASE.email);
+    await page.goto(`${oppUrl}?tab=boq`);
+    await expect(page.getByText("Re-pricing").first()).toBeVisible();
+    await page.getByLabel("Line 1 unit cost").fill("240000");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Line items saved")).toBeVisible();
+    await expect(page.getByText("Changed · needs re-pricing")).toHaveCount(0);
+    await page.getByRole("button", { name: "Pricing complete" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
+    await expect(page.getByText("Pricing sent to sales")).toBeVisible();
+  });
+
   test("sales prices at margin, quotes and closes as won; lines lock for billing", async ({ page }) => {
     await login(page, SALES);
     await page.goto(`${oppUrl}?tab=boq`);
+    // A second tab opened on the same BOQ cannot overwrite a newer save
+    const other = await page.context().newPage();
+    await other.goto(`${oppUrl}?tab=boq`);
     await page.getByLabel("Target margin %").fill("18");
     await page.getByRole("button", { name: "Price at margin" }).click();
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await expect(page.getByText("18.0%").first()).toBeVisible();
+    await other.getByLabel("Line 1 unit price").fill("1");
+    await other.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(other.getByText(/Someone else saved this BOQ/)).toBeVisible();
+    await other.close();
 
     await page.getByRole("button", { name: "Generate quote" }).click();
-    const popup = page.waitForEvent("popup");
+    let popup = page.waitForEvent("popup");
     await page.getByRole("dialog").getByRole("button", { name: "Generate" }).click();
     const quote = await popup;
     await expect(quote.getByText("Quotation", { exact: true })).toBeVisible();
     await expect(quote.getByText("85176290").first()).toBeVisible(); // HSN carried onto the quote
     await quote.close();
 
+    // Customer asks for changes: sales re-issues a new version
+    await page.goto(`${oppUrl}?tab=boq`);
+    await page.getByRole("button", { name: "Customer response" }).click();
+    let dlg = page.getByRole("dialog");
+    await dlg.getByRole("radio", { name: "Wants changes" }).click();
+    await dlg.locator("textarea[name=note]").fill("Asked for 2% lower on the edge devices.");
+    await dlg.getByRole("button", { name: "Save response" }).click();
+    await expect(page.getByText("Response recorded")).toBeVisible();
+    await expect(page.getByText("Customer wants changes").first()).toBeVisible();
+    await page.getByRole("button", { name: "Issue quote v2" }).click();
+    popup = page.waitForEvent("popup");
+    await page.getByRole("dialog").getByRole("button", { name: "Generate" }).click();
+    await (await popup).close();
+    await page.goto(`${oppUrl}?tab=quotes`);
+    await expect(page.getByText("Superseded")).toBeVisible();
+    await expect(page.getByText("With customer")).toBeVisible();
+
     await page.goto(oppUrl);
     await expect(page.getByRole("button", { name: "Proposal Submitted" })).toBeDisabled();
     await page.getByRole("button", { name: "Won" }).click();
-    const dlg = page.getByRole("dialog");
+    dlg = page.getByRole("dialog");
     await dlg.locator("input[name=poNumber]").fill("PO/E2E/0001");
     await dlg.getByRole("button", { name: "Mark as won" }).click();
     await expect(page.getByText("Moved to Closed-Won")).toBeVisible();
@@ -221,15 +325,18 @@ test.describe("Line items, navigation and filters", () => {
     await page.fill("#name", name);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
     await page.getByRole("button", { name: "Quick estimate" }).click();
-    await page.getByLabel("New line 1 OEM").selectOption({ label: "Dell" });
+    // Early on the OEM may not be known yet
+    await page.getByLabel("New line 1 OEM").selectOption({ label: "To be decided" });
     await page.getByLabel("New line 1 category").selectOption({ label: "Server" });
     await page.getByLabel("New line 1 value").fill("2500000");
-    await expect(page.getByText("· Dell").first()).toBeVisible();
+    await expect(page.getByText("· To be decided").first()).toBeVisible();
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     await expect(page.getByText("₹25 L").first()).toBeVisible();
     await page.goto(`${new URL(page.url()).pathname}?tab=boq`);
     await expect(page.getByText(/^Estimate ·/).first()).toBeVisible();
+    await expect(page.getByText("Estimate only")).toBeVisible();
+    await expect(page.getByText("To be decided").first()).toBeVisible();
   });
 
   test("dashboard tiles open the matching filtered list", async ({ page }) => {

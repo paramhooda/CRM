@@ -44,16 +44,30 @@ APP_PORT=8080 docker compose up -d  # run on another port
 - Lines are picked from the **product catalogue** (Catalogue → Products): SKU, name, BU, category, OEM, product type, unit, billing frequency and default term, list price, standard cost, HSN/SAC and GST %. Everyone can browse it. Only Admin can add, edit or deactivate products.
 - A custom line is still allowed for one-off items, but it must have a BU, category and OEM.
 - Each line bills One-time, Monthly, Quarterly or Annually, over a term in months.
-- Every deal has at least one line. When the products are not known yet, add a **Quick estimate**: OEM, category and an estimated value. Presales later replaces it with catalogue products; estimate lines cannot be quoted or closed as won.
+- Every deal has at least one line. When the products are not known yet, add a **Quick estimate**: OEM, category and an estimated value. The OEM can be **To be decided** on estimates, and it reports as its own bucket. Presales later replaces estimates with catalogue products; estimate lines and "To be decided" cannot be priced, quoted or closed as won. Why this structure: [docs/deal-structure.md](docs/deal-structure.md).
 - The deal value always rolls up from the lines, and its primary BU, category and OEM come from the largest line. Every roll-up change is audited, so it shows in "changes since last review".
 - **Filtering by OEM (or BU, or category)** matches deals with at least one line for it, and values show that OEM's share. A ₹1 Cr deal with ₹40 L of Dell lines counts as ₹40 L under a Dell filter. Totals, charts and the pipeline board use the share; the opportunity list shows both the deal value and a "Dell value" column. The line-items export includes only the matching lines.
 
-**Sales → Presales → Purchase workflow**
+**Sales → Presales → Purchase workflow** (full rules: [docs/sales-workflow.md](docs/sales-workflow.md))
+
+Each deal shows one derived **workflow state** (With presales, Waiting on sales, With purchase, Ready to quote, Quote with customer, Customer wants changes, and so on), who it is waiting on, the due date and what blocks the next step. Each person sees only the actions they can take.
+
 1. Sales clicks **Pull in presales** on a deal and picks an engineer, due date and scope. The presales engineer sees it on their **My work** home and is notified.
-2. Presales refines the line items into the BOQ and clicks **Submit BOQ to purchase**. Purchase is notified, and the request auto-assigns to the least-loaded buyer if none is chosen.
-3. Purchase sees uncosted lines grouped by OEM, so RFQs to distributors can be batched. They enter unit cost (or apply **Standard costs** from the catalogue), distributor and lead time, then click **Pricing complete**. Sales and presales are notified.
+2. Presales replaces estimates with BOQ lines and clicks **Submit BOQ**. Only lines without a current cost go to purchase. The request keeps the previous buyer, or auto-assigns to the least-loaded one.
+3. Purchase sees uncosted lines grouped by OEM, so RFQs to distributors can be batched. They enter unit cost (or apply **Standard costs** from the catalogue), distributor and lead time, then click **Pricing complete** with a validity date.
 4. Sales sets sell prices, with **List prices** or **Price at margin** as shortcuts, then clicks **Generate quote**. This versions the quote and moves the deal to Proposal Submitted. The quote opens as a printable PDF-ready page with HSN/SAC and billing terms.
-5. On **Closed-Won**, every line must be priced and carry an HSN/SAC. The lines then lock for billing (see below).
+5. Sales records the **Customer response**: accepted, wants changes or rejected.
+6. On **Closed-Won**, the latest quote is accepted automatically. Every line must be priced and carry an HSN/SAC, and the lines then lock for billing (see below).
+
+Revisions are handled at every stage:
+- **Request BOQ revision** creates revision N+1 with a reason and stops any pricing in progress.
+- Presales can **Ask sales** a question, which pauses their due date.
+- Purchase can **Send back** a BOQ it cannot price.
+- Changed lines are flagged **needs re-pricing** automatically, and only those go back to purchase.
+- **Re-validate costs** refreshes expired supplier pricing.
+- Requests can be **reassigned** or **cancelled** with a reason.
+
+The BOQ locks while purchase is pricing it, and simultaneous saves are detected instead of overwriting each other. Due-tomorrow reminders, overdue escalations to the sales manager, unanswered-question reminders and expiring-quote reminders are sent automatically.
 
 Everyone can read all deals, costs and margins. Edit rights stay role-based: presales edit the specification, purchase edits only cost fields, and sales edit only sell prices.
 

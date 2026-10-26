@@ -102,6 +102,7 @@ export const ROLE_LABEL = {
 export const PRESALES_STATUS_LABEL = {
   REQUESTED: "Requested",
   IN_PROGRESS: "In progress",
+  NEEDS_INFO: "Waiting on sales",
   BOQ_SUBMITTED: "BOQ submitted",
   CANCELLED: "Cancelled",
 } as const;
@@ -109,6 +110,7 @@ export const PRICING_STATUS_LABEL = {
   REQUESTED: "Requested",
   IN_PROGRESS: "In progress",
   QUOTED: "Priced",
+  RETURNED: "Sent back to presales",
   CANCELLED: "Cancelled",
 } as const;
 export const HEALTH_LABEL = {

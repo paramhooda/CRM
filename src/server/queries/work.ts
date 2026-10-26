@@ -6,6 +6,8 @@ import { toNumber } from "@/lib/format";
 
 const DAY = 86_400_000;
 const OPEN = ["REQUESTED", "IN_PROGRESS"] as const;
+const OPEN_PRESALES = ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] as const;
+const KIND_TAG: Record<string, string | undefined> = { REPRICE: "Re-pricing", REVALIDATE: "Re-validation" };
 const PRIORITY_RANK: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2 };
 
 export type QueueItem = {
@@ -20,12 +22,16 @@ export type QueueItem = {
   lines: number;
   costed?: number;
   oems?: string[];
+  /** Revision / re-pricing marker shown next to the deal name */
+  tag?: string;
   overdue: boolean;
   dueThisWeek: boolean;
   notStarted: boolean;
 };
 
 function classify(dueDate: Date, status: string, now: Date) {
+  // A request waiting on sales is paused: its due date moves out when sales answers
+  if (status === "NEEDS_INFO") return { overdue: false, dueThisWeek: false, notStarted: false };
   return {
     overdue: dueDate < now,
     dueThisWeek: dueDate >= now && dueDate.getTime() - now.getTime() <= 7 * DAY,
@@ -62,7 +68,7 @@ export async function getPresalesWork(user: CurrentUser) {
   const now = new Date();
   const [open, waiting, delivered, base] = await Promise.all([
     db.presalesRequest.findMany({
-      where: { assignedToId: user.id, status: { in: [...OPEN] } },
+      where: { assignedToId: user.id, status: { in: [...OPEN_PRESALES] } },
       include: { opportunity: { select: { ...oppSelect, lineItems: { select: { oem: { select: { name: true } } } } } }, requestedBy: { select: { name: true } } },
     }),
     db.pricingRequest.findMany({
@@ -80,7 +86,9 @@ export async function getPresalesWork(user: CurrentUser) {
   ]);
   const queue: QueueItem[] = open
     .map((r) => ({
-      id: r.id, status: r.status, priority: r.priority, dueDate: r.dueDate, createdAt: r.createdAt, note: r.scope,
+      id: r.id, status: r.status, priority: r.priority, dueDate: r.dueDate, createdAt: r.createdAt,
+      note: r.status === "NEEDS_INFO" ? `Waiting on sales: ${r.infoQuestion}` : r.revision > 1 && r.reason ? r.reason : r.scope,
+      tag: r.revision > 1 ? `Revision ${r.revision}` : undefined,
       requestedBy: r.requestedBy.name, lines: r.opportunity.lineItems.length,
       oems: [...new Set(r.opportunity.lineItems.map((l) => l.oem.name))],
       opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, amount: toNumber(r.opportunity.amount), salesOwner: r.opportunity.salesOwner.name },
@@ -101,7 +109,7 @@ export async function getPurchaseWork(user: CurrentUser) {
     db.pricingRequest.findMany({
       where: { assignedToId: user.id, status: { in: [...OPEN] } },
       include: {
-        opportunity: { select: { ...oppSelect, lineItems: { select: { unitCost: true, oem: { select: { name: true } } } } } },
+        opportunity: { select: { ...oppSelect, lineItems: { where: { isEstimate: false }, select: { unitCost: true, pricingStatus: true, oem: { select: { name: true } } } } } },
         requestedBy: { select: { name: true } },
       },
     }),
@@ -128,8 +136,9 @@ export async function getPurchaseWork(user: CurrentUser) {
     .map((r) => {
       const lines = r.opportunity.lineItems;
       return {
-        id: r.id, status: r.status, priority: "NORMAL", dueDate: r.dueDate, createdAt: r.createdAt, note: r.notes,
-        requestedBy: r.requestedBy.name, lines: lines.length, costed: lines.filter((l) => l.unitCost !== null).length,
+        id: r.id, status: r.status, priority: "NORMAL", dueDate: r.dueDate, createdAt: r.createdAt, note: r.reason ?? r.notes,
+        tag: KIND_TAG[r.kind],
+        requestedBy: r.requestedBy.name, lines: lines.length, costed: lines.filter((l) => l.unitCost !== null && l.pricingStatus === "QUOTED").length,
         oems: [...new Set(lines.map((l) => l.oem.name))],
         opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, amount: toNumber(r.opportunity.amount), salesOwner: r.opportunity.salesOwner.name },
         ...classify(r.dueDate, r.status, now),
@@ -140,7 +149,7 @@ export async function getPurchaseWork(user: CurrentUser) {
   const byOem = new Map<string, { oem: string; lines: number; deals: Set<string> }>();
   for (const r of open) {
     for (const l of r.opportunity.lineItems) {
-      if (l.unitCost !== null) continue;
+      if (l.unitCost !== null && l.pricingStatus === "QUOTED") continue;
       const x = byOem.get(l.oem.name) ?? { oem: l.oem.name, lines: 0, deals: new Set<string>() };
       x.lines++;
       x.deals.add(r.opportunity.id);

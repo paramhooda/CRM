@@ -117,7 +117,9 @@ export function WorkQueue({ kind, items }: { kind: "presales" | "purchase"; item
                 <div className="flex flex-wrap items-center gap-2">
                   <Link href={`/opportunities/${i.opp.id}?tab=boq`} className="truncate text-sm font-medium hover:text-primary">{i.opp.name}</Link>
                   {i.priority !== "NORMAL" && <Badge tone={i.priority === "URGENT" ? "red" : "orange"}>{i.priority.toLowerCase()}</Badge>}
+                  {i.tag && <Badge tone="amber">{i.tag}</Badge>}
                   {i.status === "IN_PROGRESS" && <Badge tone="violet" dot>In progress</Badge>}
+                  {i.status === "NEEDS_INFO" && <Badge tone="amber" dot>Waiting on sales</Badge>}
                 </div>
                 <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-ink-3">
                   <span>{i.opp.account}</span><span>·</span>

@@ -122,6 +122,10 @@ async function main() {
   }
   const oems: Record<string, string> = {};
   for (const [i, name] of OEMS.entries()) oems[name] = (await db.oem.create({ data: { name, sortOrder: i } })).id;
+  // Early estimates may not know the OEM yet; it must be replaced before quoting.
+  // The migration creates this row on a fresh database; a forced re-seed truncates it, so upsert either way.
+  const tbdRow = { name: "To be decided", sortOrder: -1, isPlaceholder: true, active: true };
+  const oemTbd = (await db.oem.upsert({ where: { id: "oem_to_be_decided" }, create: { id: "oem_to_be_decided", ...tbdRow }, update: tbdRow })).id;
   for (const [type, values] of Object.entries(PICKLISTS)) {
     await db.picklistValue.createMany({ data: values.map((value, i) => ({ type, value, sortOrder: i })) });
   }
@@ -733,6 +737,89 @@ async function main() {
   // ── Welcome notifications ──
   for (const u of [head, ...sales.slice(0, 3)]) {
     await db.notification.create({ data: { userId: u.id, type: "SYSTEM", title: "Weekly pipeline review is due", body: "Review changes since your last pipeline review.", link: "/reviews" } });
+  }
+
+  // ── Workflow scenarios: a question to sales, a BOQ sent back by purchase, customer changes, a revision in
+  // progress, an accepted quote awaiting PO, a quote about to expire and early estimates with OEM to be decided ──
+  const event = (oppId: string, action: string, userId: string, newValue: string, at: Date) =>
+    db.auditLog.create({ data: { entityType: "Opportunity", entityId: oppId, action, newValue, changedById: userId, changedAt: at } });
+  const openStatuses = { in: ["REQUESTED", "IN_PROGRESS"] as ("REQUESTED" | "IN_PROGRESS")[] };
+  // A deal still on estimates where presales was just pulled in and is waiting on an answer from sales
+  const askDeal = await db.opportunity.findFirst({
+    where: { stage: "QUALIFIED", presalesRequests: { none: {} }, lineItems: { some: { isEstimate: true } } },
+    orderBy: { amount: "desc" },
+  });
+  if (askDeal) {
+    const at = daysAgo(3, 11);
+    const question = "Does the customer need DR at the second site, or is backup to the cloud enough?";
+    const engineer = presales[1] ?? presales[0]!;
+    await db.presalesRequest.create({
+      data: {
+        opportunityId: askDeal.id, requestedById: askDeal.salesOwnerId, assignedToId: engineer.id, status: "NEEDS_INFO", infoQuestion: question,
+        infoRequestedAt: at, scope: "Design a backup and DR solution for the core banking stack; prepare the BOQ.", dueDate: new Date(at.getTime() + 5 * DAY),
+        createdAt: daysAgo(4, 10), startedAt: daysAgo(4, 15),
+      },
+    });
+    await db.opportunity.update({ where: { id: askDeal.id }, data: { presalesOwnerId: engineer.id } });
+    await event(askDeal.id, "PRESALES_REQUESTED", askDeal.salesOwnerId, engineer.name, daysAgo(4, 10));
+    await event(askDeal.id, "PRESALES_QUESTION", engineer.id, question, at);
+  }
+  const returned = await db.pricingRequest.findFirst({
+    where: { status: openStatuses, dueDate: { gt: NOW }, presalesRequestId: { not: null } }, orderBy: { createdAt: "desc" }, include: { presalesRequest: true },
+  });
+  if (returned?.presalesRequest) {
+    const at = daysAgo(1, 15);
+    const reason = "Line 1 part is end-of-sale with the OEM. Replace it with the successor model and add the 3-year support SKU.";
+    await db.pricingRequest.update({ where: { id: returned.id }, data: { status: "RETURNED", returnReason: reason, returnedAt: at, startedAt: returned.startedAt ?? daysAgo(2) } });
+    await db.presalesRequest.create({
+      data: {
+        opportunityId: returned.opportunityId, requestedById: returned.assignedToId, assignedToId: returned.presalesRequest.assignedToId, revision: 2,
+        source: "PURCHASE", reason, scope: returned.presalesRequest.scope, priority: "HIGH", status: "IN_PROGRESS",
+        dueDate: new Date(at.getTime() + 4 * DAY), createdAt: at, startedAt: new Date(at.getTime() + 2 * 3_600_000),
+      },
+    });
+    await event(returned.opportunityId, "PRICING_RETURNED", returned.assignedToId, `To presales as revision 2 · ${reason}`, at);
+  }
+  const liveQuotes = await db.quote.findMany({
+    where: { status: "SUBMITTED", opportunity: { stage: { in: ["PROPOSAL", "NEGOTIATION"] } } },
+    orderBy: { totalPrice: "desc" },
+    include: { opportunity: { include: { presalesRequests: { orderBy: { revision: "desc" }, take: 1 } } } },
+  });
+  const [qChange, qRevision, qAccepted, qExpiring] = [liveQuotes[0], liveQuotes.find((q, i) => i > 0 && q.opportunity.presalesRequests.length), liveQuotes[3], liveQuotes[5]];
+  if (qChange) {
+    const at = daysAgo(2, 12);
+    const note = "Customer wants 5-year support instead of 3 and asked for a sharper price on the switches.";
+    await db.quote.update({ where: { id: qChange.id }, data: { status: "CHANGES_REQUESTED", respondedAt: at, responseNote: note } });
+    await event(qChange.opportunityId, "QUOTE_RESPONSE", qChange.opportunity.salesOwnerId, `Customer asked for changes to ${qChange.code} v${qChange.version} · ${note}`, at);
+  }
+  if (qRevision && qRevision.id !== qChange?.id) {
+    const ps = qRevision.opportunity.presalesRequests[0]!;
+    const at = daysAgo(1, 10);
+    const note = "Customer added a second site: duplicate the core and add 20 more access points.";
+    await db.quote.update({ where: { id: qRevision.id }, data: { status: "CHANGES_REQUESTED", respondedAt: new Date(at.getTime() - 3_600_000), responseNote: note } });
+    await db.presalesRequest.create({
+      data: {
+        opportunityId: qRevision.opportunityId, requestedById: qRevision.opportunity.salesOwnerId, assignedToId: ps.assignedToId, revision: ps.revision + 1,
+        source: "CUSTOMER", reason: note, scope: ps.scope, status: "IN_PROGRESS", dueDate: new Date(at.getTime() + 3 * DAY), createdAt: at, startedAt: at,
+      },
+    });
+    const first = await db.opportunityLineItem.findFirst({ where: { opportunityId: qRevision.opportunityId, isEstimate: false }, orderBy: { lineNo: "asc" } });
+    if (first) await db.opportunityLineItem.update({ where: { id: first.id }, data: { pricingStatus: "PENDING" } });
+    await event(qRevision.opportunityId, "BOQ_REVISION_REQUESTED", qRevision.opportunity.salesOwnerId, `Revision ${ps.revision + 1} · ${note}`, at);
+  }
+  if (qAccepted) {
+    const at = daysAgo(1, 17);
+    await db.quote.update({ where: { id: qAccepted.id }, data: { status: "ACCEPTED", respondedAt: at, responseNote: "Accepted on call with the CIO. PO expected next week." } });
+    await event(qAccepted.opportunityId, "QUOTE_RESPONSE", qAccepted.opportunity.salesOwnerId, `Customer accepted ${qAccepted.code} v${qAccepted.version}`, at);
+  }
+  if (qExpiring) await db.quote.update({ where: { id: qExpiring.id }, data: { validTill: new Date(NOW.getTime() + 2 * DAY) } });
+  const tbdEstimates = await db.opportunityLineItem.findMany({
+    where: { isEstimate: true, opportunity: { stage: "IDENTIFIED" } }, take: 3, orderBy: { createdAt: "desc" }, select: { id: true, opportunityId: true },
+  });
+  for (const l of tbdEstimates) {
+    await db.opportunityLineItem.update({ where: { id: l.id }, data: { oemId: oemTbd, description: "Estimate · OEM to be decided" } });
+    const lines = await db.opportunityLineItem.count({ where: { opportunityId: l.opportunityId } });
+    if (lines === 1) await db.opportunity.update({ where: { id: l.opportunityId }, data: { oemId: oemTbd } });
   }
 
   const n = await recomputeAll(db as unknown as Parameters<typeof recomputeAll>[0], NOW);

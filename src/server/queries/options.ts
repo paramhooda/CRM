@@ -23,7 +23,9 @@ export const getOptions = cache(async () => {
   return {
     bus: bus.map((b) => ({ id: b.id, name: b.name, code: b.code })),
     categories: bus.flatMap((b) => b.categories.map((c) => ({ id: c.id, name: c.name, buId: b.id, buName: b.name }))),
-    oems: oems.map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems })),
+    // "To be decided" is kept apart: only quick estimates may use it, never catalogue products or BOQ lines
+    oems: oems.filter((o) => !o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems })),
+    oemTbd: oems.filter((o) => o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems }))[0] ?? null,
     sales: users.filter((u) => u.role === "SALES" || u.role === "SALES_HEAD").map(({ id, name }) => ({ id, name })),
     presales: users.filter((u) => u.role === "PRESALES").map(({ id, name }) => ({ id, name })),
     purchase: users.filter((u) => u.role === "PURCHASE").map(({ id, name }) => ({ id, name })),

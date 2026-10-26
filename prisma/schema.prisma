@@ -125,6 +125,8 @@ enum ActivityType {
 enum PresalesStatus {
   REQUESTED
   IN_PROGRESS
+  /// Presales asked sales a question; the due date is paused until sales replies
+  NEEDS_INFO
   BOQ_SUBMITTED
   CANCELLED
 }
@@ -133,6 +135,8 @@ enum PricingStatus {
   REQUESTED
   IN_PROGRESS
   QUOTED
+  /// Purchase sent the BOQ back to presales (wrong / end-of-life part, unclear spec)
+  RETURNED
   CANCELLED
 }
 
@@ -145,6 +149,8 @@ enum QuoteStatus {
   DRAFT
   SUBMITTED
   ACCEPTED
+  /// Customer asked for changes; the next version supersedes it
+  CHANGES_REQUESTED
   REJECTED
   SUPERSEDED
 }
@@ -181,6 +187,9 @@ enum NotificationType {
   ASSIGNMENT
   MENTION
   SYSTEM
+  WORKFLOW
+  REMINDER
+  ESCALATION
 }
 
 // ───────────────────────── Users & org ─────────────────────────
@@ -258,6 +267,8 @@ model Oem {
   name          String                @unique
   sortOrder     Int                   @default(0)
   active        Boolean               @default(true)
+  /// "To be decided": allowed only on early estimate lines, never on catalogue or BOQ lines
+  isPlaceholder Boolean               @default(false)
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   opportunities Opportunity[]
@@ -435,6 +446,8 @@ model Lead {
 
 model Opportunity {
   id               String   @id @default(cuid())
+  /// Increments on every line-item save; stale saves are rejected (two people editing at once)
+  boqVersion       Int      @default(0)
   code             String   @unique
   name             String
   accountId        String
@@ -603,6 +616,18 @@ model PresalesRequest {
   scope           String
   dueDate         DateTime
   solutionSummary String?
+  /// 1 for the first BOQ, 2+ for revisions
+  revision        Int              @default(1)
+  /// Who triggered it: SALES (new or revision), PURCHASE (sent back), CUSTOMER (quote changes)
+  source          String           @default("SALES")
+  /// Why a revision was requested
+  reason          String?
+  infoQuestion    String?
+  infoAnswer      String?
+  infoRequestedAt DateTime?
+  cancelReason    String?
+  remindedAt      DateTime?
+  escalatedAt     DateTime?
   startedAt       DateTime?
   submittedAt     DateTime?
   createdAt       DateTime         @default(now())
@@ -624,6 +649,14 @@ model PricingRequest {
   assignedTo        User             @relation("PricingAssignedTo", fields: [assignedToId], references: [id])
   status            PricingStatus    @default(REQUESTED)
   notes             String?
+  /// FULL (new BOQ), REPRICE (changed lines only) or REVALIDATE (refresh expired supplier pricing)
+  kind              String           @default("FULL")
+  reason            String?
+  returnReason      String?
+  returnedAt        DateTime?
+  cancelReason      String?
+  remindedAt        DateTime?
+  escalatedAt       DateTime?
   dueDate           DateTime
   quoteValidTill    DateTime?
   responseNotes     String?
@@ -652,6 +685,10 @@ model Quote {
   createdById   String?
   createdAt     DateTime    @default(now())
   submittedAt   DateTime?
+  /// Customer response recorded by sales
+  respondedAt   DateTime?
+  responseNote  String?
+  remindedAt    DateTime?
 
   @@unique([opportunityId, version])
 }

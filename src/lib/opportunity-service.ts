@@ -1,5 +1,6 @@
 import type { Tx } from "./db";
 import { evaluateOpportunity } from "./rules/evaluate";
+import { runWorkflowAutomation } from "./workflow-automation";
 import { boqTotals } from "./boq";
 import { toNumber } from "./format";
 import type { StageKey, ForecastKey } from "./constants";
@@ -69,6 +70,7 @@ export async function recomputeAll(tx: Tx, now = new Date()) {
     select: { id: true },
   });
   for (const o of open) await recomputeOpportunity(tx, o.id, now);
+  await runWorkflowAutomation(tx, now);
   await tx.systemSetting.upsert({
     where: { key: "rules.lastRunAt" },
     create: { key: "rules.lastRunAt", value: now.toISOString() },

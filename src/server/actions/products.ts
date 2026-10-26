@@ -46,6 +46,8 @@ export async function saveProduct(id: string | null, input: Record<string, unkno
   const v = parsed.data;
   const cat = await db.category.findUnique({ where: { id: v.categoryId } });
   if (!cat || cat.businessUnitId !== v.businessUnitId) return { ok: false, error: "Category does not belong to that business unit.", fieldErrors: { categoryId: "Mismatch" } };
+  if (await db.oem.count({ where: { id: v.oemId, isPlaceholder: true } }))
+    return { ok: false, error: "Catalogue products need a real OEM.", fieldErrors: { oemId: "Choose the OEM" } };
   const dupe = await db.product.findFirst({ where: { code: v.code, ...(id ? { NOT: { id } } : {}) } });
   if (dupe) return { ok: false, error: `SKU ${v.code} already exists.`, fieldErrors: { code: "Duplicate SKU" } };
   const data = {

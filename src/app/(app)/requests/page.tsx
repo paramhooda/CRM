@@ -14,7 +14,9 @@ import { PRESALES_STATUS_LABEL, PRICING_STATUS_LABEL, type Tone } from "@/lib/co
 
 export const metadata = { title: "Requests" };
 const OPEN = ["REQUESTED", "IN_PROGRESS"] as const;
-const TONE: Record<string, Tone> = { REQUESTED: "blue", IN_PROGRESS: "violet", BOQ_SUBMITTED: "green", QUOTED: "green", CANCELLED: "slate" };
+const OPEN_PRESALES = ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] as const;
+const TONE: Record<string, Tone> = { REQUESTED: "blue", IN_PROGRESS: "violet", NEEDS_INFO: "amber", BOQ_SUBMITTED: "green", QUOTED: "green", RETURNED: "amber", CANCELLED: "slate" };
+const KIND_LABEL: Record<string, string> = { FULL: "", REPRICE: "Re-pricing · ", REVALIDATE: "Re-validation · " };
 
 export default async function RequestsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireUser();
@@ -22,6 +24,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
   const view = sp.view === "closed" ? "closed" : "open";
   const now = new Date();
   const statusFilter = view === "open" ? { in: [...OPEN] } : { notIn: [...OPEN] };
+  const presalesStatus = view === "open" ? { in: [...OPEN_PRESALES] } : { notIn: [...OPEN_PRESALES] };
   const presalesWhere: Prisma.PresalesRequestWhereInput =
     user.role === "PRESALES" ? { assignedToId: user.id } : user.role === "PURCHASE" ? { id: "none" } : isManager(user) ? {} : { opportunity: opportunityScope(user) };
   const pricingWhere: Prisma.PricingRequestWhereInput =
@@ -29,18 +32,18 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
   const oppSel = { select: { id: true, name: true, code: true, amount: true, stage: true, account: { select: { name: true } }, salesOwner: { select: { name: true } } } } as const;
   const [presales, pricing, presalesAll, pricingAll] = await Promise.all([
     db.presalesRequest.findMany({
-      where: { ...presalesWhere, status: statusFilter as never },
+      where: { ...presalesWhere, status: presalesStatus },
       orderBy: view === "open" ? { dueDate: "asc" } : { updatedAt: "desc" },
       take: 100,
       include: { opportunity: oppSel, requestedBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true } } },
     }),
     db.pricingRequest.findMany({
-      where: { ...pricingWhere, status: statusFilter as never },
+      where: { ...pricingWhere, status: statusFilter },
       orderBy: view === "open" ? { dueDate: "asc" } : { updatedAt: "desc" },
       take: 100,
       include: { opportunity: { select: { ...oppSel.select, _count: { select: { lineItems: true } } } }, requestedBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true } } },
     }),
-    isManager(user) ? db.presalesRequest.findMany({ where: { status: { in: [...OPEN] } }, select: { assignedTo: { select: { id: true, name: true } }, dueDate: true } }) : Promise.resolve([]),
+    isManager(user) ? db.presalesRequest.findMany({ where: { status: { in: [...OPEN_PRESALES] } }, select: { status: true, assignedTo: { select: { id: true, name: true } }, dueDate: true } }) : Promise.resolve([]),
     isManager(user) ? db.pricingRequest.findMany({ where: { status: { in: [...OPEN] } }, select: { assignedTo: { select: { id: true, name: true } }, dueDate: true } }) : Promise.resolve([]),
   ]);
 
@@ -56,15 +59,15 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
 
   const showPresales = user.role !== "PURCHASE";
   const showPricing = user.role !== "PRESALES" || pricing.length > 0;
-  const overdueP = presales.filter((r) => view === "open" && r.dueDate < now).length;
+  const overdueP = presales.filter((r) => view === "open" && r.status !== "NEEDS_INFO" && r.dueDate < now).length;
   const overdueQ = pricing.filter((r) => view === "open" && r.dueDate < now).length;
 
-  const workload = (rows: { assignedTo: { id: string; name: string }; dueDate: Date }[]) => {
+  const workload = (rows: { assignedTo: { id: string; name: string }; dueDate: Date; status?: string }[]) => {
     const m = new Map<string, { name: string; open: number; overdue: number }>();
     for (const r of rows) {
       const x = m.get(r.assignedTo.id) ?? { name: r.assignedTo.name, open: 0, overdue: 0 };
       x.open++;
-      if (r.dueDate < now) x.overdue++;
+      if (r.dueDate < now && r.status !== "NEEDS_INFO") x.overdue++;
       m.set(r.assignedTo.id, x);
     }
     return [...m.values()].sort((a, b) => b.open - a.open);
@@ -101,8 +104,9 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
                 <RequestTable
                   rows={presales.map((r) => ({
                     id: r.id, opp: r.opportunity, requestedBy: r.requestedBy.name, assignedTo: r.assignedTo.name, status: r.status,
-                    statusLabel: PRESALES_STATUS_LABEL[r.status], dueDate: r.dueDate, createdAt: r.createdAt, note: r.scope, priority: r.priority,
-                    closedAt: r.submittedAt,
+                    statusLabel: PRESALES_STATUS_LABEL[r.status], dueDate: r.dueDate, createdAt: r.createdAt, priority: r.priority,
+                    note: r.status === "NEEDS_INFO" ? `Question: ${r.infoQuestion}` : r.revision > 1 ? `Revision ${r.revision}: ${r.reason ?? r.scope}` : r.scope,
+                    closedAt: r.submittedAt, closedNote: r.cancelReason,
                   }))}
                   now={now}
                 />
@@ -119,7 +123,8 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
                   rows={pricing.map((r) => ({
                     id: r.id, opp: r.opportunity, requestedBy: r.requestedBy.name, assignedTo: r.assignedTo.name, status: r.status,
                     statusLabel: PRICING_STATUS_LABEL[r.status], dueDate: r.dueDate, createdAt: r.createdAt,
-                    note: `${r.opportunity._count.lineItems} BOQ lines${r.notes ? ` · ${r.notes}` : ""}`, closedAt: r.quotedAt,
+                    note: `${KIND_LABEL[r.kind] ?? ""}${r.opportunity._count.lineItems} BOQ lines${r.reason ? ` · ${r.reason}` : r.notes ? ` · ${r.notes}` : ""}`,
+                    closedAt: r.quotedAt ?? r.returnedAt, closedNote: r.returnReason ?? r.cancelReason,
                   }))}
                   now={now}
                 />
@@ -134,7 +139,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
 
 type Row = {
   id: string; opp: { id: string; name: string; code: string; amount: unknown; account: { name: string }; salesOwner: { name: string } };
-  requestedBy: string; assignedTo: string; status: string; statusLabel: string; dueDate: Date; createdAt: Date; note: string; priority?: string; closedAt: Date | null;
+  requestedBy: string; assignedTo: string; status: string; statusLabel: string; dueDate: Date; createdAt: Date; note: string; priority?: string; closedAt: Date | null; closedNote?: string | null;
 };
 
 function RequestTable({ rows, now }: { rows: Row[]; now: Date }) {
@@ -151,6 +156,7 @@ function RequestTable({ rows, now }: { rows: Row[]; now: Date }) {
           {rows.map((r) => {
             const open = r.status === "REQUESTED" || r.status === "IN_PROGRESS";
             const overdue = open && r.dueDate < now;
+            const done = r.status === "BOQ_SUBMITTED" || r.status === "QUOTED";
             return (
               <tr key={r.id} className="border-b border-border last:border-0 hover:bg-surface-2/60">
                 <td className="max-w-[360px] px-4 py-2.5">
@@ -164,15 +170,20 @@ function RequestTable({ rows, now }: { rows: Row[]; now: Date }) {
                   {r.priority && r.priority !== "NORMAL" && <Badge tone="orange" className="ml-1">{r.priority.toLowerCase()}</Badge>}
                 </td>
                 <td className="px-4 py-2.5 text-xs">
-                  {open ? (
+                  {r.status === "NEEDS_INFO" ? (
+                    <span className="text-[var(--t-amber)]">Paused until sales answers</span>
+                  ) : open ? (
                     <span className="inline-flex items-center gap-1" style={{ color: overdue ? "var(--t-red)" : undefined }}>
                       {overdue && <AlertOctagon className="size-3.5" />}{fmtDate(r.dueDate)} · {relativeDays(r.dueDate)}
                     </span>
                   ) : (
-                    <span className="text-ink-3">Done {fmtDate(r.closedAt)}</span>
+                    <span className="text-ink-3" title={r.closedNote ?? undefined}>
+                      {done ? `Done ${fmtDate(r.closedAt)}` : r.status === "RETURNED" ? `Sent back ${fmtDate(r.closedAt)}` : "Cancelled"}
+                      {r.closedNote && <span className="block max-w-56 truncate">{r.closedNote}</span>}
+                    </span>
                   )}
                 </td>
-                <td className="px-4 py-2.5 text-right tabular">{inr(toNumber(r.opp.amount))}</td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular">{inr(toNumber(r.opp.amount))}</td>
                 <td className="px-4 py-2.5 text-right">
                   <Link href={`/opportunities/${r.opp.id}?tab=boq`} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">Open BOQ <ArrowRight className="size-3" /></Link>
                 </td>

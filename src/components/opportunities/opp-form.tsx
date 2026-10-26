@@ -45,7 +45,7 @@ export function OppForm({
   initial: OppFormValues;
   accounts: AccountOpt[];
   options: {
-    bus: Opt[]; categories: (Opt & { buId: string; buName?: string })[]; oems: Opt[]; sales: Opt[]; presales: Opt[];
+    bus: Opt[]; categories: (Opt & { buId: string; buName?: string })[]; oems: Opt[]; oemTbd?: Opt | null; sales: Opt[]; presales: Opt[];
     leadSources: string[]; competitors: string[]; lossReasons: string[]; products: ProductOption[];
   };
   canReassign: boolean;
@@ -78,7 +78,7 @@ export function OppForm({
         if (p) label = `${p.buName} / ${p.categoryName} · ${p.oemName}`;
       } else if (d.oemId && d.categoryId) {
         const c = options.categories.find((x) => x.id === d.categoryId);
-        label = `${c?.buName ?? nameOf(options.bus, c?.buId ?? "")} / ${c?.name ?? ""} · ${nameOf(options.oems, d.oemId)}`;
+        label = `${c?.buName ?? nameOf(options.bus, c?.buId ?? "")} / ${c?.name ?? ""} · ${nameOf([...options.oems, ...(options.oemTbd ? [options.oemTbd] : [])], d.oemId)}`;
       }
       if (label && (!top || value > top.value)) top = { value, label };
     }
@@ -171,7 +171,7 @@ export function OppForm({
           <div className="flex h-9 items-center rounded-lg border border-dashed border-border px-2.5 text-[13px] text-ink-2">
             {mode === "create"
               ? (derived.top ?? <span className="text-ink-3">Add a line item below</span>)
-              : `${nameOf(options.bus, v.businessUnitId)} / ${nameOf(options.categories, v.categoryId)} · ${nameOf(options.oems, v.oemId) || "—"}`}
+              : `${nameOf(options.bus, v.businessUnitId)} / ${nameOf(options.categories, v.categoryId)} · ${nameOf([...options.oems, ...(options.oemTbd ? [options.oemTbd] : [])], v.oemId) || "—"}`}
           </div>
         </Field>
         <Field htmlFor="accountType" error={errors.accountType} label="Account type" required hint="Defaults from the account">
@@ -247,6 +247,7 @@ export function OppForm({
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px_130px_32px] md:items-center">
                       <Select value={d.oemId} onChange={(e) => upd({ oemId: e.target.value })} aria-label={`New line ${i + 1} OEM`}>
                         <option value="">OEM</option>
+                        {options.oemTbd && <option value={options.oemTbd.id}>{options.oemTbd.name}</option>}
                         {options.oems.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                       </Select>
                       <Select value={d.categoryId} onChange={(e) => upd({ categoryId: e.target.value })} aria-label={`New line ${i + 1} category`}>

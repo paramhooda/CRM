@@ -1,6 +1,6 @@
 "use client";
-import { useMemo, useState } from "react";
-import { Plus, Trash2, Save, Percent, Undo2, Lock, Tag, Wand2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Trash2, Save, Percent, Undo2, Lock, Tag, Wand2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,7 @@ const mult = (l: Pick<Line, "quantity" | "billingFrequency" | "termMonths">) =>
   (Number(l.quantity) || 0) * billingPeriods({ billingFrequency: l.billingFrequency as BillingFrequencyKey, termMonths: l.termMonths });
 
 export function LineItemsEditor({
-  oppId, initial, perms, products, bus, categories, oems, distributors, defaultTerm, locked,
+  oppId, initial, perms, products, bus, categories, oems, distributors, defaultTerm, locked, version: initialVersion, lockReason, oemTbd,
 }: {
   oppId: string;
   initial: OppDetail["lines"];
@@ -40,14 +40,28 @@ export function LineItemsEditor({
   distributors: string[];
   defaultTerm: number | null;
   locked: boolean;
+  /** BOQ version the page was loaded at: saves are rejected if someone saved in between */
+  version: number;
+  /** Why the specification cannot be edited right now (open presales or pricing request) */
+  lockReason: string | null;
+  oemTbd: Opt | null;
 }) {
+  const [version, setVersion] = useState(initialVersion);
   const start = () => initial.map((l) => ({ ...l, _key: l.id, _custom: !l.productId }));
   const [lines, setLines] = useState<Line[]>(start);
   const [dirty, setDirty] = useState(false);
   const [targetMargin, setTargetMargin] = useState("15");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { pending, run } = useAction();
-  const can = { spec: perms.spec && !locked, cost: perms.cost && !locked, price: perms.price && !locked };
+  // After a save (or anyone's change) the server is the truth: re-pricing flags, statuses and the BOQ version.
+  // Unsaved edits are never overwritten.
+  useEffect(() => {
+    if (dirty) return;
+    setLines(initial.map((l) => ({ ...l, _key: l.id, _custom: !l.productId })));
+    setVersion(initialVersion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial, initialVersion]);
+  const can = { spec: perms.spec && !locked && !lockReason, cost: perms.cost && !locked, price: perms.price && !locked };
   const editable = can.spec || can.cost || can.price;
 
   const set = (key: string, patch: Partial<Line>) => {
@@ -70,7 +84,7 @@ export function LineItemsEditor({
         _key: k(), _custom: false, isEstimate: false, id: "", lineNo: ls.length + 1, productId: null, businessUnitId: "", categoryId: "", oemId: "",
         oemName: "", buName: "", categoryName: "", partNumber: "", description: "", quantity: 1, unit: "Nos", billingFrequency: "ONE_TIME",
         termMonths: null, hsnSac: null, gstRatePct: 18, unitCost: null, distributor: null, oemQuoteRef: null, leadTimeDays: null,
-        pricingStatus: "PENDING", unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
+        pricingStatus: "PENDING", costStale: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
       },
     ]);
     setDirty(true);
@@ -125,8 +139,13 @@ export function LineItemsEditor({
             unitCost: l.unitCost, distributor: l.distributor, oemQuoteRef: l.oemQuoteRef, leadTimeDays: l.leadTimeDays,
             unitPrice: l.unitPrice, notes: l.notes,
           })),
+          version,
         ),
-      { success: "Line items saved", onOk: () => { setDirty(false); setErrors({}); }, onError: (r) => setErrors(r.fieldErrors ?? {}) },
+      {
+        success: "Line items saved",
+        onOk: (r) => { setDirty(false); setErrors({}); if (r.data) setVersion(r.data.version); },
+        onError: (r) => setErrors(r.fieldErrors ?? {}),
+      },
     );
 
   const numIn = (v: number | null, onChange: (n: number | null) => void, disabled: boolean, label: string, placeholder?: number | null) =>
@@ -156,6 +175,7 @@ export function LineItemsEditor({
         <div className="flex flex-wrap items-center gap-1.5">
           {locked && <Badge tone="green"><Lock className="size-3" /> Locked for billing{lockedAt ? ` · ${fmtDate(lockedAt)}` : ""}</Badge>}
           {!locked && can.spec && <Badge tone="violet">You edit products and quantities</Badge>}
+          {!locked && perms.spec && lockReason && <Badge tone="slate"><Lock className="size-3" /> Products and quantities locked</Badge>}
           {!locked && can.cost && <Badge tone="amber">You edit cost</Badge>}
           {!locked && can.price && <Badge tone="green">You edit sell price</Badge>}
           {!locked && !editable && <Badge tone="slate"><Lock className="size-3" /> Read only</Badge>}
@@ -175,6 +195,11 @@ export function LineItemsEditor({
           {editable && <Button size="sm" variant="primary" disabled={!dirty || pending} onClick={save}><Save /> Save</Button>}
         </div>
       </div>
+      {!locked && perms.spec && lockReason && (
+        <p className="flex items-start gap-2 border-b border-border px-5 py-2 text-xs" style={{ background: "var(--t-amber-bg)", color: "var(--t-amber)" }}>
+          <Lock className="mt-px size-3.5 shrink-0" /> {lockReason}
+        </p>
+      )}
       {Object.keys(errors).length > 0 && (
         <p className="border-b border-border px-5 py-2 text-xs" style={{ background: "var(--t-red-bg)", color: "var(--t-red)" }}>
           {Object.entries(errors).map(([path, msg]) => `Line ${Number(path.split(".")[0]) + 1}: ${msg}`).join(" · ")}
@@ -212,6 +237,11 @@ export function LineItemsEditor({
                       {can.spec ? (
                         <ProductPicker products={products} value={l.productId ?? (l._custom ? "custom" : null)} onChange={(p) => pickProduct(l._key, p)} />
                       ) : null}
+                      {l.costStale && perms.viewCost && (
+                        <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]" title="The product, quantity or term changed after purchase priced it">
+                          <RefreshCw className="size-3" /> Changed · needs re-pricing
+                        </span>
+                      )}
                       {l.isEstimate && (
                         <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]">
                           Estimate{can.spec ? " · pick a product above to replace it" : " · presales will replace it with products"}
@@ -226,7 +256,7 @@ export function LineItemsEditor({
                         <div className="flex gap-1">
                           {sel(l.businessUnitId, (v) => set(l._key, { businessUnitId: v, categoryId: "", buName: bus.find((b) => b.id === v)?.name ?? "" }), bus, `Line ${i + 1} business unit`, "BU")}
                           {sel(l.categoryId, (v) => set(l._key, { categoryId: v, categoryName: cats.find((c) => c.id === v)?.name ?? "" }), cats, `Line ${i + 1} category`, "Category")}
-                          {sel(l.oemId, (v) => set(l._key, { oemId: v, oemName: oems.find((o) => o.id === v)?.name ?? "" }), oems, `Line ${i + 1} OEM`, "OEM")}
+                          {sel(l.oemId, (v) => set(l._key, { oemId: v, oemName: [...oems, ...(oemTbd ? [oemTbd] : [])].find((o) => o.id === v)?.name ?? "" }), l.isEstimate && oemTbd ? [oemTbd, ...oems] : oems, `Line ${i + 1} OEM`, "OEM")}
                         </div>
                       ) : (
                         <span className="text-[11px] text-ink-3">
