@@ -252,11 +252,11 @@ test.describe("Line items, navigation and filters", () => {
 });
 
 test.describe.serial("Pipeline review", () => {
-  test("head reviews one sales person: one-click windows, side panel quick edit", async ({ page }) => {
+  test("head reviews one sales person: one-click windows, quick edit from the deal dialog", async ({ page }) => {
     await login(page, HEAD);
     await page.goto("/reviews");
     await page.getByRole("button", { name: "Sales person", exact: true }).click();
-    await page.getByRole("button", { name: /^RP Rakesh Pawar/ }).click();
+    await page.getByRole("button", { name: "Rakesh Pawar", exact: true }).click();
     await expect(page).toHaveURL(/who=/);
     await expect(page.getByRole("heading", { name: "Pipeline review · Rakesh Pawar" })).toBeVisible();
 
@@ -265,15 +265,17 @@ test.describe.serial("Pipeline review", () => {
     await expect(thirty).toHaveAttribute("aria-checked", "true"); // registers on the first click
     await expect(page).toHaveURL(/since=30d/);
     await expect(page.getByText(/Changes since last 30 days/)).toBeVisible();
-    await expect(page.getByText("Closed in this window")).toBeVisible();
+    await page.getByRole("radio", { name: /^Closed/ }).click();
+    await expect(page.getByRole("radio", { name: /^Closed/ })).toHaveAttribute("aria-checked", "true");
+    await page.getByRole("radio", { name: "All", exact: true }).click();
 
     // Every listed deal belongs to Rakesh, so no owner is shown in the rows
-    const first = page.locator("table button[aria-label^='Open ']").first();
+    const first = page.locator("main button[aria-label^='Open ']").first();
     const name = (await first.getAttribute("aria-label"))!.replace(/^Open /, "");
     await first.click();
     const panel = page.getByRole("dialog");
     await expect(panel.getByText(name).first()).toBeVisible();
-    await expect(panel.getByText("History", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Recent changes", { exact: true })).toBeVisible();
     await panel.getByLabel("Next step", { exact: true }).fill("E2E: agreed in review call");
     await panel.getByRole("button", { name: "Save" }).click();
     await expect(page.getByText("Deal updated")).toBeVisible();
@@ -283,7 +285,7 @@ test.describe.serial("Pipeline review", () => {
     await login(page, HEAD);
     await page.goto("/reviews?since=last");
     await page.getByRole("button", { name: "Sales person", exact: true }).click();
-    await page.getByRole("button", { name: /^RP Rakesh Pawar/ }).click();
+    await page.getByRole("button", { name: "Rakesh Pawar", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Pipeline review · Rakesh Pawar" })).toBeVisible();
     await page.getByRole("button", { name: "Complete review" }).click();
     const dlg = page.getByRole("dialog");
@@ -325,7 +327,5 @@ test.describe("Navigation", () => {
     await page.goto("/reviews");
     await page.getByRole("radio", { name: "14 days" }).click();
     await expect(page).toHaveURL(/since=14d/, { timeout: 8000 });
-    await page.getByRole("radio", { name: "This quarter" }).click();
-    await expect(page).toHaveURL(/close=this-q/, { timeout: 8000 });
   });
 });
