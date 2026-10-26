@@ -70,6 +70,8 @@ export const stageChangeSchema = z.object({
   lossNotes: optStr(1000),
   poNumber: optStr(80),
   poDate: optDate,
+  /** Reason for a hold, a correction or a reopen */
+  note: optStr(500),
 });
 
 export const accountSchema = z.object({

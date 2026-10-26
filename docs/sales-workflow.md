@@ -12,6 +12,32 @@ Each team owns one pipeline stage. The CRM moves the deal to the next stage as e
 
 Deals without presales are fine: sales can add lines and **Request pricing** directly, which moves the deal from Qualified to Pricing.
 
+## Stage rules (enforced for everyone)
+
+The rules apply to the stage bar, the pipeline board and the edit form, and the server checks them again on every change. A stage that can't be clicked explains why when you point at it.
+
+| Move | Who | Rule |
+|---|---|---|
+| New deal | Sales | Starts at **Identified** or **Qualified**; Qualified needs a customer contact. |
+| Identified → Qualified | Owner or manager | Needs a customer contact and a close date that has not passed. |
+| → BOQ, → Pricing, → Proposal Submitted | Nobody by hand | Set by the workflow: request a BOQ, submit the BOQ (or request pricing), send the quote. |
+| Proposal Submitted → Negotiation | Owner or manager | Needs a quote with the customer and nothing open with presales or purchase. |
+| → Won | Owner or manager | Only from Proposal Submitted or Negotiation, with a quote with the customer, nothing open with presales or purchase, and the customer PO. Lines must be priced with HSN/SAC. |
+| → Lost / Dropped | Owner or manager | From any open stage, with a loss reason. |
+| Skipping stages | Nobody | Deals move one stage at a time. |
+| Moving back | Sales manager only | A correction, with a reason. Never into BOQ, Pricing or Proposal Submitted (use Request BOQ change), and not while a BOQ or pricing request is open. |
+| Hold | Owner or manager | Needs a reason. While on hold, the only moves are **Resume** (back to the stage it was held from), Lost or Dropped. |
+| Reopen a closed deal | Sales manager only | Needs a reason. Returns to the stage it was closed from. |
+
+Other rules:
+- **Probability** follows the stage and is not edited by hand, so the weighted pipeline is comparable across deals.
+- **Commit** is allowed only once the quote is with the customer (Proposal Submitted or Negotiation).
+- Closed and on-hold deals are omitted from the forecast.
+- A changed close date or next-step date cannot be in the past.
+- **Closed deals are read-only.** Only a sales manager can edit them, for corrections.
+- **The edit form never changes the stage.**
+- Every stage change is recorded with who made it and why (hold reason, correction reason, PO or loss reason). The reason shows in the stage journey on the History tab.
+
 ## What everyone sees on a deal
 
 Under the stage path, one line says:

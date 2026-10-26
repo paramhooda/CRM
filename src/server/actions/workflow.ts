@@ -54,7 +54,7 @@ async function syncStage(tx: Tx, user: CurrentUser, oppId: string, to: "BOQ" | "
   const { stage } = await tx.opportunity.findUniqueOrThrow({ where: { id: oppId }, select: { stage: true } });
   if (isClosed(stage) || stage === "HOLD" || stage === to) return;
   const forward = STAGE_META[to].order > STAGE_META[stage as StageKey].order;
-  if (forward || (to === "BOQ" && stage === "PRICING")) await applyStageChange(tx, user, oppId, to, {}, { keepForecast: true });
+  if (forward || (to === "BOQ" && stage === "PRICING")) await applyStageChange(tx, user, oppId, to, {}, { keepForecast: true, source: "system" });
 }
 
 /** Pick the purchase user with the fewest open pricing requests. */
@@ -742,7 +742,7 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
       await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "QUOTE_ISSUED", userId: user.id, newValue: `${code} v${q.version}${m !== undefined ? ` at ${m}% margin` : ""}` });
       await tx.opportunity.update({ where: { id: oppId }, data: { boqVersion: { increment: 1 } } });
       if (STAGE_META[opp.stage as StageKey].order < STAGE_META.PROPOSAL.order) {
-        await applyStageChange(tx, user, oppId, "PROPOSAL", {}, { keepForecast: true });
+        await applyStageChange(tx, user, oppId, "PROPOSAL", {}, { keepForecast: true, source: "system" });
       }
       await recomputeOpportunity(tx, oppId);
       return { id: q.id };

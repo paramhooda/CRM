@@ -395,6 +395,8 @@ async function main() {
     const target = isClosed ? (p.stage === "WON" ? "NEGOTIATION" : pick(linear.slice(0, int(1, 5)))) : p.stage === "HOLD" ? pick(linear.slice(0, 4)) : p.stage;
     for (const st of linear) { if (STAGE_META[st].order <= STAGE_META[target].order) path.push(st); }
     if (isClosed || p.stage === "HOLD") path.push(p.stage);
+    const holdReason = p.stage === "HOLD" ? pick(["Customer budget frozen until the next financial year", "Project paused after a leadership change", "Customer re-evaluating scope; restart expected next quarter"]) : null;
+    if (p.stage === "HOLD") await db.opportunity.update({ where: { id: opp.id }, data: { holdReason, heldFromStage: path[path.length - 2] as Stage } });
     const t0 = createdAt.getTime();
     const tEnd = stageEnteredAt.getTime();
     let prevAt = createdAt;
@@ -404,6 +406,7 @@ async function main() {
         data: {
           opportunityId: opp.id, fromStage: k === 0 ? null : (path[k - 1] as Stage), toStage: st as Stage, amount,
           changedById: owner.id, changedAt: at, daysInPrevStage: k === 0 ? null : Math.round((at.getTime() - prevAt.getTime()) / DAY),
+          note: st === "HOLD" ? holdReason : null,
         },
       });
       if (k > 0) {

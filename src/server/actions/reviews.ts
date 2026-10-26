@@ -10,6 +10,8 @@ import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { fmtDate, inr } from "@/lib/format";
 import { fcLabel, healthLabel, stageLabel } from "@/lib/review";
 import type { ActionResult } from "@/lib/validation";
+import { dealFieldErrors } from "@/lib/stage-rules";
+import type { StageKey } from "@/lib/constants";
 
 const DAY = 86_400_000;
 
@@ -105,6 +107,8 @@ export async function quickUpdateDeal(id: string, input: unknown): Promise<Actio
     expectedCloseDate: v.expectedCloseDate ?? before.expectedCloseDate,
     forecastCategory: v.forecastCategory ?? before.forecastCategory,
   };
+  const errors = dealFieldErrors(before.stage as StageKey, before, data);
+  if (Object.keys(errors).length) return { ok: false, error: Object.values(errors)[0]!, fieldErrors: errors };
   const now = new Date();
   await db.$transaction(async (tx) => {
     const slip = data.expectedCloseDate.getTime() - before.expectedCloseDate.getTime() > DAY ? 1 : 0;

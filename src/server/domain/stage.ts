@@ -7,6 +7,9 @@ import { notify } from "@/lib/notify";
 import { boqTotals } from "@/lib/boq";
 import { defaultForecast } from "@/lib/rules/evaluate";
 import { STAGE_META, CLOSED_STAGES, type StageKey } from "@/lib/constants";
+import { isManager } from "@/lib/authz";
+import { checkMove, forecastError } from "@/lib/stage-rules";
+import { loadStageFacts } from "./stage-facts";
 import { billingReadinessIssues, lockForBilling, unlockForBilling, BillingLockedError } from "./billing";
 
 const DAY = 86_400_000;
@@ -14,15 +17,28 @@ const LIVE_QUOTE: string[] = ["SUBMITTED", "CHANGES_REQUESTED"];
 
 export class UserError extends Error {}
 
-/** Stage transitions with gates, history, side-effects. Shared by the edit form, stage bar and pipeline board. */
+/**
+ * Stage transitions with gates, history and side-effects. Every stage change goes through here.
+ * `source: "user"` (the default) enforces the process rules in src/lib/stage-rules.ts; `"system"` is for the
+ * workflow moving a deal into BOQ, Pricing or Proposal Submitted as work is handed over.
+ */
 export async function applyStageChange(
   tx: Tx,
   user: CurrentUser,
   id: string,
   to: StageKey,
-  extra: { lossReason?: string; lossNotes?: string; poNumber?: string; poDate?: Date },
-  opts: { keepProbability?: boolean; keepForecast?: boolean } = {},
+  extra: { lossReason?: string; lossNotes?: string; poNumber?: string; poDate?: Date; note?: string },
+  opts: { keepProbability?: boolean; keepForecast?: boolean; source?: "user" | "system" } = {},
 ): Promise<{ warning?: string }> {
+  let move: ReturnType<typeof checkMove> | null = null;
+  if ((opts.source ?? "user") === "user") {
+    const facts = (await loadStageFacts(tx, [id])).get(id);
+    if (!facts) throw new UserError("Opportunity not found.");
+    if (facts.stage === to) return {};
+    move = checkMove(facts, { canEdit: true, isManager: isManager(user) }, to);
+    if (!move.allowed) throw new UserError(move.reason ?? "This stage change is not allowed.");
+    if (move.needs === "reason" && !extra.note?.trim()) throw new UserError("Give a reason for this change.");
+  }
   const o = await tx.opportunity.findUniqueOrThrow({
     where: { id },
     include: {
@@ -62,14 +78,17 @@ export async function applyStageChange(
   const stageMeta = STAGE_META[to];
   const isClosed = CLOSED_STAGES.includes(to);
   const wasDefaultForecast = o.forecastCategory === defaultForecast(from);
+  const keptForecast = opts.keepForecast && !wasDefaultForecast && !forecastError(to, o.forecastCategory);
+  const resuming = from === "HOLD";
   const data: Prisma.OpportunityUpdateInput = {
     stage: to as Stage,
     stageEnteredAt: now,
     probability: opts.keepProbability && !isClosed ? o.probability : stageMeta.probability,
-    forecastCategory:
-      isClosed || to === "HOLD" ? "OMITTED" : opts.keepForecast && !wasDefaultForecast ? o.forecastCategory : defaultForecast(to),
+    forecastCategory: isClosed || to === "HOLD" ? "OMITTED" : keptForecast ? o.forecastCategory : defaultForecast(to),
     closedAt: isClosed ? now : null,
     updatedById: user.id,
+    // Hold remembers why and where to resume; leaving hold clears it
+    ...(to === "HOLD" ? { holdReason: extra.note?.trim() || null, heldFromStage: from as Stage } : resuming ? { holdReason: null, heldFromStage: null } : {}),
   };
   if (to === "WON") {
     data.poNumber = extra.poNumber ?? o.poNumber;
@@ -100,6 +119,10 @@ export async function applyStageChange(
     data: {
       opportunityId: id, fromStage: from as Stage, toStage: to as Stage, amount: o.amount, changedById: user.id, changedAt: now,
       daysInPrevStage: last ? Math.round((now.getTime() - last.changedAt.getTime()) / DAY) : null,
+      note:
+        extra.note?.trim() ||
+        (to === "WON" ? `PO ${data.poNumber as string}` : to === "LOST" || to === "DROPPED" ? (data.lossReason as string) : null) ||
+        (opts.source === "system" ? "Automatic: workflow hand-over" : null),
     },
   });
   await recordChanges(tx, { entityType: "Opportunity", entityId: id, before: { stage: from }, after: { stage: to }, fields: ["stage"], userId: user.id, at: now });

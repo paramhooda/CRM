@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth";
 import { can, isManager, opportunityScope } from "@/lib/authz";
 import { deriveWorkflow, specLock, OPEN_PRESALES, OPEN_PRICING } from "@/lib/workflow";
+import { stageMoves } from "@/lib/stage-rules";
+import { loadStageFacts } from "@/server/domain/stage-facts";
 import { toNumber } from "@/lib/format";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { boqTotals } from "@/lib/boq";
@@ -94,7 +96,10 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
   const openPs = o.presalesRequests.find((r) => (OPEN_PRESALES as readonly string[]).includes(r.status));
   const openPq = o.pricingRequests.find((r) => (OPEN_PRICING as readonly string[]).includes(r.status));
   const lockReason = specLock({ presalesOpen: openPs ? { assigneeId: openPs.assignedToId } : null, pricingOpen: !!openPq, userId: user.id, isManager: isManager(user) });
+  const facts = (await loadStageFacts(db, [id], now)).get(id)!;
+  const moves = stageMoves(facts, { canEdit: can.editOpportunity(user, o), isManager: isManager(user) });
   return {
+    moves,
     workflow,
     lockReason,
     opp: {

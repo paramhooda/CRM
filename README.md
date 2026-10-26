@@ -37,7 +37,14 @@ APP_PORT=8080 docker compose up -d  # run on another port
 - Opportunities with the fields from the field sheet (BU, category, OEM, account type, revenue model, stage, forecast category, presales owner, sales person) plus SI/MSP essentials: TCV and ARR, contract term and dates, expected margin, deal type, procurement mode (direct, RFQ, RFP, tender/GeM), bid submission date, OEM deal registration, competition, lead source, next step, PO capture and loss reasons.
 - Human-readable record codes per Indian fiscal year: `OPP-FY27-0042`, `QT-FY27-0007`, `ACC-0012`, `LEAD-0005`.
 - Salesforce-style stage path, Kanban pipeline board with drag-and-drop, and a sortable table with column chooser, saved views and CSV export.
-- Stage gates. Closed-Won needs a PO number and date. Lost or Dropped needs a reason. ARR needs a contract term. RFPs need a submission date. Pushing a close date out counts as a slip.
+- **Process guardrails** ([rules](docs/sales-workflow.md#stage-rules-enforced-for-everyone)):
+  - Deals move one stage at a time, and BOQ, Pricing and Proposal Submitted are set only by the workflow.
+  - Won needs a sent quote, nothing open with presales or purchase, and the customer PO.
+  - Moving back and reopening are manager-only corrections with a reason. Hold needs a reason and resumes to the stage it came from.
+  - Commit needs a quote with the customer, and probability follows the stage.
+  - Closed deals are read-only.
+  - The server enforces all of this. The stage bar and pipeline board only offer allowed moves and explain the others.
+- Other gates: Lost or Dropped needs a reason, ARR needs a contract term, and RFPs need a submission date. Pushing a close date out counts as a slip.
 
 **Line items and product catalogue**
 - OEM lives on line items, not on the deal. One opportunity holds many line items, and each line carries its own BU, category and OEM. A single deal can mix, for example, Dell servers, VMware licences and Progression implementation services.

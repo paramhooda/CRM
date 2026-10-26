@@ -3,12 +3,13 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/auth";
-import { can, opportunityScope } from "@/lib/authz";
+import { can, isManager, opportunityScope } from "@/lib/authz";
+import { dealFieldErrors } from "@/lib/stage-rules";
 import { recordChanges, recordEvent } from "@/lib/audit";
 import { nextCode } from "@/lib/sequence";
 import { notify } from "@/lib/notify";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
-import { CLOSED_STAGES } from "@/lib/constants";
+import { CLOSED_STAGES, STAGE_META } from "@/lib/constants";
 import { applyStageChange, UserError } from "@/server/domain/stage";
 import { lineInputSchema, resolveSpec, rollUpDeal, draftLineSchema, createEstimateLine, type DraftLine } from "@/server/domain/lines";
 import { z } from "zod";
@@ -136,8 +137,16 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
   if (user.role === "SALES" && v.salesOwnerId !== user.id) v.salesOwnerId = user.id;
-  if (CLOSED_STAGES.includes(v.stage))
-    return { ok: false, error: "Create the deal in an open stage, then close it." };
+  // New deals enter the funnel at the top; every later stage is earned through the process
+  if (v.stage !== "IDENTIFIED" && v.stage !== "QUALIFIED")
+    return { ok: false, error: "New deals start at Identified or Qualified.", fieldErrors: { stage: "Choose Identified or Qualified" } };
+  if (v.stage === "QUALIFIED" && !v.primaryContactId)
+    return { ok: false, error: "Add the customer contact to create a qualified deal.", fieldErrors: { primaryContactId: "Required for a qualified deal" } };
+  const fieldErrors = {
+    ...dealFieldErrors(v.stage, { forecastCategory: "", expectedCloseDate: new Date(0), nextStepDate: null }, { forecastCategory: v.forecastCategory, expectedCloseDate: v.expectedCloseDate, nextStepDate: v.nextStepDate ?? null }),
+  };
+  if (Object.keys(fieldErrors).length) return { ok: false, error: Object.values(fieldErrors)[0]!, fieldErrors };
+  v.probability = STAGE_META[v.stage].probability;
   const drafts = parseDraftLines(form);
   if (!drafts.ok)
     return {
@@ -252,9 +261,16 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
   if (!before) return { ok: false, error: "Opportunity not found." };
   if (!can.editOpportunity(user, before))
     return { ok: false, error: "You do not have permission to edit this opportunity." };
-  const parsed = opportunitySchema.safeParse(formToObject(form));
+  if (CLOSED_STAGES.includes(before.stage as never) && !isManager(user))
+    return { ok: false, error: "Closed deals are read-only. Ask a sales manager if something needs correcting." };
+  // The stage is never edited here: it moves through the stage bar and the workflow, under the process rules
+  const parsed = opportunitySchema.safeParse({ ...formToObject(form), stage: before.stage });
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
+  const fieldErrors = dealFieldErrors(before.stage as never, before, { forecastCategory: v.forecastCategory, expectedCloseDate: v.expectedCloseDate, nextStepDate: v.nextStepDate ?? null });
+  if (Object.keys(fieldErrors).length) return { ok: false, error: Object.values(fieldErrors)[0]!, fieldErrors };
+  // Probability follows the stage, so weighted pipeline means the same thing on every deal
+  v.probability = before.probability;
   if (!can.reassignOpportunity(user)) v.salesOwnerId = before.salesOwnerId;
   // Value and primary classification roll up from the line items (edited on the Line items tab)
   const derived: Derived = {
@@ -264,7 +280,6 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
     oemId: before.oemId,
   };
 
-  let warning: string | undefined;
   await db.$transaction(async (tx) => {
     const data = toData(v, derived);
     const now = new Date();
@@ -304,22 +319,11 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
         exclude: user.id,
       });
     }
-    if (v.stage !== before.stage) {
-      const r = await applyStageChange(
-        tx,
-        user,
-        id,
-        v.stage,
-        { lossReason: v.lossReason, lossNotes: v.lossNotes, poNumber: v.poNumber, poDate: v.poDate },
-        { keepProbability: true, keepForecast: true },
-      );
-      warning = r.warning;
-    }
     await recomputeOpportunity(tx, id, now);
   });
   revalidatePath(`/opportunities/${id}`);
   revalidatePath("/dashboard");
-  return { ok: true, warning };
+  return { ok: true };
 }
 
 export async function changeStage(id: string, input: Record<string, unknown>): Promise<ActionResult> {

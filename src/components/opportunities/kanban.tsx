@@ -18,19 +18,27 @@ export type Card = {
 
 const COLUMNS: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
 
-export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: string[] }) {
+/**
+ * `drops[cardId][stage]` is null when the card may be dropped there, or the reason it may not (the process rules in
+ * src/lib/stage-rules.ts; the server checks them again).
+ */
+export function Kanban({ cards, editableIds, drops }: { cards: Card[]; editableIds: string[]; drops: Record<string, Partial<Record<StageKey, string | null>>> }) {
   const router = useRouter();
   const [, start] = useTransition();
   const [optimistic, move] = useOptimistic(cards, (state, a: { id: string; stage: string }) =>
     state.map((c) => (c.id === a.id ? { ...c, stage: a.stage } : c)),
   );
   const [over, setOver] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const blocked = (id: string | null, s: StageKey) => (id ? drops[id]?.[s] ?? null : null);
   const editable = new Set(editableIds);
 
   function drop(stage: StageKey, id: string) {
     const c = optimistic.find((x) => x.id === id);
     if (!c || c.stage === stage) return;
     if (!editable.has(id)) return void toast.error("Only the deal owner or a manager can move this deal.");
+    const reason = blocked(id, stage);
+    if (reason) return void toast.error(reason);
     start(async () => {
       move({ id, stage });
       const r = await changeStage(id, { stage });
@@ -53,11 +61,13 @@ export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: str
           <div
             key={s}
             onDragOver={(e) => { e.preventDefault(); setOver(s); }}
+            title={dragging && blocked(dragging, s) ? blocked(dragging, s)! : undefined}
             onDragLeave={() => setOver((o) => (o === s ? null : o))}
             onDrop={(e) => { e.preventDefault(); setOver(null); drop(s, e.dataTransfer.getData("text/plain")); }}
             className={cn(
               "flex w-[288px] shrink-0 flex-col rounded-xl border bg-surface-2/60 transition-colors",
-              over === s ? "border-primary bg-primary-soft" : "border-border",
+              over === s && !blocked(dragging, s) ? "border-primary bg-primary-soft" : "border-border",
+              dragging && s !== optimistic.find((c) => c.id === dragging)?.stage && blocked(dragging, s) && "opacity-45",
             )}
           >
             <div className="border-b border-border px-4 py-3">
@@ -78,7 +88,8 @@ export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: str
                   <div
                     key={c.id}
                     draggable={editable.has(c.id)}
-                    onDragStart={(e) => e.dataTransfer.setData("text/plain", c.id)}
+                    onDragStart={(e) => { e.dataTransfer.setData("text/plain", c.id); setDragging(c.id); }}
+                    onDragEnd={() => { setDragging(null); setOver(null); }}
                     className={cn("group rounded-lg border border-border bg-surface p-3.5 transition-colors hover:border-border-strong", editable.has(c.id) && "cursor-grab active:cursor-grabbing")}
                   >
                     <Link href={`/opportunities/${c.id}`} className="block text-[13px] font-medium leading-snug hover:text-primary">{c.name}</Link>

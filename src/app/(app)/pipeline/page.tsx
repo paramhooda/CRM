@@ -2,7 +2,10 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Plus, List } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { can, opportunityScope } from "@/lib/authz";
+import { can, isManager, opportunityScope } from "@/lib/authz";
+import { checkMove } from "@/lib/stage-rules";
+import { loadStageFacts } from "@/server/domain/stage-facts";
+import type { StageKey } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { oppWhere, parseOppFilters, type SearchParams } from "@/lib/filters";
 import { ensureRulesFresh } from "@/lib/opportunity-service";
@@ -45,12 +48,24 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
     owner: r.salesOwner.name, salesOwnerId: r.salesOwnerId, forecastCategory: r.forecastCategory,
   }));
   const editableIds = rows.filter((r) => can.editOpportunity(user, r)).map((r) => r.id);
+  // Where each card may be dropped. Moves that need input (hold reason, PO, loss reason) are made on the deal itself.
+  const facts = await loadStageFacts(db, editableIds);
+  const BOARD: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
+  const drops: Record<string, Partial<Record<StageKey, string | null>>> = {};
+  for (const [id, f] of facts) {
+    drops[id] = Object.fromEntries(
+      BOARD.filter((s) => s !== f.stage).map((s) => {
+        const m = checkMove(f, { canEdit: true, isManager: isManager(user) }, s);
+        return [s, !m.allowed ? m.reason ?? "Not allowed" : m.needs ? "Open the deal to make this change: it needs a reason." : null];
+      }),
+    );
+  }
   const active = cards.filter((c) => c.stage !== "HOLD");
   return (
     <>
       <PageHeader
         title="Pipeline"
-        description={<span className="tabular">{active.length} active deals · {inr(active.reduce((a, c) => a + c.amount, 0))} · weighted {inr(active.reduce((a, c) => a + (c.amount * c.probability) / 100, 0))}. Drag a card to change its stage.</span>}
+        description={<span className="tabular">{active.length} active deals · {inr(active.reduce((a, c) => a + c.amount, 0))} · weighted {inr(active.reduce((a, c) => a + (c.amount * c.probability) / 100, 0))}. Drag a card to its next stage; stages it cannot move to fade out.</span>}
         actions={
           <>
             <Button asChild><Link href="/opportunities"><List /> Table view</Link></Button>
@@ -65,7 +80,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
         </div>
       </PageHeader>
       <PageBody className="max-w-none">
-        <Kanban cards={cards} editableIds={editableIds} />
+        <Kanban cards={cards} editableIds={editableIds} drops={drops} />
       </PageBody>
     </>
   );

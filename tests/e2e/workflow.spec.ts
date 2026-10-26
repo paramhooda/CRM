@@ -311,8 +311,12 @@ test.describe("Roles and permissions", () => {
   test("closing as won requires a PO", async ({ page }) => {
     await login(page, HEAD);
     await page.goto("/opportunities?stage=PROPOSAL");
-    const href = await page.locator("table a[href^='/opportunities/']").first().getAttribute("href");
-    await page.goto(href!);
+    const hrefs = await page.locator("table a[href^='/opportunities/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")!));
+    // First Proposal deal whose quote is with the customer and nothing is open with presales or purchase
+    for (const href of hrefs) {
+      await page.goto(href);
+      if (await page.getByRole("button", { name: "Won" }).isEnabled()) break;
+    }
     await page.getByRole("button", { name: "Won" }).click();
     const dlg = page.getByRole("dialog");
     await dlg.locator("input[name=poNumber]").fill("");
@@ -330,6 +334,61 @@ test.describe("Roles and permissions", () => {
       const r = await request.get(path, { maxRedirects: 0 });
       expect(r.status(), path).toBe(200);
     }
+  });
+});
+
+test.describe("Process guardrails", () => {
+  test("a new deal cannot jump stages; hold needs a reason and resumes where it was; the edit form cannot change the stage", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    await expect(page.locator("#stage option")).toHaveText(["Identified", "Qualified"]);
+    const name = `E2E Guardrails ${Date.now().toString().slice(-6)}`;
+    await page.fill("#name", name);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByRole("button", { name: "Quick estimate" }).click();
+    await page.getByLabel("New line 1 OEM").selectOption({ label: "Dell" });
+    await page.getByLabel("New line 1 category").selectOption({ label: "Server" });
+    await page.getByLabel("New line 1 value").fill("1500000");
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    const url = new URL(page.url()).pathname;
+
+    const stages = page.getByRole("list", { name: "Stage" });
+    // Won and the workflow stages are not clickable, and say why
+    await expect(page.getByRole("button", { name: "Won" })).toBeDisabled();
+    for (const s of ["BOQ", "Pricing", "Proposal Submitted", "Negotiation"]) await expect(stages.getByRole("button", { name: s, exact: true })).toBeDisabled();
+    await stages.getByRole("button", { name: "Proposal Submitted", exact: true }).hover({ force: true });
+    await expect(page.getByRole("tooltip").first()).toContainText("when the quote is sent");
+    // The next stage is the only one it can move to (the account's contact was picked on the form)
+    await expect(stages.getByRole("button", { name: "Qualified", exact: true })).toBeEnabled();
+
+    // Hold asks for a reason, then the only way back is to resume to the same stage
+    await page.getByRole("button", { name: "Hold" }).click();
+    await page.getByRole("dialog").locator("textarea[name=note]").fill("Customer budget frozen until April");
+    await page.getByRole("dialog").getByRole("button", { name: "Put on hold" }).click();
+    await expect(page.getByText("Moved to Hold")).toBeVisible();
+    await expect(page.getByText("On hold: Customer budget frozen until April")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Won" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Resume to Identified" }).click();
+    await expect(page.getByText("Moved to Identified")).toBeVisible();
+
+    // The edit form shows the stage but cannot change it
+    await page.goto(`${url}/edit`);
+    await expect(page.locator("#stage")).toHaveCount(0);
+    await expect(page.getByText("Change it from the stage bar on the deal")).toBeVisible();
+    await expect(page.locator("#forecastCategory option[value=COMMIT]")).toBeDisabled();
+  });
+
+  test("a sales person cannot move a deal back or reopen a closed one", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities?stage=BOQ,PRICING,PROPOSAL,NEGOTIATION");
+    await page.locator("table a[href^='/opportunities/']").first().click();
+    const stages = page.getByRole("list", { name: "Stage" });
+    await expect(stages.getByRole("button", { name: "Identified", exact: true })).toBeDisabled();
+    await page.goto("/opportunities?stage=WON,LOST,DROPPED");
+    await page.locator("table a[href^='/opportunities/']").first().click();
+    await expect(page.getByRole("button", { name: "Reopen" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Edit" })).toHaveCount(0);
   });
 });
 

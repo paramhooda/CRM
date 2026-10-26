@@ -484,6 +484,9 @@ model Opportunity {
   expectedCloseDate  DateTime
   originalCloseDate  DateTime
   closeDateSlipCount Int              @default(0)
+  /// Why the deal is on hold, and the stage it resumes to
+  holdReason         String?
+  heldFromStage      Stage?
   stageEnteredAt     DateTime         @default(now())
   lastActivityAt     DateTime?
   closedAt           DateTime?
@@ -733,6 +736,8 @@ model StageHistory {
   changedBy       User        @relation(fields: [changedById], references: [id])
   changedAt       DateTime    @default(now())
   daysInPrevStage Int?
+  /// Why: hold reason, correction reason, reopen reason, PO or loss reason
+  note            String?
 
   @@index([opportunityId, changedAt])
 }

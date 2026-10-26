@@ -66,7 +66,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
           </span>
         }
         actions={
-          d.perms.edit && (
+          d.perms.edit && (!closed || user.role === "ADMIN" || user.role === "SALES_HEAD") && (
             <Button asChild>
               <Link href={`/opportunities/${o.id}/edit`}><Pencil /> Edit</Link>
             </Button>
@@ -74,7 +74,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
         }
       >
         <div className="mt-5">
-          <StagePath id={o.id} stage={stage} canEdit={d.perms.edit} lossReasons={options.lossReasons} poNumber={o.poNumber} />
+          <StagePath id={o.id} stage={stage} moves={d.moves} lossReasons={options.lossReasons} poNumber={o.poNumber} holdReason={o.holdReason} />
         </div>
         <div className="mt-3">
           <DealStatus d={d} options={options} />
@@ -348,7 +348,10 @@ function HistoryTab({ d }: { d: OppDetail }) {
                 return (
                   <li key={s.id} className="flex items-center gap-3">
                     <StageBadge stage={s.toStage} />
-                    <span className="flex-1 text-xs text-ink-3">{fmtDate(s.changedAt)} · {s.changedBy.name}</span>
+                    <span className="min-w-0 flex-1 text-xs text-ink-3">
+                      {fmtDate(s.changedAt)} · {s.changedBy.name}
+                      {s.note && <span className="block truncate text-ink-2" title={s.note}>{s.note}</span>}
+                    </span>
                     {!["WON", "LOST", "DROPPED"].includes(s.toStage) && <span className="text-xs tabular text-ink-2">{days}d{!next && " so far"}</span>}
                   </li>
                 );

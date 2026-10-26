@@ -15,6 +15,7 @@ import { StageBadge, HealthBadge } from "@/components/crm/badges";
 import { EmptyState } from "@/components/crm/page";
 import { quickUpdateDeal, getDealTimeline } from "@/server/actions/reviews";
 import { STAGE_META, FORECAST_LABEL, type StageKey, type Tone } from "@/lib/constants";
+import { forecastError } from "@/lib/stage-rules";
 import { inr, fmtDate, relativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ReviewRow } from "@/server/queries/pipeline-review";
@@ -231,7 +232,9 @@ function DealDialog({ deal: d, onDone }: { deal: ReviewRow; onDone: () => void }
               <Field label="Close date"><Input type="date" value={form.expectedCloseDate} onChange={(e) => setForm({ ...form, expectedCloseDate: e.target.value })} aria-label="Close date" /></Field>
               <Field label="Forecast">
                 <Select value={form.forecastCategory} onChange={(e) => setForm({ ...form, forecastCategory: e.target.value })} aria-label="Forecast">
-                  {Object.entries(FORECAST_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  {Object.entries(FORECAST_LABEL).map(([k, l]) => (
+                    <option key={k} value={k} disabled={!!forecastError(d.stage as StageKey, k) && k !== d.forecastCategory}>{l}</option>
+                  ))}
                 </Select>
               </Field>
             </div>

@@ -12,7 +12,7 @@ import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { createOpportunity, updateOpportunity } from "@/server/actions/opportunities";
 import {
-  STAGE_META, OPEN_STAGES, FORECAST_LABEL, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL,
+  STAGE_META, FORECAST_LABEL, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL,
   DEAL_REG_LABEL, BILLING_FREQUENCY_LABEL, type StageKey,
 } from "@/lib/constants";
 import { defaultForecast } from "@/lib/rules/evaluate";
@@ -99,7 +99,10 @@ export function OppForm({
      
   }, [options.categories, options.bus]);
   const stage = v.stage as StageKey;
-  const stages: StageKey[] = mode === "create" ? OPEN_STAGES : (Object.keys(STAGE_META) as StageKey[]);
+  // New deals enter at the top of the funnel; after that the stage moves only through the stage bar and workflow
+  const stages: StageKey[] = ["IDENTIFIED", "QUALIFIED"];
+  const commitAllowed = stage === "PROPOSAL" || stage === "NEGOTIATION";
+  const today = new Date().toISOString().slice(0, 10);
   const arr = v.revenueModel === "ARR";
   const tender = v.procurementMode === "RFP" || v.procurementMode === "TENDER";
 
@@ -325,31 +328,34 @@ export function OppForm({
       </Section>
 
       <Section title="Pipeline" description="Stage, forecast and timing">
-        <Field htmlFor="stage" error={errors.stage} label="Stage" required>
-          <Select
-            id="stage"
-            value={v.stage}
-            onChange={(e) => {
-              const s = e.target.value as StageKey;
-              setV((x) => ({ ...x, stage: s, probability: String(STAGE_META[s].probability), forecastCategory: defaultForecast(s) }));
-            }}
-          >
-            {stages.map((s) => <option key={s} value={s}>{STAGE_META[s].label}</option>)}
-          </Select>
-        </Field>
-        <Field htmlFor="probability" error={errors.probability} label="Probability %" hint={`Stage default ${STAGE_META[stage]?.probability ?? 0}%`}>
-          {text("probability", { type: "number", min: 0, max: 100 })}
-        </Field>
-        <Field htmlFor="forecastCategory" error={errors.forecastCategory} label="Forecast category" required>
+        {mode === "create" ? (
+          <Field htmlFor="stage" error={errors.stage} label="Stage" required hint={stage === "QUALIFIED" ? "Needs a customer contact" : "Later stages are reached through the process"}>
+            <Select
+              id="stage"
+              value={v.stage}
+              onChange={(e) => {
+                const s = e.target.value as StageKey;
+                setV((x) => ({ ...x, stage: s, probability: String(STAGE_META[s].probability), forecastCategory: defaultForecast(s) }));
+              }}
+            >
+              {stages.map((s) => <option key={s} value={s}>{STAGE_META[s].label}</option>)}
+            </Select>
+          </Field>
+        ) : (
+          <Field label="Stage" hint="Change it from the stage bar on the deal">
+            <p className="flex h-9 items-center text-[13px]">{STAGE_META[stage].label} · {v.probability}% probability</p>
+          </Field>
+        )}
+        <Field htmlFor="forecastCategory" error={errors.forecastCategory} label="Forecast category" required hint={commitAllowed ? undefined : "Commit needs a quote with the customer"}>
           <Select id="forecastCategory" value={v.forecastCategory} onChange={(e) => set("forecastCategory", e.target.value)}>
-            {Object.entries(FORECAST_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            {Object.entries(FORECAST_LABEL).map(([k, l]) => <option key={k} value={k} disabled={k === "COMMIT" && !commitAllowed && v.forecastCategory !== "COMMIT"}>{l}</option>)}
           </Select>
         </Field>
         <Field htmlFor="expectedCloseDate" error={errors.expectedCloseDate} label="Expected close date" required hint={mode === "edit" ? "Pushing this out counts as a slip" : undefined}>
-          {text("expectedCloseDate", { type: "date" })}
+          {text("expectedCloseDate", { type: "date", min: today })}
         </Field>
         <Field htmlFor="nextStep" error={errors.nextStep} label="Next step" className="sm:col-span-2">{text("nextStep", { placeholder: "e.g. Solution walkthrough with CIO" })}</Field>
-        <Field htmlFor="nextStepDate" error={errors.nextStepDate} label="Next step date">{text("nextStepDate", { type: "date" })}</Field>
+        <Field htmlFor="nextStepDate" error={errors.nextStepDate} label="Next step date">{text("nextStepDate", { type: "date", min: today })}</Field>
         {stage === "WON" && (
           <>
             <Field htmlFor="poNumber" error={errors.poNumber} label="Customer PO number" required>{text("poNumber")}</Field>

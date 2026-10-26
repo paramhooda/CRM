@@ -1,0 +1,140 @@
+// Stage rules: which stage moves a person may make, and why not. Pure and unit-tested; enforced on the server for
+// every path (stage bar, pipeline board, edit form) and used by the UI to show only the moves that are allowed.
+//
+// Funnel: Identified → Qualified → BOQ → Pricing → Proposal Submitted → Negotiation → Won
+// - Deals move one stage at a time; nobody can skip ahead.
+// - BOQ, Pricing and Proposal Submitted are entered by the workflow, never by clicking: requesting a BOQ moves the deal
+//   to BOQ, submitting it (or requesting pricing) to Pricing, sending the quote to Proposal Submitted.
+// - Won needs a quote with the customer, nothing still with presales or purchase, and the customer PO.
+// - Moving back is a correction: managers only, with a reason, and never into the workflow stages.
+// - Hold needs a reason and resumes to the stage it was held from. Reopening a closed deal is for managers only.
+import { STAGE_META, type StageKey } from "./constants";
+
+export const FUNNEL: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
+/** Stages only the workflow can move a deal into */
+export const WORKFLOW_STAGES: StageKey[] = ["BOQ", "PRICING", "PROPOSAL"];
+const LIVE_QUOTE = ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"];
+
+export type StageFacts = {
+  stage: StageKey;
+  /** Stage the deal was in when put on hold */
+  heldFromStage: StageKey | null;
+  /** Last open stage before the deal was closed (where a reopen returns to) */
+  lastOpenStage: StageKey | null;
+  hasContact: boolean;
+  closeDatePast: boolean;
+  realLines: number;
+  openPresales: boolean;
+  openPricing: boolean;
+  /** Status of the latest quote, if any */
+  quoteStatus: string | null;
+};
+
+export type Actor = { canEdit: boolean; isManager: boolean };
+
+/** What a move needs from the person: a reason, the PO, or a loss reason. */
+export type Needs = "reason" | "po" | "lossReason";
+export type Move = { to: StageKey; allowed: boolean; reason?: string; needs?: Needs; kind: "forward" | "back" | "hold" | "resume" | "close" | "reopen" };
+
+const label = (s: StageKey) => STAGE_META[s].label;
+const isClosed = (s: StageKey) => s === "WON" || s === "LOST" || s === "DROPPED";
+
+const AUTOMATIC: Partial<Record<StageKey, string>> = {
+  BOQ: "A deal moves to BOQ when sales requests a BOQ from presales.",
+  PRICING: "A deal moves to Pricing when presales submits the BOQ, or sales requests pricing.",
+  PROPOSAL: "A deal moves to Proposal Submitted when the quote is sent.",
+};
+
+/** Every possible target stage for a deal, with whether this person may move it there and why not. */
+export function stageMoves(f: StageFacts, a: Actor): Move[] {
+  const targets: StageKey[] = [...FUNNEL, "HOLD", "WON", "LOST", "DROPPED"];
+  return targets.filter((t) => t !== f.stage).map((t) => checkMove(f, a, t));
+}
+
+export function checkMove(f: StageFacts, a: Actor, to: StageKey): Move {
+  const no = (kind: Move["kind"], reason: string): Move => ({ to, allowed: false, reason, kind });
+  const yes = (kind: Move["kind"], needs?: Needs): Move => ({ to, allowed: true, kind, needs });
+  if (!a.canEdit) return no("forward", "Only the deal owner or a sales manager can change the stage.");
+
+  // ── Closed deals ──
+  if (isClosed(f.stage)) {
+    const back = f.lastOpenStage ?? "NEGOTIATION";
+    if (to === back) return a.isManager ? yes("reopen", "reason") : no("reopen", "Only a sales manager can reopen a closed deal.");
+    return no("reopen", `The deal is ${label(f.stage)}. A sales manager can reopen it to ${label(back)}.`);
+  }
+
+  // ── On hold ──
+  if (f.stage === "HOLD") {
+    const back = f.heldFromStage ?? "QUALIFIED";
+    if (to === back) return yes("resume");
+    if (to === "LOST" || to === "DROPPED") return yes("close", "lossReason");
+    return no("resume", `The deal is on hold. Resume it to ${label(back)} first.`);
+  }
+
+  // ── Open deals ──
+  if (to === "HOLD") return yes("hold", "reason");
+  if (to === "LOST" || to === "DROPPED") return yes("close", "lossReason");
+  if (to === "WON") {
+    if (f.stage !== "PROPOSAL" && f.stage !== "NEGOTIATION") return no("close", "A deal can be won only after the quote is sent (Proposal Submitted or Negotiation).");
+    if (f.openPresales || f.openPricing) return no("close", "A BOQ or pricing request is still open. Finish or cancel it first.");
+    if (!f.quoteStatus || !LIVE_QUOTE.includes(f.quoteStatus)) return no("close", "Send the customer a quote before closing as won.");
+    return yes("close", "po");
+  }
+
+  const from = FUNNEL.indexOf(f.stage);
+  const target = FUNNEL.indexOf(to);
+  if (target > from) {
+    if (WORKFLOW_STAGES.includes(to)) return no("forward", AUTOMATIC[to]!);
+    if (target > from + 1) return no("forward", `Deals move one stage at a time. Next is ${label(FUNNEL[from + 1]!)}.`);
+    if (to === "QUALIFIED") {
+      if (!f.hasContact) return no("forward", "Add the customer contact before qualifying the deal.");
+      if (f.closeDatePast) return no("forward", "The expected close date has passed. Update it before moving the deal on.");
+      return yes("forward");
+    }
+    if (to === "NEGOTIATION") {
+      if (!f.quoteStatus || !LIVE_QUOTE.includes(f.quoteStatus)) return no("forward", "Send the customer a quote first.");
+      if (f.openPresales || f.openPricing) return no("forward", "A BOQ or pricing request is open. Send the revised quote first.");
+      return yes("forward");
+    }
+    return no("forward", "This move is not part of the process.");
+  }
+
+  // Moving back
+  if (!a.isManager) return no("back", "Only a sales manager can move a deal back. To change the solution, use Request BOQ change.");
+  if (WORKFLOW_STAGES.includes(to)) return no("back", `${label(to)} is set by the workflow. Use Request BOQ change to send the deal back to presales.`);
+  if (f.openPresales || f.openPricing) return no("back", "Cancel the open BOQ or pricing request before moving the deal back.");
+  return yes("back", "reason");
+}
+
+/** Commit is a promise to the forecast: only deals whose quote is with the customer can be committed. */
+export function forecastError(stage: StageKey, forecast: string): string | null {
+  if (forecast === "COMMIT" && stage !== "PROPOSAL" && stage !== "NEGOTIATION")
+    return "Only deals with a quote sent (Proposal Submitted or Negotiation) can be in Commit.";
+  if (forecast !== "OMITTED" && (isClosed(stage) || stage === "HOLD")) return "Closed and on-hold deals are omitted from the forecast.";
+  return null;
+}
+
+/**
+ * Field rules when someone edits a deal: the forecast must fit the stage, and a changed close date or next-step date
+ * cannot be in the past (pushing a deal into the past hides it from every "closing soon" view).
+ * Only changed fields are checked, so old data never blocks an unrelated edit.
+ */
+export function dealFieldErrors(
+  stage: StageKey,
+  before: { forecastCategory: string; expectedCloseDate: Date; nextStepDate: Date | null },
+  after: { forecastCategory: string; expectedCloseDate: Date; nextStepDate: Date | null },
+  now = new Date(),
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const today = new Date(now.toDateString()).getTime();
+  const day = (d: Date) => new Date(d.toDateString()).getTime();
+  if (after.forecastCategory !== before.forecastCategory) {
+    const e = forecastError(stage, after.forecastCategory);
+    if (e) errors.forecastCategory = e;
+  }
+  if (!isClosed(stage) && day(after.expectedCloseDate) !== day(before.expectedCloseDate) && day(after.expectedCloseDate) < today)
+    errors.expectedCloseDate = "The expected close date cannot be in the past.";
+  if (after.nextStepDate && (!before.nextStepDate || day(after.nextStepDate) !== day(before.nextStepDate)) && day(after.nextStepDate) < today)
+    errors.nextStepDate = "The next step date cannot be in the past.";
+  return errors;
+}

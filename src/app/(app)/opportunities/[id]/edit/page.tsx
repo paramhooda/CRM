@@ -16,6 +16,8 @@ export default async function EditOpportunityPage({ params }: { params: Promise<
   const o = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] } });
   if (!o) notFound();
   if (!can.editOpportunity(user, o)) redirect(`/opportunities/${id}`);
+  // Closed deals are read-only except for corrections by a sales manager
+  if (["WON", "LOST", "DROPPED"].includes(o.stage) && !isManager(user)) redirect(`/opportunities/${id}`);
   const [options, accounts, lineCount] = await Promise.all([getOptions(), accountOptions(user), db.opportunityLineItem.count({ where: { opportunityId: id } })]);
   if (!accounts.some((a) => a.id === o.accountId)) {
     const a = await db.account.findUniqueOrThrow({ where: { id: o.accountId }, include: { contacts: { where: { deletedAt: null } } } });
