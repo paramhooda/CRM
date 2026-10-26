@@ -201,7 +201,7 @@ export async function reviewChanges(user: CurrentUser, sp: SearchParams, opts: {
   };
 
   // Active pipeline value at the baseline, rebuilt from the audit log for the same scope and filters
-  const ACTIVE = new Set(["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"]);
+  const ACTIVE = new Set(["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"]);
   const firstOld = new Map<string, string | null>();
   for (const l of logs) {
     if (l.action !== "UPDATE" || (l.field !== "stage" && l.field !== "amount")) continue;

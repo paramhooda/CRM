@@ -1,8 +1,5 @@
 import Link from "next/link";
-import {
-  Pencil, Building2, CalendarClock, User, FileText, ExternalLink, ArrowRight,
-  History as HistoryIcon,
-} from "lucide-react";
+import { Pencil, Building2, CalendarClock, User, FileText, ExternalLink, ArrowRight, History as HistoryIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getOpportunityDetail, type OppDetail } from "@/server/queries/opportunity-detail";
 import { getOptions } from "@/server/queries/options";
@@ -16,12 +13,10 @@ import { StagePath } from "@/components/opportunities/stage-path";
 import { LineItemsEditor } from "@/components/opportunities/line-items-editor";
 import { ContactsEditor } from "@/components/opportunities/contacts-editor";
 import { ActivityComposer, ActivityTimeline } from "@/components/crm/activity";
-import { PullPresalesButton, QuoteResponseButton } from "@/components/opportunities/workflow-dialogs";
-import { WorkflowPanel, QUOTE_STATUS_LABEL } from "@/components/opportunities/workflow-panel";
+import { DealStatus, RequestHistory, QUOTE_STATUS_LABEL } from "@/components/opportunities/deal-status";
 import { inr, pct, fmtDate, fmtDateTime, relativeDays } from "@/lib/format";
 import {
-  STAGE_META, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL, DEAL_REG_LABEL,
-  FORECAST_LABEL, type StageKey,
+  STAGE_META, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL, DEAL_REG_LABEL, FORECAST_LABEL, type StageKey,
 } from "@/lib/constants";
 import { FLAG_META, sortFlags } from "@/lib/rules/flags";
 
@@ -32,9 +27,9 @@ export async function generateMetadata() {
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "boq", label: "Line items" },
+  { key: "quotes", label: "Quotes" },
   { key: "activity", label: "Activity" },
   { key: "contacts", label: "Contacts" },
-  { key: "quotes", label: "Quotes" },
   { key: "history", label: "History" },
 ] as const;
 
@@ -47,7 +42,6 @@ export default async function OpportunityPage({ params, searchParams }: { params
   const o = d.opp;
   const stage = o.stage as StageKey;
   const closed = ["WON", "LOST", "DROPPED"].includes(stage);
-  const openPresales = o.presalesRequests.find((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS" || r.status === "NEEDS_INFO");
   const counts: Record<string, number> = {
     boq: d.lines.length,
     activity: o.activities.filter((a) => a.type !== "TASK" || a.completedAt).length,
@@ -72,24 +66,25 @@ export default async function OpportunityPage({ params, searchParams }: { params
           </span>
         }
         actions={
-          <>
-            {d.perms.requestPresales && !openPresales && o.presalesRequests.length === 0 && !closed && (
-              <PullPresalesButton oppId={o.id} presales={options.presales} stageBeforeBoq={STAGE_META[stage].order < STAGE_META.BOQ.order} />
-            )}
-            {d.perms.edit && (
-              <Button asChild>
-                <Link href={`/opportunities/${o.id}/edit`}><Pencil /> Edit</Link>
-              </Button>
-            )}
-          </>
+          d.perms.edit && (
+            <Button asChild>
+              <Link href={`/opportunities/${o.id}/edit`}><Pencil /> Edit</Link>
+            </Button>
+          )
         }
       >
-        <div className="mt-6">
+        <div className="mt-5">
           <StagePath id={o.id} stage={stage} canEdit={d.perms.edit} lossReasons={options.lossReasons} poNumber={o.poNumber} />
         </div>
-        <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
-          <Metric label="Deal value (TCV)" value={<span className="text-lg font-semibold">{inr(o.amount)}</span>} sub={o.revenueModel === "ARR" && o.arrAmount ? `${inr(o.arrAmount)} ARR · ${o.contractTermMonths} mo` : REVENUE_MODEL_LABEL[o.revenueModel]} />
-          <Metric label="Weighted" value={inr((o.amount * o.probability) / 100)} sub={`${o.probability}% probability`} />
+        <div className="mt-3">
+          <DealStatus d={d} options={options} />
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+          <Metric
+            label="Deal value"
+            value={<span className="text-lg font-semibold">{inr(o.amount)}</span>}
+            sub={o.revenueModel === "ARR" && o.arrAmount ? `${inr(o.arrAmount)} ARR · ${o.contractTermMonths} mo` : `${inr((o.amount * o.probability) / 100)} weighted at ${o.probability}%`}
+          />
           <Metric
             label="Expected close"
             value={<span style={{ color: !closed && o.expectedCloseDate < new Date() ? "var(--t-red)" : undefined }}>{fmtDate(o.expectedCloseDate)}</span>}
@@ -97,30 +92,27 @@ export default async function OpportunityPage({ params, searchParams }: { params
           />
           <Metric label="Forecast" value={<ForecastBadge value={o.forecastCategory} />} sub={`${STAGE_META[stage].label} for ${Math.max(0, Math.round((Date.now() - o.stageEnteredAt.getTime()) / 86_400_000))}d`} />
           <Metric label="Health" value={<HealthBadge label={o.healthLabel} score={o.healthScore} />} sub={`Last activity ${relativeDays(o.lastActivityAt)}`} />
-          <Metric label="Margin" value={d.perms.viewCost ? (d.totals.marginPct !== null ? pct(d.totals.marginPct, 1) : o.expectedMarginPct !== null ? `${pct(o.expectedMarginPct, 1)} est.` : "—") : "Restricted"} sub={d.totals.marginPct !== null ? "From priced BOQ" : "Expected"} />
+          <Metric label="Margin" value={d.perms.viewCost ? (d.totals.marginPct !== null ? pct(d.totals.marginPct, 1) : o.expectedMarginPct !== null ? `${pct(o.expectedMarginPct, 1)} est.` : "—") : "Restricted"} sub={d.totals.marginPct !== null ? "From priced lines" : "Expected"} />
         </div>
       </PageHeader>
       <PageBody>
-        {tab === "overview" && <Overview d={d} options={options} />}
+        {tab === "overview" && <Overview d={d} />}
         {tab === "boq" && (
-          <div className="flex flex-col gap-6">
-            <WorkflowPanel d={d} options={options} variant="full" />
-            <LineItemsEditor
-              oppId={o.id}
-              initial={d.lines}
-              perms={d.perms}
-              products={options.products}
-              bus={options.bus}
-              categories={options.categories}
-              oems={options.oems}
-              distributors={options.distributors}
-              defaultTerm={o.contractTermMonths}
-              locked={stage === "WON"}
-              version={o.boqVersion}
-              lockReason={d.lockReason}
-              oemTbd={options.oemTbd}
-            />
-          </div>
+          <LineItemsEditor
+            oppId={o.id}
+            initial={d.lines}
+            perms={d.perms}
+            products={options.products}
+            bus={options.bus}
+            categories={options.categories}
+            oems={options.oems}
+            distributors={options.distributors}
+            defaultTerm={o.contractTermMonths}
+            locked={stage === "WON"}
+            version={o.boqVersion}
+            lockReason={d.lockReason}
+            oemTbd={options.oemTbd}
+          />
         )}
         {tab === "activity" && (
           <div className="grid gap-6 lg:grid-cols-5">
@@ -150,92 +142,64 @@ function Metric({ label, value, sub }: { label: string; value: React.ReactNode; 
   );
 }
 
-type Opts = Awaited<ReturnType<typeof getOptions>>;
-
-function Overview({ d, options }: { d: OppDetail; options: Opts }) {
+/** The essentials only: why the deal is healthy or not, the facts that matter, next step and who is involved. */
+function Overview({ d }: { d: OppDetail }) {
   const o = d.opp;
   const flags = sortFlags(o.flags);
   const tasks = o.activities.filter((a) => a.type === "TASK" && !a.completedAt);
+  const details = [
+    { label: "Account type", value: ACCOUNT_TYPE_LABEL[o.accountType] },
+    { label: "Deal type", value: DEAL_TYPE_LABEL[o.dealType] },
+    { label: "Revenue", value: REVENUE_MODEL_LABEL[o.revenueModel] + (o.contractTermMonths ? ` · ${o.contractTermMonths} months` : "") },
+    { label: "Procurement", value: PROCUREMENT_LABEL[o.procurementMode] + (o.submissionDueDate ? ` · bid due ${fmtDate(o.submissionDueDate)}` : "") },
+    { label: "OEM deal registration", value: DEAL_REG_LABEL[o.dealRegStatus] + (o.dealRegExpiry ? ` · expires ${fmtDate(o.dealRegExpiry)}` : "") },
+    { label: "Competition", value: o.competitors || "—" },
+    { label: "Lead source", value: o.leadSource || "—" },
+    { label: "Created", value: `${fmtDate(o.createdAt)} (${relativeDays(o.createdAt)})` },
+    ...(o.contractStartDate ? [{ label: "Contract period", value: `${fmtDate(o.contractStartDate)} – ${fmtDate(o.contractEndDate)}` }] : []),
+    ...(o.stage === "WON" ? [{ label: "Customer PO", value: `${o.poNumber} · ${fmtDate(o.poDate)}` }] : []),
+    ...(o.lossReason ? [{ label: "Loss reason", value: o.lossReason }] : []),
+  ];
   return (
     <div className="grid gap-6 lg:grid-cols-3">
-      <div className="flex flex-col gap-4 lg:col-span-2">
+      <div className="flex flex-col gap-6 lg:col-span-2">
         {o.healthLabel !== "CLOSED" && (
           <Card>
-            <CardHeader title="Why this health score" description="Calculated from stage, engagement recency, forecast, stage age and close-date hygiene" />
-            <CardContent>
+            <CardContent className="flex flex-col gap-3 pt-5">
               <div className="flex items-center gap-4">
-                <div className="relative size-16 shrink-0">
-                  <svg viewBox="0 0 36 36" className="size-16 -rotate-90">
+                <div className="relative size-14 shrink-0">
+                  <svg viewBox="0 0 36 36" className="size-14 -rotate-90">
                     <circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--surface-2)" strokeWidth="3.5" />
                     <circle cx="18" cy="18" r="15.5" fill="none" stroke={healthColor(o.healthLabel)} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(o.healthScore / 100) * 97.4} 97.4`} />
                   </svg>
-                  <span className="absolute inset-0 flex items-center justify-center text-base font-semibold tabular">{o.healthScore}</span>
+                  <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold tabular">{o.healthScore}</span>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <HealthBadge label={o.healthLabel} />
-                  <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-ink-2">
-                    {(d.evaluation?.reasons.length
-                      ? d.evaluation.reasons
-                      : flags.length
-                        ? ["Engagement and timing are fine. The concerns below are holding the score down."]
-                        : ["On track: recent activity and within expected stage duration"]
-                    ).map((r) => (
-                      <li key={r}>• {r}</li>
-                    ))}
-                  </ul>
+                  <p className="text-sm font-semibold">Health <HealthBadge label={o.healthLabel} /></p>
+                  <p className="mt-0.5 text-xs text-ink-2">
+                    {(d.evaluation?.reasons.length ? d.evaluation.reasons : ["On track: recent activity and within expected stage duration"]).join(" · ")}
+                  </p>
                 </div>
               </div>
               {flags.length > 0 && (
-                <div className="mt-4 flex flex-col gap-1.5 border-t border-border pt-3">
+                <ul className="flex flex-col gap-1.5 border-t border-border pt-3">
                   {flags.map((f) => (
-                    <div key={f} className="flex items-start gap-2 text-[13px]">
+                    <li key={f} className="flex items-start gap-2 text-[13px]">
                       <SeverityIcon severity={FLAG_META[f].severity} className="mt-0.5" />
-                      <div>
-                        <span className="font-medium">{FLAG_META[f].label}.</span> <span className="text-ink-2">{FLAG_META[f].hint}</span>
-                      </div>
-                    </div>
+                      <span><span className="font-medium">{FLAG_META[f].label}.</span> <span className="text-ink-2">{FLAG_META[f].hint}</span></span>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </CardContent>
           </Card>
         )}
         <Card>
-          <CardHeader title="Deal details" />
-          <CardContent className="flex flex-col gap-5">
-            <DescList
-              cols={3}
-              items={[
-                { label: "Account type", value: ACCOUNT_TYPE_LABEL[o.accountType] },
-                { label: "Deal type", value: DEAL_TYPE_LABEL[o.dealType] },
-                { label: "Revenue model", value: REVENUE_MODEL_LABEL[o.revenueModel] },
-                { label: "Business unit", value: o.businessUnit.name },
-                { label: "Category", value: o.category.name },
-                { label: "OEM", value: o.oem?.name },
-                { label: "Lead source", value: o.leadSource },
-                { label: "Competition", value: o.competitors },
-                { label: "Procurement", value: PROCUREMENT_LABEL[o.procurementMode] + (o.submissionDueDate ? ` · due ${fmtDate(o.submissionDueDate)}` : "") },
-              ]}
-            />
-            <div className="border-t border-border pt-4">
-              <DescList
-                cols={3}
-                items={[
-                  { label: "Contract value (TCV)", value: inr(o.amount, { precise: true }) },
-                  { label: "Annual recurring value", value: o.arrAmount ? inr(o.arrAmount, { precise: true }) : "—" },
-                  { label: "Contract term", value: o.contractTermMonths ? `${o.contractTermMonths} months` : "—" },
-                  { label: "Contract period", value: o.contractStartDate ? `${fmtDate(o.contractStartDate)} – ${fmtDate(o.contractEndDate)}` : "—" },
-                  { label: "OEM deal registration", value: <span>{DEAL_REG_LABEL[o.dealRegStatus]}{o.dealRegNumber && <span className="text-ink-3"> · {o.dealRegNumber}</span>}</span> },
-                  { label: "Deal reg expiry", value: o.dealRegExpiry ? fmtDate(o.dealRegExpiry) : "—" },
-                  { label: "Original close date", value: fmtDate(o.originalCloseDate) },
-                  { label: "Created", value: `${fmtDate(o.createdAt)} (${relativeDays(o.createdAt)})` },
-                  ...(o.stage === "WON" ? [{ label: "Customer PO", value: `${o.poNumber} · ${fmtDate(o.poDate)}` }] : []),
-                  ...(o.lossReason ? [{ label: "Loss reason", value: o.lossReason }] : []),
-                ]}
-              />
-            </div>
+          <CardHeader title="Details" />
+          <CardContent className="flex flex-col gap-4">
+            <DescList cols={3} items={details} />
             {(o.description || o.lossNotes) && (
-              <div className="border-t border-border pt-4 text-[13px] text-ink-2 whitespace-pre-line">
+              <div className="whitespace-pre-line border-t border-border pt-4 text-[13px] text-ink-2">
                 {o.description}
                 {o.lossNotes && <p className="mt-2"><span className="font-medium text-ink">Loss notes: </span>{o.lossNotes}</p>}
               </div>
@@ -256,7 +220,7 @@ function Overview({ d, options }: { d: OppDetail; options: Opts }) {
                 </p>
               </div>
             ) : (
-              <p className="text-xs text-ink-3">No next step recorded. Deals without a next step are flagged.</p>
+              <p className="text-xs text-ink-3">No next step recorded.</p>
             )}
             {tasks.length > 0 && (
               <div className="mt-3 border-t border-border pt-3">
@@ -267,15 +231,14 @@ function Overview({ d, options }: { d: OppDetail; options: Opts }) {
             )}
           </CardContent>
         </Card>
-        <WorkflowPanel d={d} options={options} variant="summary" />
         <Card>
-          <CardHeader title="Deal team" />
+          <CardHeader title="People" />
           <CardContent className="flex flex-col gap-2.5">
             <TeamRow role="Sales" name={o.salesOwner.name} />
             <TeamRow role="Presales" name={o.presalesOwner?.name} />
             <TeamRow role="Purchase" name={o.purchaseOwner?.name} />
             <div className="border-t border-border pt-2.5">
-              <p className="text-xs text-ink-3">Primary customer contact</p>
+              <p className="text-xs text-ink-3">Customer contact</p>
               {o.primaryContact ? (
                 <div className="mt-1">
                   <PersonCell name={`${o.primaryContact.firstName} ${o.primaryContact.lastName}`} sub={o.primaryContact.title} />
@@ -306,7 +269,6 @@ function TeamRow({ role, name }: { role: string; name?: string | null }) {
 
 function Quotes({ d }: { d: OppDetail }) {
   const qs = d.opp.quotes;
-  const closed = ["WON", "LOST", "DROPPED"].includes(d.opp.stage);
   if (!qs.length) {
     return <Card className="p-8 text-center text-sm text-ink-3">No quotes yet. Quotes are generated from a fully priced BOQ on the BOQ tab.</Card>;
   }
@@ -322,7 +284,7 @@ function Quotes({ d }: { d: OppDetail }) {
           </tr>
         </thead>
         <tbody>
-          {qs.map((q, i) => (
+          {qs.map((q) => (
             <tr key={q.id} className="border-b border-border last:border-0">
               <td className="px-4 py-2.5"><span className="font-mono text-xs">{q.code}</span> <span className="text-ink-3">v{q.version}</span></td>
               <td className="px-4 py-2.5">
@@ -334,9 +296,6 @@ function Quotes({ d }: { d: OppDetail }) {
               <td className="px-4 py-2.5 text-xs">{fmtDate(q.submittedAt ?? q.createdAt)}</td>
               <td className="px-4 py-2.5 text-xs">{fmtDate(q.validTill)}</td>
               <td className="px-4 py-2.5 text-right">
-                {i === 0 && d.perms.quote && !closed && (q.status === "SUBMITTED" || q.status === "CHANGES_REQUESTED") && (
-                  <span className="mr-3 inline-block"><QuoteResponseButton quoteId={q.id} version={q.version} /></span>
-                )}
                 <Link href={`/opportunities/${d.opp.id}/quotes/${q.id}`} target="_blank" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                   <FileText className="size-3.5" /> View <ExternalLink className="size-3" />
                 </Link>
@@ -378,24 +337,30 @@ function HistoryTab({ d }: { d: OppDetail }) {
   };
   return (
     <div className="grid gap-6 lg:grid-cols-5">
-      <Card className="lg:col-span-2">
-        <CardHeader title="Stage journey" description="Days spent in each stage" />
-        <CardContent>
-          <ol className="flex flex-col gap-2">
-            {d.opp.stageHistory.map((s, i) => {
-              const next = d.opp.stageHistory[i + 1];
-              const days = Math.round(((next?.changedAt ?? new Date()).getTime() - s.changedAt.getTime()) / 86_400_000);
-              return (
-                <li key={s.id} className="flex items-center gap-3">
-                  <StageBadge stage={s.toStage} />
-                  <span className="flex-1 text-xs text-ink-3">{fmtDate(s.changedAt)} · {s.changedBy.name}</span>
-                  {!["WON", "LOST", "DROPPED"].includes(s.toStage) && <span className="text-xs tabular text-ink-2">{days}d{!next && " so far"}</span>}
-                </li>
-              );
-            })}
-          </ol>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col gap-6 lg:col-span-2">
+        <Card>
+          <CardHeader title="Stage journey" description="Days spent in each stage" />
+          <CardContent>
+            <ol className="flex flex-col gap-2">
+              {d.opp.stageHistory.map((s, i) => {
+                const next = d.opp.stageHistory[i + 1];
+                const days = Math.round(((next?.changedAt ?? new Date()).getTime() - s.changedAt.getTime()) / 86_400_000);
+                return (
+                  <li key={s.id} className="flex items-center gap-3">
+                    <StageBadge stage={s.toStage} />
+                    <span className="flex-1 text-xs text-ink-3">{fmtDate(s.changedAt)} · {s.changedBy.name}</span>
+                    {!["WON", "LOST", "DROPPED"].includes(s.toStage) && <span className="text-xs tabular text-ink-2">{days}d{!next && " so far"}</span>}
+                  </li>
+                );
+              })}
+            </ol>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader title="BOQ and pricing requests" description="Every request, revision, question and send-back" />
+          <CardContent className="px-0 pb-0"><RequestHistory d={d} /></CardContent>
+        </Card>
+      </div>
       <Card className="lg:col-span-3">
         <CardHeader title={<span className="flex items-center gap-2"><HistoryIcon className="size-4" />Audit trail</span>} description="Every field change, who made it and when" />
         <CardContent className="px-0">

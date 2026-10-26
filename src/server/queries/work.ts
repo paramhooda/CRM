@@ -118,7 +118,7 @@ export async function getPurchaseWork(user: CurrentUser) {
         assignedToId: user.id,
         status: "QUOTED",
         quoteValidTill: { gte: new Date(now.getTime() - 30 * DAY), lte: new Date(now.getTime() + 10 * DAY) },
-        opportunity: { stage: { in: ["BOQ", "PROPOSAL", "NEGOTIATION", "HOLD"] }, deletedAt: null },
+        opportunity: { stage: { in: ["BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"] }, deletedAt: null },
       },
       orderBy: { quoteValidTill: "asc" },
       take: 6,

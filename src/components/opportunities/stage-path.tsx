@@ -28,12 +28,12 @@ export function StagePath({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <ol className="flex min-w-0 flex-1 overflow-hidden rounded-md border border-border">
+      <ol className="flex w-full min-w-0 overflow-hidden rounded-md border border-border lg:w-auto lg:flex-1">
         {ACTIVE_STAGES.map((s, i) => {
           const done = !closed ? STAGE_META[s].order < curOrder && stage !== "HOLD" : stage === "WON";
           const current = s === stage;
           return (
-            <li key={s} className="min-w-0 flex-1">
+            <li key={s} className={cn("min-w-0", current ? "flex-[3] sm:flex-1" : "flex-1")}>
               <button
                 disabled={!canEdit || pending || current}
                 onClick={() => move(s)}
@@ -48,7 +48,7 @@ export function StagePath({
                 )}
               >
                 {done && !current && <Check className="size-3 shrink-0" />}
-                <span className="truncate">{STAGE_META[s].label}</span>
+                <span className={cn("truncate", !current && "hidden sm:inline")}>{STAGE_META[s].label}</span>
               </button>
             </li>
           );

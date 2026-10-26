@@ -16,7 +16,7 @@ export type Card = {
   healthScore: number; flags: string[]; expectedCloseDate: string; owner: string; salesOwnerId: string; forecastCategory: string;
 };
 
-const COLUMNS: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION", "HOLD"];
+const COLUMNS: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
 
 export function Kanban({ cards, editableIds }: { cards: Card[]; editableIds: string[] }) {
   const router = useRouter();

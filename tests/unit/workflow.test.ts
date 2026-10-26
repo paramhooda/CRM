@@ -47,14 +47,16 @@ describe("deriveWorkflow", () => {
     expect(w.blockers.join(" ")).toContain("Part is end-of-sale");
   });
 
-  it("ready to quote lists what still blocks the quote: estimates, missing prices, expired supplier pricing", () => {
+  it("ready to quote lists what still blocks the quote: estimates and expired supplier pricing", () => {
     const w = deriveWorkflow(input({
       lines: [line(), line({ unitPrice: null }), line({ isEstimate: true, unitCost: null, pricingStatus: "PENDING" })],
       pricing: req({ status: "QUOTED", quotedAt: ago(40), quoteValidTill: ago(5) }),
     }));
     expect(w.state).toBe("READY_TO_QUOTE");
-    expect(w.blockers).toHaveLength(3);
-    expect(w.blockers[2]).toMatch(/Supplier pricing expired/);
+    // Missing sell prices are not a blocker: the quote dialog prices lines from the margin
+    expect(w.blockers).toHaveLength(2);
+    expect(w.blockers[1]).toMatch(/Supplier pricing expired/);
+    expect(w.needsPrice).toBe(1);
   });
 
   it("a sent quote is with the customer; an expired one is flagged", () => {

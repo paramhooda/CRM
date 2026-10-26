@@ -53,12 +53,16 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("Cisco", { exact: false }).first()).toBeVisible();
     await expect(page.getByText("By OEM")).toBeVisible();
 
-    await page.getByRole("button", { name: "Pull in presales" }).first().click();
+    await page.getByRole("button", { name: "Request BOQ from presales" }).click();
     const dlg = page.getByRole("dialog");
     await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
     await dlg.locator("textarea[name=scope]").fill("SD-WAN for 40 branches with dual ISP links and central orchestration.");
-    await dlg.getByRole("button", { name: "Send request" }).click();
+    await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
+    // The deal moves to the BOQ stage and says who holds it
+    await expect(page.getByRole("button", { name: "BOQ", exact: true })).toBeDisabled();
+    await expect(page.getByLabel("Deal status")).toContainText("BOQ with presales");
+    await expect(page.getByLabel("Deal status")).toContainText(PRESALES.name);
   });
 
   test("filtering by OEM shows that OEM's share of the mixed deal", async ({ page }) => {
@@ -98,6 +102,8 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await dlg.locator("select[name=purchaseUserId]").selectOption({ label: PURCHASE.name });
     await dlg.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pricing", exact: true })).toBeDisabled(); // now in the Pricing stage
+    await expect(page.getByLabel("Deal status")).toContainText("Pricing with purchase");
   });
 
   test("purchase sees the RFQ by OEM and prices the BOQ", async ({ page }) => {
@@ -120,14 +126,16 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
   test("sales asks for a BOQ revision; presales asks a question and sales answers", async ({ page }) => {
     await login(page, SALES);
     await page.goto(`${oppUrl}?tab=boq`);
-    await expect(page.getByText("Ready to quote")).toBeVisible();
-    await page.getByRole("button", { name: "Request BOQ revision" }).click();
+    await expect(page.getByLabel("Deal status")).toContainText("Priced · ready to quote");
+    await page.getByRole("button", { name: "More" }).click();
+    await page.getByRole("menuitem", { name: "Request BOQ change" }).click();
     let dlg = page.getByRole("dialog");
-    await expect(dlg.getByText("Request BOQ revision 2")).toBeVisible();
+    await expect(dlg.getByText("Request BOQ change (revision 2)")).toBeVisible();
     await dlg.locator("textarea[name=reason]").fill("Customer wants 12 Cisco edge devices instead of 10.");
-    await dlg.getByRole("button", { name: "Request revision" }).click();
+    await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
-    await expect(page.getByText("With presales").first()).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("BOQ revision 2 with presales");
+    await expect(page.getByRole("button", { name: "BOQ", exact: true })).toBeDisabled(); // back from Pricing to BOQ
     // Only the presales assignee edits the specification now
     await expect(page.getByText("Products and quantities locked")).toBeVisible();
 
@@ -137,7 +145,8 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await expect(page.getByText("Changed · needs re-pricing")).toBeVisible();
-    await page.getByRole("button", { name: "Ask sales" }).click();
+    await page.getByRole("button", { name: "More" }).click();
+    await page.getByRole("menuitem", { name: "Ask sales a question" }).click();
     dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=question]").fill("Do the two extra devices need their own licence?");
     await dlg.getByRole("button", { name: "Send question" }).click();
@@ -145,7 +154,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
     await login(page, SALES);
     await page.goto(`${oppUrl}?tab=boq`);
-    await expect(page.getByText("Waiting on sales").first()).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("Presales is waiting for an answer");
     await page.getByRole("button", { name: "Answer presales" }).click();
     dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=answer]").fill("Yes, add licences for all 12.");
@@ -165,12 +174,13 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
   test("purchase sends the BOQ back; presales resubmits; purchase re-prices only the changed line", async ({ page }) => {
     await login(page, SALES);
     await page.goto(`${oppUrl}?tab=boq`);
-    await expect(page.getByText("With purchase").first()).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("with purchase");
     await expect(page.getByRole("button", { name: "Add line" })).toHaveCount(0); // locked while purchase prices it
 
     await login(page, PURCHASE.email);
     await page.goto(`${oppUrl}?tab=boq`);
-    await page.getByRole("button", { name: "Send back" }).click();
+    await page.getByRole("button", { name: "More" }).click();
+    await page.getByRole("menuitem", { name: "Send back to presales" }).click();
     let dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=reason]").fill("Confirm the licence SKU for the two extra devices.");
     await dlg.getByRole("button", { name: "Send back" }).click();
@@ -178,7 +188,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
     await login(page, PRESALES.email);
     await page.goto(`${oppUrl}?tab=boq`);
-    await expect(page.getByText("BOQ · revision 3")).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("BOQ revision 3 with presales");
     await page.getByRole("button", { name: "Submit BOQ" }).click();
     dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=solutionSummary]").fill("Licence SKU confirmed with the OEM.");
@@ -187,7 +197,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
     await login(page, PURCHASE.email);
     await page.goto(`${oppUrl}?tab=boq`);
-    await expect(page.getByText("Re-pricing").first()).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("Re-pricing with purchase");
     await page.getByLabel("Line 1 unit cost").fill("240000");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
@@ -213,9 +223,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(other.getByText(/Someone else saved this BOQ/)).toBeVisible();
     await other.close();
 
-    await page.getByRole("button", { name: "Generate quote" }).click();
+    await page.getByLabel("Deal status").getByRole("button", { name: "Create & send quote" }).click();
     let popup = page.waitForEvent("popup");
-    await page.getByRole("dialog").getByRole("button", { name: "Generate" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Create & send quote" }).click();
     const quote = await popup;
     await expect(quote.getByText("Quotation", { exact: true })).toBeVisible();
     await expect(quote.getByText("85176290").first()).toBeVisible(); // HSN carried onto the quote
@@ -223,20 +233,27 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
     // Customer asks for changes: sales re-issues a new version
     await page.goto(`${oppUrl}?tab=boq`);
-    await page.getByRole("button", { name: "Customer response" }).click();
+    await expect(page.getByRole("button", { name: "Proposal Submitted", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Record customer response" }).click();
     let dlg = page.getByRole("dialog");
     await dlg.getByRole("radio", { name: "Wants changes" }).click();
-    await dlg.locator("textarea[name=note]").fill("Asked for 2% lower on the edge devices.");
-    await dlg.getByRole("button", { name: "Save response" }).click();
+    await dlg.locator("textarea[name=note]").fill("Asked for a lower price on the edge devices.");
+    await dlg.getByRole("button", { name: "Save" }).click();
     await expect(page.getByText("Response recorded")).toBeVisible();
-    await expect(page.getByText("Customer wants changes").first()).toBeVisible();
-    await page.getByRole("button", { name: "Issue quote v2" }).click();
+    await expect(page.getByLabel("Deal status")).toContainText("Customer wants changes");
+    // Revised quote at a new margin, set in the same dialog
+    await page.getByLabel("Deal status").getByRole("button", { name: "Send revised quote" }).click();
+    dlg = page.getByRole("dialog");
+    await dlg.getByRole("radio", { name: "Apply a margin" }).click();
+    await dlg.getByLabel("Gross margin %").fill("16");
+    await expect(dlg.getByText("16.0%")).toBeVisible();
     popup = page.waitForEvent("popup");
-    await page.getByRole("dialog").getByRole("button", { name: "Generate" }).click();
+    await dlg.getByRole("button", { name: "Send revised quote" }).click();
     await (await popup).close();
+    await expect(page.getByLabel("Deal status")).toContainText("Quote v2 with customer");
     await page.goto(`${oppUrl}?tab=quotes`);
     await expect(page.getByText("Superseded")).toBeVisible();
-    await expect(page.getByText("With customer")).toBeVisible();
+    await expect(page.getByText("With customer", { exact: true })).toBeVisible();
 
     await page.goto(oppUrl);
     await expect(page.getByRole("button", { name: "Proposal Submitted" })).toBeDisabled();

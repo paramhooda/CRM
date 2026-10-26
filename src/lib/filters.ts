@@ -129,7 +129,7 @@ export function oppWhere(f: OppFilters, opts: { ignore?: (keyof OppFilters)[] } 
 
 const DAY = 86_400_000;
 const STATUS_STAGES = {
-  open: ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"],
+  open: ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"],
   won: ["WON"],
   lost: ["LOST", "DROPPED"],
 } as const;

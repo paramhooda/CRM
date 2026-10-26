@@ -5,7 +5,7 @@ import { STAGE_META, FORECAST_LABEL, HEALTH_LABEL, THRESHOLDS, type StageKey, ty
 import { inr, fmtDate } from "./format";
 
 const DAY = 86_400_000;
-export const ACTIVE: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"];
+export const ACTIVE: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
 const FC_RANK: Record<string, number> = { OMITTED: 0, PIPELINE: 1, UPSIDE: 2, COMMIT: 3 };
 
 // ───────────── Windows and baselines ─────────────
@@ -172,7 +172,7 @@ export function dealInsights(d: ReviewDeal, rec: Reconstruction, now: Date): Ins
   const open = ACTIVE.includes(d.stage as StageKey) || d.stage === "HOLD";
   if (open) {
     if (d.expectedCloseDate < now) out.push({ code: "CLOSE_PASSED", label: `Close date passed ${daysFrom(d.expectedCloseDate, now)}d`, tone: "red", rank: 100 });
-    if (d.submissionDueDate && ["IDENTIFIED", "QUALIFIED", "BOQ"].includes(d.stage)) {
+    if (d.submissionDueDate && ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING"].includes(d.stage)) {
       const dd = Math.ceil((d.submissionDueDate.getTime() - now.getTime()) / DAY);
       if (dd < 0) out.push({ code: "BID_MISSED", label: `Bid date passed ${-dd}d`, tone: "red", rank: 95 });
       else if (dd <= 3) out.push({ code: "BID_DUE", label: dd === 0 ? "Bid due today" : `Bid due in ${dd}d`, tone: "red", rank: 90 });
@@ -228,7 +228,7 @@ export function buildAgenda(rows: { deal: ReviewDeal; rec: Reconstruction }[], n
     const add = (k: string, fact: string) => facts.push({ group: k, text: fact });
     const deadline: string[] = [];
     if (d.expectedCloseDate < now) deadline.push(`close date ${fmtDate(d.expectedCloseDate, "short")} passed ${daysFrom(d.expectedCloseDate, now)} days ago`);
-    if (d.submissionDueDate && ["IDENTIFIED", "QUALIFIED", "BOQ"].includes(d.stage)) {
+    if (d.submissionDueDate && ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING"].includes(d.stage)) {
       const dd = Math.ceil((d.submissionDueDate.getTime() - now.getTime()) / DAY);
       if (dd < 0) deadline.push(`bid submission ${fmtDate(d.submissionDueDate, "short")} missed`);
       else if (dd <= 3) deadline.push(`bid due ${dd === 0 ? "today" : `in ${dd} days`}`);

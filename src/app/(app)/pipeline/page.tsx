@@ -25,7 +25,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const f = parseOppFilters(sp);
   const [rows, options] = await Promise.all([
     db.opportunity.findMany({
-      where: { AND: [opportunityScope(user), oppWhere(f, { ignore: ["stage"] }), { stage: { in: ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION", "HOLD"] } }] },
+      where: { AND: [opportunityScope(user), oppWhere(f, { ignore: ["stage"] }), { stage: { in: ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"] } }] },
       select: {
         id: true, name: true, code: true, amount: true, stage: true, probability: true, healthLabel: true, healthScore: true, flags: true,
         expectedCloseDate: true, salesOwnerId: true, presalesOwnerId: true, forecastCategory: true,

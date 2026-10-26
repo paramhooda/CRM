@@ -5,6 +5,7 @@ export const STAGES = [
   "IDENTIFIED",
   "QUALIFIED",
   "BOQ",
+  "PRICING",
   "PROPOSAL",
   "NEGOTIATION",
   "HOLD",
@@ -14,23 +15,25 @@ export const STAGES = [
 ] as const;
 export type StageKey = (typeof STAGES)[number];
 
-export const OPEN_STAGES: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION", "HOLD"];
-export const ACTIVE_STAGES: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"];
+export const OPEN_STAGES: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
+export const ACTIVE_STAGES: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
 export const CLOSED_STAGES: StageKey[] = ["WON", "LOST", "DROPPED"];
 
 export const STAGE_META: Record<
   StageKey,
   { label: string; probability: number; order: number; staleAfterDays: number; tone: Tone }
 > = {
-  IDENTIFIED: { label: "Opportunity Identified", probability: 10, order: 1, staleAfterDays: 30, tone: "slate" },
+  IDENTIFIED: { label: "Identified", probability: 10, order: 1, staleAfterDays: 30, tone: "slate" },
   QUALIFIED: { label: "Qualified", probability: 20, order: 2, staleAfterDays: 30, tone: "blue" },
-  BOQ: { label: "BOQ", probability: 40, order: 3, staleAfterDays: 21, tone: "violet" },
-  PROPOSAL: { label: "Proposal Submitted", probability: 60, order: 4, staleAfterDays: 30, tone: "amber" },
-  NEGOTIATION: { label: "Negotiation", probability: 80, order: 5, staleAfterDays: 21, tone: "orange" },
-  HOLD: { label: "Hold", probability: 0, order: 6, staleAfterDays: 45, tone: "slate" },
-  WON: { label: "Closed-Won", probability: 100, order: 7, staleAfterDays: 0, tone: "green" },
-  LOST: { label: "Closed-Lost", probability: 0, order: 8, staleAfterDays: 0, tone: "red" },
-  DROPPED: { label: "Dropped", probability: 0, order: 9, staleAfterDays: 0, tone: "slate" },
+  // BOQ is presales' stage, Pricing is purchase's; the workflow moves deals through them automatically
+  BOQ: { label: "BOQ", probability: 35, order: 3, staleAfterDays: 14, tone: "violet" },
+  PRICING: { label: "Pricing", probability: 45, order: 4, staleAfterDays: 10, tone: "aqua" },
+  PROPOSAL: { label: "Proposal Submitted", probability: 60, order: 5, staleAfterDays: 30, tone: "amber" },
+  NEGOTIATION: { label: "Negotiation", probability: 80, order: 6, staleAfterDays: 21, tone: "orange" },
+  HOLD: { label: "Hold", probability: 0, order: 7, staleAfterDays: 45, tone: "slate" },
+  WON: { label: "Closed-Won", probability: 100, order: 8, staleAfterDays: 0, tone: "green" },
+  LOST: { label: "Closed-Lost", probability: 0, order: 9, staleAfterDays: 0, tone: "red" },
+  DROPPED: { label: "Dropped", probability: 0, order: 10, staleAfterDays: 0, tone: "slate" },
 };
 
 export type Tone = "slate" | "blue" | "violet" | "amber" | "orange" | "green" | "red" | "aqua";

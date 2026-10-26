@@ -45,6 +45,18 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   }
 }
 
+/**
+ * Keep the pipeline stage in step with who holds the deal: BOQ while presales works on it, Pricing while purchase
+ * prices it and until the quote goes out (Proposal Submitted). Deals only move forward, except that a BOQ revision
+ * during Pricing takes the deal back to BOQ. Once a quote is with the customer the stage is left to sales.
+ */
+async function syncStage(tx: Tx, user: CurrentUser, oppId: string, to: "BOQ" | "PRICING") {
+  const { stage } = await tx.opportunity.findUniqueOrThrow({ where: { id: oppId }, select: { stage: true } });
+  if (isClosed(stage) || stage === "HOLD" || stage === to) return;
+  const forward = STAGE_META[to].order > STAGE_META[stage as StageKey].order;
+  if (forward || (to === "BOQ" && stage === "PRICING")) await applyStageChange(tx, user, oppId, to, {}, { keepForecast: true });
+}
+
 /** Pick the purchase user with the fewest open pricing requests. */
 async function leastLoadedPurchase(tx: Tx) {
   const users = await tx.user.findMany({
@@ -95,7 +107,6 @@ const presalesSchema = z.object({
   scope: z.string().trim().min(10, "Describe the scope in a sentence or two").max(4000),
   reason: z.string().trim().max(2000).optional(),
   priority: z.enum(["NORMAL", "HIGH", "URGENT"]).default("NORMAL"),
-  moveToBoq: z.preprocess((v) => v === true || v === "on" || v === "true", z.boolean()).default(false),
 });
 
 /**
@@ -154,9 +165,7 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
         body: `${user.name} ${revision > 1 ? `needs changes: ${v.reason}` : "pulled you in"}${v.priority !== "NORMAL" ? ` (${v.priority.toLowerCase()} priority)` : ""}. Due ${fmtDate(v.dueDate)}.`,
         link: boqLink(oppId),
       });
-      if (v.moveToBoq && STAGE_META[opp.stage as StageKey].order < STAGE_META.BOQ.order) {
-        await applyStageChange(tx, user, oppId, "BOQ", {});
-      }
+      await syncStage(tx, user, oppId, "BOQ");
       await recomputeOpportunity(tx, oppId);
     }),
   );
@@ -301,6 +310,7 @@ export async function submitBoq(requestId: string, input: Record<string, unknown
         link: boqLink(r.opportunityId),
         exclude: user.id,
       });
+      await syncStage(tx, user, r.opportunityId, "PRICING");
       await recomputeOpportunity(tx, r.opportunityId);
       return { pricing: pending.length > 0 };
     }),
@@ -359,6 +369,7 @@ export async function requestPricing(oppId: string, input: Record<string, unknow
         link: boqLink(oppId),
         exclude: user.id,
       });
+      await syncStage(tx, user, oppId, "PRICING");
       await recomputeOpportunity(tx, oppId);
       return { kind };
     }),
@@ -463,6 +474,7 @@ export async function returnToPresales(requestId: string, input: Record<string, 
         link: boqLink(opp.id),
         exclude: user.id,
       });
+      if (presales) await syncStage(tx, user, opp.id, "BOQ");
       await recomputeOpportunity(tx, opp.id);
     }),
   );
@@ -589,6 +601,10 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
         tx.pricingRequest.count({ where: { opportunityId: oppId, status: openPricing } }),
         placeholderOemIds(tx),
       ]);
+      // Editing the BOQ is starting work: no separate "Start" click needed
+      const startedAt = new Date();
+      await tx.presalesRequest.updateMany({ where: { opportunityId: oppId, status: "REQUESTED", assignedToId: user.id }, data: { status: "IN_PROGRESS", startedAt } });
+      await tx.pricingRequest.updateMany({ where: { opportunityId: oppId, status: "REQUESTED", assignedToId: user.id }, data: { status: "IN_PROGRESS", startedAt } });
       const lock = spec ? specLock({ presalesOpen: presalesOpen && { assigneeId: presalesOpen.assignedToId }, pricingOpen: pricingOpen > 0, userId: user.id, isManager: isManager(user) }) : null;
 
       const existing = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId } });
@@ -660,6 +676,8 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
 const quoteSchema = z.object({
   validTill: z.coerce.date(),
   terms: z.string().max(4000).optional(),
+  /** When set, every line is priced at this gross margin on its cost before the quote is created */
+  marginPct: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : Number(v)), z.number().min(0).max(90).optional()),
 });
 
 export async function createQuote(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
@@ -678,6 +696,12 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
       if (await tx.pricingRequest.count({ where: { opportunityId: oppId, status: openPricing } }))
         throw new UserError("Purchase is still pricing the BOQ. Quote once pricing is complete.");
       await assertRealBoq(tx, oppId, "quoting");
+      const m = parsed.data.marginPct;
+      if (m !== undefined) {
+        const costed = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId, isEstimate: false, unitCost: { not: null } }, select: { id: true, unitCost: true } });
+        for (const l of costed)
+          await tx.opportunityLineItem.update({ where: { id: l.id }, data: { unitPrice: new Prisma.Decimal(Math.round(toNumber(l.unitCost) / (1 - m / 100))), updatedById: user.id } });
+      }
       const lines = await tx.opportunityLineItem.findMany({
         where: { opportunityId: oppId },
         orderBy: { lineNo: "asc" },
@@ -715,9 +739,10 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
         data: { amount, expectedMarginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), lastActivityAt: new Date() },
       });
       await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: opp, after: { amount }, fields: ["amount"], userId: user.id });
-      await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "QUOTE_ISSUED", userId: user.id, newValue: `${code} v${q.version}` });
+      await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "QUOTE_ISSUED", userId: user.id, newValue: `${code} v${q.version}${m !== undefined ? ` at ${m}% margin` : ""}` });
+      await tx.opportunity.update({ where: { id: oppId }, data: { boqVersion: { increment: 1 } } });
       if (STAGE_META[opp.stage as StageKey].order < STAGE_META.PROPOSAL.order) {
-        await applyStageChange(tx, user, oppId, "PROPOSAL", {});
+        await applyStageChange(tx, user, oppId, "PROPOSAL", {}, { keepForecast: true });
       }
       await recomputeOpportunity(tx, oppId);
       return { id: q.id };

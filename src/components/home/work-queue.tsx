@@ -5,7 +5,7 @@ import { ArrowRight, AlertOctagon, Clock, Inbox, Search, X } from "lucide-react"
 import { MiniSelect } from "@/components/ui/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/crm/badges";
-import { StartPresalesButton, StartPricingButton } from "@/components/opportunities/workflow-dialogs";
+import { StartPresalesButton, StartPricingButton } from "@/components/opportunities/deal-actions";
 import type { QueueItem } from "@/server/queries/work";
 import { inr, fmtDate, relativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";

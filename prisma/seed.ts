@@ -52,8 +52,8 @@ const OPEN_PLAN: [StageKey, Scenario][] = [
   ["QUALIFIED", "healthy"], ["QUALIFIED", "healthy"], ["QUALIFIED", "healthy"], ["QUALIFIED", "healthy"],
   ["QUALIFIED", "stalled"], ["QUALIFIED", "stalled"], ["QUALIFIED", "overdue"], ["QUALIFIED", "slipping"],
   ["QUALIFIED", "fresh"],
-  ["BOQ", "healthy"], ["BOQ", "healthy"], ["BOQ", "healthy"], ["BOQ", "healthy"], ["BOQ", "pricingOverdue"],
-  ["BOQ", "pricingOverdue"], ["BOQ", "noPresales"], ["BOQ", "stalled"], ["BOQ", "presalesOverdue"],
+  ["BOQ", "healthy"], ["BOQ", "healthy"], ["BOQ", "noPresales"], ["BOQ", "stalled"], ["BOQ", "presalesOverdue"],
+  ["PRICING", "healthy"], ["PRICING", "hot"], ["PRICING", "pricingOverdue"], ["PRICING", "pricingOverdue"],
   ["PROPOSAL", "hot"], ["PROPOSAL", "hot"], ["PROPOSAL", "hot"], ["PROPOSAL", "hot"], ["PROPOSAL", "healthy"],
   ["PROPOSAL", "healthy"], ["PROPOSAL", "overdue"], ["PROPOSAL", "slipping"], ["PROPOSAL", "lowMargin"],
   ["NEGOTIATION", "hot"], ["NEGOTIATION", "hot"], ["NEGOTIATION", "hot"], ["NEGOTIATION", "commitOverdue"],
@@ -330,7 +330,7 @@ async function main() {
 
     const procurement = account.govt ? "TENDER" : account.industry === "BFSI" && chance(0.5) ? "RFP" : chance(0.15) ? "RFQ" : "DIRECT";
     const submissionDue = procurement === "TENDER" || procurement === "RFP"
-      ? order < 4 && !isClosed ? daysAhead(int(3, 25)) : daysAgo(int(10, 40))
+      ? order < STAGE_META.PROPOSAL.order && !isClosed ? daysAhead(int(3, 25)) : daysAgo(int(10, 40))
       : null;
     const oemNeedsReg = !["Progression", "Neon Cloud"].includes(oemName) && (buName === "IT Infrastructure" || buName === "Cybersecurity");
     let dealRegStatus: "NOT_REQUIRED" | "PENDING" | "APPROVED" = "NOT_REQUIRED";
@@ -391,8 +391,8 @@ async function main() {
 
     // Stage history: walk the path to the current stage
     const path: StageKey[] = ["IDENTIFIED"];
-    const linear: StageKey[] = ["QUALIFIED", "BOQ", "PROPOSAL", "NEGOTIATION"];
-    const target = isClosed ? (p.stage === "WON" ? "NEGOTIATION" : pick(linear.slice(0, int(1, 4)))) : p.stage === "HOLD" ? pick(linear.slice(0, 3)) : p.stage;
+    const linear: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
+    const target = isClosed ? (p.stage === "WON" ? "NEGOTIATION" : pick(linear.slice(0, int(1, 5)))) : p.stage === "HOLD" ? pick(linear.slice(0, 4)) : p.stage;
     for (const st of linear) { if (STAGE_META[st].order <= STAGE_META[target].order) path.push(st); }
     if (isClosed || p.stage === "HOLD") path.push(p.stage);
     const t0 = createdAt.getTime();
@@ -446,9 +446,12 @@ async function main() {
     // BOQ lines, presales & pricing workflow
     let lineCount = 0;
     if (hasBoq) {
-      const priced = isClosed || order >= 4 || (p.stage === "BOQ" && p.scenario === "healthy" && chance(0.5)) || p.stage === "HOLD";
-      const pricingOpen = p.stage === "BOQ" && !priced && p.scenario !== "presalesOverdue";
-      const presalesOpen = p.scenario === "presalesOverdue" || (p.stage === "BOQ" && !priced && !pricingOpen);
+      // BOQ stage: presales is preparing it. Pricing stage: purchase is pricing it, or it is costed and waiting for
+      // sales to add margin and send the quote. Proposal onwards: costed, priced and quoted.
+      const priced = isClosed || order >= STAGE_META.PROPOSAL.order || p.stage === "HOLD";
+      const pricingOpen = p.stage === "PRICING" && p.scenario !== "hot"; // "hot": costed, waiting for sales to quote
+      const costedOnly = p.stage === "PRICING" && !pricingOpen;
+      const presalesOpen = p.scenario === "presalesOverdue" || p.stage === "BOQ";
       // Line plan: products from the deal's own category and OEM, plus complementary products from other
       // OEMs/BUs for ~45% of deals (e.g. servers + virtualisation licences + implementation services).
       const own = (productsByCat[catKey] ?? []).filter((x) => x.oem === oemName);
@@ -485,10 +488,10 @@ async function main() {
             opportunityId: opp.id, lineNo: k + 1, productId: pr.id, businessUnitId: bus[cat[0]]!.id, categoryId: bus[cat[0]]!.cats[cat[1]]!,
             oemId: oems[pr.oem]!, partNumber: pr.code, description: `${pr.oem} ${pr.tpl.name}`, quantity: qty, unit,
             billingFrequency: freq, termMonths: lineTerm, hsnSac: pr.tpl.hsn, gstRatePct: 18,
-            unitCost: priced ? unitCost : null, unitPrice: priced ? unitPrice : null,
-            distributor: priced && pr.oem !== "Progression" ? pick(PICKLISTS.DISTRIBUTOR!) : null,
-            oemQuoteRef: priced && pr.oem !== "Progression" ? `Q-${int(100000, 999999)}` : null,
-            leadTimeDays: priced ? pick([7, 14, 21, 30, 45]) : null, pricingStatus: priced ? "QUOTED" : "PENDING",
+            unitCost: priced || costedOnly ? unitCost : null, unitPrice: priced ? unitPrice : null,
+            distributor: (priced || costedOnly) && pr.oem !== "Progression" ? pick(PICKLISTS.DISTRIBUTOR!) : null,
+            oemQuoteRef: (priced || costedOnly) && pr.oem !== "Progression" ? `Q-${int(100000, 999999)}` : null,
+            leadTimeDays: priced || costedOnly ? pick([7, 14, 21, 30, 45]) : null, pricingStatus: priced || costedOnly ? "QUOTED" : "PENDING",
             createdById: presalesUser?.id ?? owner.id, createdAt: new Date(createdAt.getTime() + 10 * DAY),
           },
         });
@@ -532,7 +535,7 @@ async function main() {
               notes: "Please get best landed price with 3-year support. Check stock availability.",
               dueDate: pricingDue, createdAt: priceReqAt,
               quotedAt: pricingOpen ? null : new Date(priceReqAt.getTime() + int(2, 5) * DAY),
-              quoteValidTill: pricingOpen ? null : new Date(priceReqAt.getTime() + 35 * DAY),
+              quoteValidTill: pricingOpen ? null : costedOnly ? daysAhead(25) : new Date(priceReqAt.getTime() + 35 * DAY),
               responseNotes: pricingOpen ? null : "Pricing received from distributor. Valid for 30 days.",
             },
           });
@@ -544,7 +547,7 @@ async function main() {
         }
       }
       // Quotes for proposal stage and beyond
-      if (priced && (order >= 4 && order !== 6 || isClosed && p.stage === "WON")) {
+      if (priced && order >= STAGE_META.PROPOSAL.order && p.stage !== "HOLD") {
         const versions = p.stage === "NEGOTIATION" || p.stage === "WON" ? 2 : 1;
         for (let v = 1; v <= versions; v++) {
           const price = v < versions ? amount * 1.06 : amount;
@@ -744,6 +747,16 @@ async function main() {
   const event = (oppId: string, action: string, userId: string, newValue: string, at: Date) =>
     db.auditLog.create({ data: { entityType: "Opportunity", entityId: oppId, action, newValue, changedById: userId, changedAt: at } });
   const openStatuses = { in: ["REQUESTED", "IN_PROGRESS"] as ("REQUESTED" | "IN_PROGRESS")[] };
+  // The workflow moves stages automatically (BOQ while presales works, Pricing while purchase prices); mirror that here
+  const moveStage = async (oppId: string, to: "BOQ" | "PRICING", at: Date, by: string) => {
+    const o = await db.opportunity.findUniqueOrThrow({ where: { id: oppId }, select: { stage: true, amount: true, stageEnteredAt: true } });
+    if (o.stage === to) return;
+    await db.opportunity.update({ where: { id: oppId }, data: { stage: to, stageEnteredAt: at, probability: STAGE_META[to].probability } });
+    await db.stageHistory.create({
+      data: { opportunityId: oppId, fromStage: o.stage, toStage: to, amount: o.amount, changedById: by, changedAt: at, daysInPrevStage: Math.round((at.getTime() - o.stageEnteredAt.getTime()) / DAY) },
+    });
+    await db.auditLog.create({ data: { entityType: "Opportunity", entityId: oppId, action: "UPDATE", field: "stage", oldValue: o.stage, newValue: to, changedById: by, changedAt: at } });
+  };
   // A deal still on estimates where presales was just pulled in and is waiting on an answer from sales
   const askDeal = await db.opportunity.findFirst({
     where: { stage: "QUALIFIED", presalesRequests: { none: {} }, lineItems: { some: { isEstimate: true } } },
@@ -761,6 +774,7 @@ async function main() {
       },
     });
     await db.opportunity.update({ where: { id: askDeal.id }, data: { presalesOwnerId: engineer.id } });
+    await moveStage(askDeal.id, "BOQ", daysAgo(4, 10), askDeal.salesOwnerId);
     await event(askDeal.id, "PRESALES_REQUESTED", askDeal.salesOwnerId, engineer.name, daysAgo(4, 10));
     await event(askDeal.id, "PRESALES_QUESTION", engineer.id, question, at);
   }
@@ -779,6 +793,7 @@ async function main() {
       },
     });
     await event(returned.opportunityId, "PRICING_RETURNED", returned.assignedToId, `To presales as revision 2 · ${reason}`, at);
+    await moveStage(returned.opportunityId, "BOQ", at, returned.assignedToId);
   }
   const liveQuotes = await db.quote.findMany({
     where: { status: "SUBMITTED", opportunity: { stage: { in: ["PROPOSAL", "NEGOTIATION"] } } },

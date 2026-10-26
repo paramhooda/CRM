@@ -1,5 +1,6 @@
 // Sales → Presales → Purchase → Quote workflow rules (pure, unit-tested).
 // One derived state per deal tells everyone who the deal is waiting on and what is blocking it.
+import { fmtDate } from "./format";
 
 export type WorkflowState =
   | "ESTIMATE" // only quick estimates or nothing yet: presales not engaged
@@ -89,7 +90,7 @@ export function deriveWorkflow(i: WorkflowInput): WorkflowView {
     const quoteCurrent = !!i.quote && i.quote.createdAt.getTime() >= lastWork && ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"].includes(i.quote.status);
     if (quoteCurrent && i.quote!.status === "SUBMITTED") {
       state = "QUOTE_SENT";
-      if (i.quote!.validTill < i.now) blockers.push(`Quote v${i.quote!.version} expired on ${i.quote!.validTill.toISOString().slice(0, 10)}. Re-issue it or record the customer's response.`);
+      if (i.quote!.validTill < i.now) blockers.push(`Quote v${i.quote!.version} expired on ${fmtDate(i.quote!.validTill)}. Re-issue it or record the customer's response.`);
     } else if (quoteCurrent && i.quote!.status === "CHANGES_REQUESTED") state = "CHANGES_REQUESTED";
     else if (quoteCurrent && i.quote!.status === "ACCEPTED") state = "ACCEPTED";
     else if (!real.length) state = "ESTIMATE";
@@ -99,9 +100,8 @@ export function deriveWorkflow(i: WorkflowInput): WorkflowView {
 
   if (state === "READY_TO_QUOTE" || state === "CHANGES_REQUESTED") {
     if (estimates) blockers.push(`Replace ${estimates} estimate line${estimates > 1 ? "s" : ""} with catalogue products.`);
-    if (needsPrice) blockers.push(`Set a sell price on ${needsPrice} line${needsPrice > 1 ? "s" : ""}.`);
     const validTill = i.pricing?.status === "QUOTED" ? i.pricing.quoteValidTill : null;
-    if (validTill && validTill < i.now) blockers.push(`Supplier pricing expired on ${validTill.toISOString().slice(0, 10)}. Ask purchase to re-validate it.`);
+    if (validTill && validTill < i.now) blockers.push(`Supplier pricing expired on ${fmtDate(validTill)}. Ask purchase to re-validate it.`);
   }
   if (state === "NEEDS_PRICING" && i.pricing?.status === "RETURNED")
     blockers.push(`Purchase sent the BOQ back: ${i.pricing.returnReason ?? "see the request"}`);

@@ -25,7 +25,7 @@ const fc = (s: string) => FORECAST_LABEL[s as keyof typeof FORECAST_LABEL] ?? s;
 const stg = (s: string) => STAGE_META[s as StageKey]?.label ?? s;
 // Short stage names keep change badges readable ("Qualified → Proposal")
 const SHORT: Record<string, string> = {
-  IDENTIFIED: "Identified", QUALIFIED: "Qualified", BOQ: "BOQ", PROPOSAL: "Proposal", NEGOTIATION: "Negotiation", HOLD: "Hold", WON: "Won", LOST: "Lost", DROPPED: "Dropped",
+  IDENTIFIED: "Identified", QUALIFIED: "Qualified", BOQ: "BOQ", PRICING: "Pricing", PROPOSAL: "Proposal", NEGOTIATION: "Negotiation", HOLD: "Hold", WON: "Won", LOST: "Lost", DROPPED: "Dropped",
 };
 const stgShort = (s: string) => SHORT[s] ?? stg(s);
 const ORDER = (s: string) => (s === "HOLD" ? 99 : STAGE_META[s as StageKey]?.order ?? 50);

@@ -174,10 +174,7 @@ export function LineItemsEditor({
         <span className="text-xs text-ink-3">{lines.length} lines</span>
         <div className="flex flex-wrap items-center gap-1.5">
           {locked && <Badge tone="green"><Lock className="size-3" /> Locked for billing{lockedAt ? ` · ${fmtDate(lockedAt)}` : ""}</Badge>}
-          {!locked && can.spec && <Badge tone="violet">You edit products and quantities</Badge>}
           {!locked && perms.spec && lockReason && <Badge tone="slate"><Lock className="size-3" /> Products and quantities locked</Badge>}
-          {!locked && can.cost && <Badge tone="amber">You edit cost</Badge>}
-          {!locked && can.price && <Badge tone="green">You edit sell price</Badge>}
           {!locked && !editable && <Badge tone="slate"><Lock className="size-3" /> Read only</Badge>}
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
