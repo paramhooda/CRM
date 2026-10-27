@@ -1,6 +1,9 @@
 // "Where is this deal and what happens next": one line under the stage path on every tab of a deal.
 // It names who holds the deal, the due date, the one thing blocking it, and the viewer's own next action.
-import { AlertTriangle, CircleDot, CheckCircle2, PauseCircle, XCircle } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, CircleDot, CheckCircle2, PauseCircle, XCircle, Package } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DELIVERABLE_LABEL } from "@/lib/deal-setup";
 import type { OppDetail } from "@/server/queries/opportunity-detail";
 import type { Options } from "@/server/queries/options";
 import { DealActions, type DealAction } from "@/components/opportunities/deal-actions";
@@ -23,6 +26,10 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   const quote = o.quotes[0];
   const sales = o.salesOwner.name;
   const realLines = d.lines.filter((l) => !l.isEstimate);
+  // Solution deals get their BOQ from presales; resale deals are built by sales from the catalogue
+  const solution = o.presalesRequired;
+  const boqSubmitted = o.presalesRequests.some((r) => r.status === "BOQ_SUBMITTED");
+  const needsBoq = solution && !boqSubmitted;
 
   // ── What to say ──
   let headline = w.label;
@@ -30,8 +37,8 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   let who: { name: string; role: string } | null = null;
   switch (w.state) {
     case "ESTIMATE":
-      headline = "Estimate only";
-      detail = "Next: request a BOQ from presales.";
+      headline = solution ? "Estimate only · needs presales" : "Estimate only · resale";
+      detail = solution ? "Next: request a BOQ from presales." : "Next: pick the catalogue products on Line items, then request pricing.";
       who = { name: sales, role: "Sales" };
       break;
     case "WITH_PRESALES":
@@ -45,8 +52,10 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       who = { name: sales, role: "Sales" };
       break;
     case "NEEDS_PRICING":
-      headline = "Pricing not requested";
-      detail = lastPq?.status === "RETURNED" ? <>Purchase sent it back: {lastPq.returnReason}</> : `${w.needsCost} line${w.needsCost > 1 ? "s need" : " needs"} a cost from purchase.`;
+      headline = needsBoq ? "Needs a BOQ from presales" : "Pricing not requested";
+      detail = lastPq?.status === "RETURNED" ? <>Purchase sent it back: {lastPq.returnReason}</>
+        : needsBoq ? "This is a solution deal, so presales prepares the BOQ before purchase prices it."
+        : `${w.needsCost} line${w.needsCost > 1 ? "s need" : " needs"} a cost from purchase.`;
       who = { name: sales, role: "Sales" };
       break;
     case "WITH_PURCHASE":
@@ -111,7 +120,10 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       if (openPs.status === "NEEDS_INFO" && isSales)
         actions.push({ id: "answer", kind: "answer", label: "Answer presales", primary: true, requestId: openPs.id, question: openPs.infoQuestion ?? "", askedBy: openPs.assignedTo.name });
       if (isPresales) {
-        actions.push({ id: "submit", kind: "submitBoq", label: "Submit BOQ", primary: openPs.status !== "NEEDS_INFO" || !isSales, requestId: openPs.id, purchase: options.purchase, lineCount: d.lines.length, toPrice: w.needsCost });
+        actions.push({
+          id: "submit", kind: "submitBoq", label: "Submit BOQ", primary: openPs.status !== "NEEDS_INFO" || !isSales, requestId: openPs.id, purchase: options.purchase,
+          lineCount: d.lines.length, toPrice: w.needsCost, asked: openPs.deliverables.map((k) => DELIVERABLE_LABEL[k] ?? k),
+        });
         if (openPs.status !== "NEEDS_INFO") actions.push({ id: "ask", kind: "askSales", label: "Ask sales a question", requestId: openPs.id });
       }
       if (isPresales || isSales) actions.push({ id: "re-ps", kind: "reassign", label: "Reassign presales", reqKind: "presales", requestId: openPs.id, people: options.presales, currentId: openPs.assignedTo.id });
@@ -127,9 +139,9 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       if (isSales) actions.push({ id: "x-pq", kind: "cancel", label: "Cancel pricing request", reqKind: "pricing", requestId: openPq.id });
     } else if (isSales || d.perms.spec) {
       const expired = w.blockers.some((b) => b.startsWith("Supplier pricing expired"));
-      if (w.state === "ESTIMATE" || (w.state === "NEEDS_PRICING" && !lastPs))
-        actions.push({ id: "pull", kind: "pullPresales", label: "Request BOQ from presales", primary: true, oppId: o.id, presales: options.presales });
-      if (w.state === "NEEDS_PRICING") actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
+      if ((w.state === "ESTIMATE" || w.state === "NEEDS_PRICING") && !lastPs)
+        actions.push({ id: "pull", kind: "pullPresales", label: "Request BOQ from presales", primary: solution, oppId: o.id, presales: options.presales });
+      if (w.state === "NEEDS_PRICING" && !needsBoq) actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
       if (d.perms.quote && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
       if (d.perms.quote && w.state === "QUOTE_SENT" && quote) {
         actions.push({ id: "resp", kind: "response", label: "Record customer response", primary: true, quoteId: quote.id, version: quote.version });
@@ -166,7 +178,12 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
           </p>
         )}
       </div>
-      <DealActions actions={actions} />
+      <div className="flex flex-wrap items-center gap-1.5">
+        {!closed && w.state === "ESTIMATE" && !solution && d.perms.spec && (
+          <Button asChild size="sm" variant="primary"><Link href={`/opportunities/${o.id}?tab=boq`}><Package /> Add products</Link></Button>
+        )}
+        <DealActions actions={actions} />
+      </div>
     </section>
   );
 }
@@ -209,9 +226,12 @@ function PresalesItem({ r }: { r: Ps }) {
       </div>
       <p className="text-xs text-ink-3">{r.requestedBy.name} → {r.assignedTo.name} · due {fmtDate(r.dueDate, "short")}{r.submittedAt && <> · submitted {fmtDate(r.submittedAt, "short")}</>}</p>
       {r.reason && <Line label="Change">{r.reason}</Line>}
+      {r.deliverables.length > 0 && <Line label="Asked for">{r.deliverables.map((k) => DELIVERABLE_LABEL[k] ?? k).join(", ")}</Line>}
+      {r.siteDetails && <Line label="Sites">{r.siteDetails}</Line>}
       {r.infoQuestion && <Line label="Question">{r.infoQuestion}</Line>}
       {r.infoAnswer && <Line label="Answer">{r.infoAnswer}</Line>}
       {r.solutionSummary && <Line label="Solution">{r.solutionSummary}</Line>}
+      {r.assumptions && <Line label="Assumptions and exclusions">{r.assumptions}</Line>}
       {r.cancelReason && <Line label="Cancelled">{r.cancelReason}</Line>}
     </div>
   );

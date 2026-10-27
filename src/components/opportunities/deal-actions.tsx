@@ -16,6 +16,7 @@ import {
   askSales, answerPresales, returnToPresales, reassignRequest, cancelRequest, recordQuoteResponse,
 } from "@/server/actions/workflow";
 import { inr, isoDate, pct } from "@/lib/format";
+import { PRESALES_DELIVERABLES } from "@/lib/deal-setup";
 import { cn } from "@/lib/utils";
 
 const plusDays = (n: number) => isoDate(new Date(Date.now() + n * 86_400_000));
@@ -25,7 +26,7 @@ type Base = { id: string; label: string; primary?: boolean; disabledReason?: str
 export type DealAction = Base &
   (
     | { kind: "pullPresales"; oppId: string; presales: U[]; revision?: { number: number; assigneeId: string | null; scope: string; note: string | null } }
-    | { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number }
+    | { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number; asked?: string[] }
     | { kind: "askSales"; requestId: string }
     | { kind: "answer"; requestId: string; question: string; askedBy: string }
     | { kind: "requestPricing"; oppId: string; purchase: U[]; toPrice: number; first: boolean }
@@ -98,36 +99,7 @@ function ActionDialog({ a, close }: { a: DealAction; close: () => void }) {
 
   switch (a.kind) {
     case "pullPresales":
-      return (
-        <DialogContent
-          title={a.revision ? `Request BOQ change (revision ${a.revision.number})` : "Request BOQ from presales"}
-          description={a.revision ? "Presales updates the BOQ. Only the lines they change go back to purchase for pricing." : "Presales designs the solution and prepares the BOQ. The deal moves to the BOQ stage."}
-        >
-          <form className={form} onSubmit={submit((f) => () => requestPresales(a.oppId, f), "Presales notified")}>
-            {a.revision && (
-              <Field label="What needs to change" required error={errors.reason}>
-                <Textarea name="reason" defaultValue={a.revision.note ?? ""} placeholder="e.g. Customer wants 5 nodes instead of 3" />
-              </Field>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Presales engineer" required error={errors.assignedToId}>
-                <Select name="assignedToId" defaultValue={a.revision?.assigneeId ?? ""}>
-                  <option value="" disabled>Select</option>
-                  {a.presales.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </Select>
-              </Field>
-              <Field label="Needed by" required error={errors.dueDate}>
-                <Input name="dueDate" type="date" defaultValue={plusDays(a.revision ? 3 : 7)} min={isoDate(new Date())} />
-              </Field>
-            </div>
-            <Field label="Customer requirement" required error={errors.scope}>
-              <Textarea name="scope" defaultValue={a.revision?.scope} placeholder="e.g. 3-node HCI cluster for 120 VMs with 3-year support" />
-            </Field>
-            <input type="hidden" name="priority" value="NORMAL" />
-            <Footer onCancel={close} pending={pending} label="Send to presales" icon={<Send />} />
-          </form>
-        </DialogContent>
-      );
+      return <PresalesRequestForm a={a} close={close} />;
     case "submitBoq":
       return (
         <DialogContent
@@ -135,8 +107,12 @@ function ActionDialog({ a, close }: { a: DealAction; close: () => void }) {
           description={a.toPrice ? `${a.toPrice} of ${a.lineCount} lines need a cost and go to purchase. The deal moves to Pricing.` : `All ${a.lineCount} lines already have a cost. Sales can quote straight away.`}
         >
           <form className={form} onSubmit={submit((f) => () => submitBoq(a.requestId, f), a.toPrice ? "BOQ submitted. Purchase notified." : "BOQ submitted. Sales notified.")}>
+            {a.asked && a.asked.length > 0 && <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">Sales asked for: {a.asked.join(", ")}</p>}
             <Field label="Solution summary" required error={errors.solutionSummary}>
-              <Textarea name="solutionSummary" placeholder="Design, sizing assumptions, exclusions" />
+              <Textarea name="solutionSummary" placeholder="What was designed and how it was sized" />
+            </Field>
+            <Field label="Assumptions and exclusions" error={errors.assumptions}>
+              <Textarea name="assumptions" className="min-h-14" placeholder="e.g. Customer provides rack space and power; cabling excluded" />
             </Field>
             {a.toPrice > 0 && (
               <div className="grid grid-cols-2 gap-3">
@@ -385,5 +361,69 @@ export function StartPricingButton({ requestId }: { requestId: string }) {
     <Button size="sm" disabled={pending} onClick={() => run(() => startPricing(requestId), { success: "Marked in progress" })}>
       <PlayCircle /> Start pricing
     </Button>
+  );
+}
+
+/** Request a BOQ (or a revision) from presales: who, by when, the requirement, and what presales should deliver. */
+function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pullPresales" }>; close: () => void }) {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [asked, setAsked] = useState<string[]>(["BOQ"]);
+  const { pending, run } = useAction();
+  const toggle = (k: string) => setAsked((xs) => (xs.includes(k) ? xs.filter((x) => x !== k) : [...xs, k]));
+  return (
+    <DialogContent
+      title={a.revision ? `Request BOQ change (revision ${a.revision.number})` : "Request BOQ from presales"}
+      description={a.revision ? "Presales updates the BOQ. Only the lines they change go back to purchase for pricing." : "Presales designs the solution and prepares the BOQ. The deal moves to the BOQ stage."}
+    >
+      <form
+        className="flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const f = Object.fromEntries(new FormData(e.currentTarget).entries());
+          run(() => requestPresales(a.oppId, { ...f, deliverables: asked.join(",") }), { success: "Presales notified", onOk: close, onError: (r) => setErrors(r.fieldErrors ?? {}) });
+        }}
+      >
+        {a.revision && (
+          <Field label="What needs to change" required error={errors.reason}>
+            <Textarea name="reason" defaultValue={a.revision.note ?? ""} placeholder="e.g. Customer wants 5 nodes instead of 3" />
+          </Field>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Presales engineer" required error={errors.assignedToId}>
+            <Select name="assignedToId" defaultValue={a.revision?.assigneeId ?? ""}>
+              <option value="" disabled>Select</option>
+              {a.presales.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </Select>
+          </Field>
+          <Field label="Needed by" required error={errors.dueDate}>
+            <Input name="dueDate" type="date" defaultValue={plusDays(a.revision ? 3 : 7)} min={isoDate(new Date())} />
+          </Field>
+        </div>
+        <Field label="Customer requirement" required error={errors.scope}>
+          <Textarea name="scope" defaultValue={a.revision?.scope} placeholder="e.g. 3-node HCI cluster for 120 VMs with 3-year support" />
+        </Field>
+        {!a.revision && (
+          <Field label="What presales should deliver" error={errors.deliverables}>
+            <div role="group" aria-label="Deliverables" className="flex flex-wrap gap-1.5">
+              {PRESALES_DELIVERABLES.map((d) => (
+                <button
+                  key={d.key} type="button" aria-pressed={asked.includes(d.key)} onClick={() => toggle(d.key)}
+                  className={cn("rounded-full border px-2.5 py-1 text-xs cursor-pointer", asked.includes(d.key) ? "border-primary bg-primary-soft font-medium text-ink" : "border-border text-ink-2 hover:border-border-strong")}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
+        {asked.includes("SITE_SURVEY") && !a.revision && (
+          <Field label="Sites to survey" required error={errors.siteDetails}>
+            <Textarea name="siteDetails" className="min-h-14" placeholder="e.g. Mumbai DC (Andheri) and Pune DR site" />
+          </Field>
+        )}
+        <input type="hidden" name="priority" value="NORMAL" />
+        <Footer onCancel={close} pending={pending} label="Send to presales" icon={<Send />} />
+      </form>
+    </DialogContent>
   );
 }

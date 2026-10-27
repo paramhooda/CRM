@@ -55,6 +55,21 @@ APP_PORT=8080 docker compose up -d  # run on another port
 - The deal value always rolls up from the lines, and its primary BU, category and OEM come from the largest line. Every roll-up change is audited, so it shows in "changes since last review".
 - **Filtering by OEM (or BU, or category)** matches deals with at least one line for it, and values show that OEM's share. A ₹1 Cr deal with ₹40 L of Dell lines counts as ₹40 L under a Dell filter. Totals, charts and the pipeline board use the share; the opportunity list shows both the deal value and a "Dell value" column. The line-items export includes only the matching lines.
 
+**Creating a deal** ([what is asked when](docs/sales-workflow.md#what-is-asked-by-whom-and-when)):
+- Sales enters only what they know:
+  - account and customer contact;
+  - name, expected close and next step;
+  - what's being sold: business unit, category, OEM and value, one-time or recurring;
+  - whether presales is needed.
+- Each choice narrows the next one:
+  - contacts follow the account, and deal types follow new or existing customer;
+  - categories follow the business unit, and OEMs follow the category;
+  - the term appears only for recurring lines;
+  - the bid date only for RFP / tender;
+  - deal registration only for OEMs that run it.
+- Account type, revenue model, contract term, ARR, stage, probability and forecast are filled in automatically.
+- Presales is suggested from the category (servers need design, laptops don't). An admin can change which categories need presales and which OEMs run deal registration.
+
 **Sales process: BOQ → Pricing → Quote** (details: [docs/sales-workflow.md](docs/sales-workflow.md))
 
 Each team owns a pipeline stage, and the deal moves on automatically as work is handed over:

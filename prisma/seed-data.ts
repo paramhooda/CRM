@@ -45,6 +45,20 @@ export const PICKLISTS: Record<string, string[]> = {
   DISTRIBUTOR: ["Redington", "Ingram Micro", "iValue", "Savex", "Rashi Peripherals", "Arrow", "OEM direct"],
 };
 
+/** Solution categories that need presales design and a BOQ (keys are "BU|Category"). Resale items do not. */
+export const PRESALES_CATEGORIES = new Set([
+  "IT Infrastructure|Server", "IT Infrastructure|Storage", "IT Infrastructure|Networking",
+  "Cloud|Hosting", "Cloud|Managed Hosting", "Cloud|DRaaS", "Cloud|Colo", "Cloud|Public Cloud",
+  "Services|FMS", "Services|NOC", "Services|AMC", "Services|Professional Services", "Services|Backup as a Service",
+  "Cybersecurity|SOC", "Cybersecurity|Compliance",
+]);
+
+/** OEMs that run a deal registration programme. */
+export const DEAL_REG_OEMS = new Set([
+  "HPE", "HPI", "Lenovo", "Dell", "Acer", "VMware", "Nutanix", "Cisco", "Fortinet", "Zscaler", "Crowdstrike", "Forcepoint",
+  "Cato", "Seclore", "Veeam", "Commvault", "Acronis",
+]);
+
 /** Plausible OEMs per category (keys are "BU|Category"). */
 export const CATEGORY_OEMS: Record<string, string[]> = {
   "IT Infrastructure|Server": ["HPE", "Dell", "Lenovo"],

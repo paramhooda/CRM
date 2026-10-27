@@ -10,6 +10,7 @@ import { nextCode } from "@/lib/sequence";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { leadSchema, zodErrors, type ActionResult } from "@/lib/validation";
 import { createEstimateLine } from "@/server/domain/lines";
+import { dealTypeFor } from "@/lib/deal-setup";
 
 const LEAD_FIELDS = ["firstName", "lastName", "company", "title", "email", "phone", "city", "source", "businessUnitId", "requirement", "estimatedValue", "status", "ownerId", "disqualifyReason"];
 
@@ -95,7 +96,8 @@ export async function convertLead(id: string, input: Record<string, unknown>): P
     const opp = await tx.opportunity.create({
       data: {
         code: await nextCode(tx, "OPP"), name: v.opportunityName, accountId, primaryContactId: contact.id, businessUnitId: cat.businessUnitId,
-        categoryId: cat.id, oemId: v.oemId, accountType: account.accountType, amount: new Prisma.Decimal(v.amount), stage: "QUALIFIED", probability: 20,
+        categoryId: cat.id, oemId: v.oemId, accountType: account.accountType, dealType: dealTypeFor(account.accountType),
+        presalesRequired: cat.needsPresales, amount: new Prisma.Decimal(v.amount), stage: "QUALIFIED", probability: 20,
         forecastCategory: "PIPELINE", expectedCloseDate: v.expectedCloseDate, originalCloseDate: v.expectedCloseDate, stageEnteredAt: now,
         lastActivityAt: now, salesOwnerId: lead.ownerId, leadSource: lead.source, description: lead.requirement, createdById: user.id,
         nextStep: "Discovery workshop with customer", nextStepDate: new Date(now.getTime() + 7 * 86_400_000),

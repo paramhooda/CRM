@@ -10,6 +10,6 @@ export function emptyOppValues(userId: string, accountId?: string): OppFormValue
     forecastCategory: "PIPELINE", expectedCloseDate: isoDate(new Date(Date.now() + 90 * 86_400_000)), salesOwnerId: userId,
     presalesOwnerId: "", leadSource: "", competitors: "", nextStep: "", nextStepDate: "", submissionDueDate: "",
     dealRegStatus: "NOT_REQUIRED", dealRegNumber: "", dealRegExpiry: "", lossReason: "", lossNotes: "", poNumber: "", poDate: "",
-    description: "",
+    description: "", presalesRequired: "",
   };
 }

@@ -149,10 +149,20 @@ export async function rollUpDeal(tx: Tx, opportunityId: string, userId: string) 
   }
   const totals = boqTotals(o.lineItems);
   const data: Prisma.OpportunityUncheckedUpdateInput = {};
-  if (estimate > 0) {
-    data.amount = new Prisma.Decimal(Math.round(estimate));
-    if (o.revenueModel === "ARR" && o.contractTermMonths) data.arrAmount = new Prisma.Decimal(Math.round(estimate / (o.contractTermMonths / 12)));
-  }
+  if (estimate > 0) data.amount = new Prisma.Decimal(Math.round(estimate));
+  // Revenue model, term and ARR follow the lines: any recurring line makes it an ARR deal; ARR is the yearly value
+  // of the recurring lines only, so one-time hardware in the same deal does not inflate it
+  const PER_YEAR: Record<string, number> = { MONTHLY: 12, QUARTERLY: 4, ANNUAL: 1 };
+  const recurring = o.lineItems.filter((l) => l.billingFrequency !== "ONE_TIME");
+  data.revenueModel = recurring.length ? "ARR" : "ONE_TIME";
+  data.contractTermMonths = recurring.length ? Math.max(...recurring.map((l) => l.termMonths ?? 12)) : o.contractTermMonths;
+  if (recurring.length) {
+    const arr = recurring.reduce((sum, l) => {
+      const unit = l.unitPrice !== null ? toNumber(l.unitPrice) : l.product?.listPrice ? toNumber(l.product.listPrice) : 0;
+      return sum + unit * toNumber(l.quantity) * (PER_YEAR[l.billingFrequency] ?? 1);
+    }, 0);
+    data.arrAmount = arr > 0 ? new Prisma.Decimal(Math.round(arr)) : null;
+  } else data.arrAmount = null;
   if (totals.marginPct !== null) data.expectedMarginPct = new Prisma.Decimal(Math.round(totals.marginPct * 100) / 100);
   if (top) {
     data.businessUnitId = top.l.businessUnitId;
@@ -165,7 +175,7 @@ export async function rollUpDeal(tx: Tx, opportunityId: string, userId: string) 
     entityId: opportunityId,
     before: o,
     after: { ...o, ...data },
-    fields: ["amount", "arrAmount", "expectedMarginPct", "businessUnitId", "categoryId", "oemId"],
+    fields: ["amount", "arrAmount", "revenueModel", "contractTermMonths", "expectedMarginPct", "businessUnitId", "categoryId", "oemId"],
     userId,
   });
 }

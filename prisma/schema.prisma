@@ -253,6 +253,8 @@ model Category {
   businessUnitId String
   businessUnit   BusinessUnit          @relation(fields: [businessUnitId], references: [id])
   sortOrder      Int                   @default(0)
+  /// Solutions in this category need presales design and a BOQ (servers, SOC); resale items do not (laptops)
+  needsPresales  Boolean               @default(false)
   active         Boolean               @default(true)
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
@@ -270,6 +272,8 @@ model Oem {
   active        Boolean               @default(true)
   /// "To be decided": allowed only on early estimate lines, never on catalogue or BOQ lines
   isPlaceholder Boolean               @default(false)
+  /// The OEM runs a deal registration programme, so deals with its products track registration status
+  dealRegistration Boolean            @default(false)
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   opportunities Opportunity[]
@@ -494,6 +498,8 @@ model Opportunity {
   salesOwnerId    String
   salesOwner      User    @relation("OppSalesOwner", fields: [salesOwnerId], references: [id])
   presalesOwnerId String?
+  /// Solution deals go Sales → Presales (BOQ) → Purchase; resale deals skip presales and go straight to pricing
+  presalesRequired Boolean @default(false)
   presalesOwner   User?   @relation("OppPresalesOwner", fields: [presalesOwnerId], references: [id])
   purchaseOwnerId String?
   purchaseOwner   User?   @relation("OppPurchaseOwner", fields: [purchaseOwnerId], references: [id])
@@ -620,6 +626,12 @@ model PresalesRequest {
   scope           String
   dueDate         DateTime
   solutionSummary String?
+  /// What sales asked for: BOQ, solution document, presentation, site survey, PoC / demo
+  deliverables    String[]         @default([])
+  /// Sites or locations to survey, when a site survey is asked for
+  siteDetails     String?
+  /// Presales' assumptions and exclusions, given with the BOQ
+  assumptions     String?
   /// 1 for the first BOQ, 2+ for revisions
   revision        Int              @default(1)
   /// Who triggered it: SALES (new or revision), PURCHASE (sent back), CUSTOMER (quote changes)

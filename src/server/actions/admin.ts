@@ -84,6 +84,22 @@ export async function addPicklistValue(type: string, value: string): Promise<Act
   return { ok: true };
 }
 
+/** Category "needs presales" (solution vs resale default) and OEM "runs deal registration". */
+export async function togglePicklistFlag(kind: "OEM" | "CATEGORY", id: string): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  if (kind === "OEM") {
+    const o = await db.oem.findUniqueOrThrow({ where: { id } });
+    if (o.isPlaceholder) return { ok: false, error: "\"To be decided\" cannot run deal registration." };
+    await db.oem.update({ where: { id }, data: { dealRegistration: !o.dealRegistration } });
+  } else {
+    const c = await db.category.findUniqueOrThrow({ where: { id } });
+    await db.category.update({ where: { id }, data: { needsPresales: !c.needsPresales } });
+  }
+  await db.auditLog.create({ data: { entityType: "Picklist", entityId: id, action: "FLAG", changedById: admin.id } });
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
 export async function togglePicklistValue(kind: "OEM" | "CATEGORY" | "VALUE", id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   if (kind === "OEM") {

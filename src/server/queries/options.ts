@@ -22,9 +22,9 @@ export const getOptions = cache(async () => {
   const pl = (type: string) => picklists.filter((p) => p.type === type).map((p) => p.value);
   return {
     bus: bus.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-    categories: bus.flatMap((b) => b.categories.map((c) => ({ id: c.id, name: c.name, buId: b.id, buName: b.name }))),
+    categories: bus.flatMap((b) => b.categories.map((c) => ({ id: c.id, name: c.name, buId: b.id, buName: b.name, needsPresales: c.needsPresales }))),
     // "To be decided" is kept apart: only quick estimates may use it, never catalogue products or BOQ lines
-    oems: oems.filter((o) => !o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems })),
+    oems: oems.filter((o) => !o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems, dealRegistration: o.dealRegistration })),
     oemTbd: oems.filter((o) => o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems }))[0] ?? null,
     sales: users.filter((u) => u.role === "SALES" || u.role === "SALES_HEAD").map(({ id, name }) => ({ id, name })),
     presales: users.filter((u) => u.role === "PRESALES").map(({ id, name }) => ({ id, name })),

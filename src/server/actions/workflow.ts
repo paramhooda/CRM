@@ -107,6 +107,11 @@ const presalesSchema = z.object({
   scope: z.string().trim().min(10, "Describe the scope in a sentence or two").max(4000),
   reason: z.string().trim().max(2000).optional(),
   priority: z.enum(["NORMAL", "HIGH", "URGENT"]).default("NORMAL"),
+  deliverables: z.preprocess(
+    (v) => (Array.isArray(v) ? v : typeof v === "string" && v ? v.split(",") : ["BOQ"]),
+    z.array(z.enum(["BOQ", "SOLUTION_DOC", "PRESENTATION", "SITE_SURVEY", "POC"])).min(1, "Choose at least one deliverable"),
+  ),
+  siteDetails: z.string().trim().max(2000).optional(),
 });
 
 /**
@@ -122,6 +127,8 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
   const parsed = presalesSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
+  if (v.deliverables.includes("SITE_SURVEY") && (!v.siteDetails || v.siteDetails.length < 3))
+    return { ok: false, error: "Say which sites to survey.", fieldErrors: { siteDetails: "Which sites, and where" } };
   if (v.dueDate.getTime() < Date.now() - DAY) return { ok: false, error: "Due date is in the past.", fieldErrors: { dueDate: "Due date is in the past" } };
   const assignee = await db.user.findFirst({ where: { id: v.assignedToId, role: "PRESALES", active: true } });
   if (!assignee) return { ok: false, error: "Selected user is not an active presales engineer." };
@@ -150,9 +157,11 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
         data: {
           opportunityId: oppId, requestedById: user.id, assignedToId: v.assignedToId, dueDate: v.dueDate, scope: v.scope, priority: v.priority,
           revision, source, reason: revision > 1 ? v.reason : v.reason || null,
+          deliverables: v.deliverables, siteDetails: v.deliverables.includes("SITE_SURVEY") ? v.siteDetails || null : null,
         },
       });
-      await tx.opportunity.update({ where: { id: oppId }, data: { presalesOwnerId: v.assignedToId, updatedById: user.id } });
+      // Pulling in presales makes it a solution deal
+      await tx.opportunity.update({ where: { id: oppId }, data: { presalesOwnerId: v.assignedToId, presalesRequired: true, updatedById: user.id } });
       await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: opp, after: { presalesOwnerId: v.assignedToId }, fields: ["presalesOwnerId"], userId: user.id });
       await recordEvent(tx, {
         entityType: "Opportunity", entityId: oppId, userId: user.id,
@@ -249,6 +258,7 @@ export async function answerPresales(requestId: string, input: Record<string, un
 
 const submitBoqSchema = z.object({
   solutionSummary: z.string().trim().min(10, "Add a short solution summary").max(4000),
+  assumptions: z.string().trim().max(4000).optional(),
   purchaseUserId: z.string().optional(),
   dueDate: z.coerce.date().optional(),
   notes: z.string().max(2000).optional(),
@@ -275,7 +285,7 @@ export async function submitBoq(requestId: string, input: Record<string, unknown
       const now = new Date();
       await tx.presalesRequest.update({
         where: { id: requestId },
-        data: { status: "BOQ_SUBMITTED", submittedAt: now, solutionSummary: parsed.data.solutionSummary, startedAt: r.startedAt ?? now },
+        data: { status: "BOQ_SUBMITTED", submittedAt: now, solutionSummary: parsed.data.solutionSummary, assumptions: parsed.data.assumptions || null, startedAt: r.startedAt ?? now },
       });
       await recordEvent(tx, {
         entityType: "Opportunity", entityId: r.opportunityId, action: "BOQ_SUBMITTED", userId: user.id,
@@ -346,6 +356,9 @@ export async function requestPricing(oppId: string, input: Record<string, unknow
         throw new UserError("Presales is working on the BOQ. Pricing is requested automatically when they submit it.");
       if (await tx.pricingRequest.count({ where: { opportunityId: oppId, status: openPricing } }))
         throw new UserError("A pricing request is already open on this deal.");
+      // A solution deal is priced from presales' BOQ, never from lines sales put together
+      if (opp.presalesRequired && !(await tx.presalesRequest.count({ where: { opportunityId: oppId, status: "BOQ_SUBMITTED" } })))
+        throw new UserError("This deal needs a BOQ from presales before pricing. Request a BOQ from presales, or mark it as a resale deal in Edit.");
       await assertRealBoq(tx, oppId, "requesting pricing");
       const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId } });
       const pending = lines.filter(needsCost);

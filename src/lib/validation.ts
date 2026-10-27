@@ -16,27 +16,30 @@ export const opportunitySchema = z
     businessUnitId: optStr(40),
     categoryId: optStr(40),
     oemId: optStr(40),
-    accountType: z.enum(["NEW_LOGO", "EXISTING"]),
-    revenueModel: z.enum(["ONE_TIME", "ARR"]),
-    dealType: z.enum(["NEW_BUSINESS", "UPSELL", "CROSS_SELL", "RENEWAL"]),
-    procurementMode: z.enum(["DIRECT", "RFQ", "RFP", "TENDER"]),
+    // Account type comes from the account, revenue model and term from the line items: never typed in
+    accountType: z.enum(["NEW_LOGO", "EXISTING"]).optional(),
+    revenueModel: z.enum(["ONE_TIME", "ARR"]).optional(),
+    dealType: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["NEW_BUSINESS", "UPSELL", "CROSS_SELL", "RENEWAL"]).optional()),
+    procurementMode: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["DIRECT", "RFQ", "RFP", "TENDER"]).default("DIRECT")),
+    /** Solution deal (presales designs a BOQ) or resale (sales picks catalogue products and goes to pricing) */
+    presalesRequired: z.preprocess((v) => (v === "" || v === undefined ? undefined : v === true || v === "true" || v === "on"), z.boolean().optional()),
     amount: optNum,
     arrAmount: optNum,
     contractTermMonths: optInt,
     contractStartDate: optDate,
     expectedMarginPct: optNum.refine((v) => v === undefined || (v > -100 && v < 100), "Margin must be between -100 and 100"),
-    stage: z.enum(STAGES),
-    probability: z.coerce.number().int().min(0).max(100),
-    forecastCategory: z.enum(["COMMIT", "UPSIDE", "PIPELINE", "OMITTED"]),
+    stage: z.preprocess((v) => (v === "" ? undefined : v), z.enum(STAGES).default("IDENTIFIED")),
+    probability: optInt,
+    forecastCategory: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["COMMIT", "UPSIDE", "PIPELINE", "OMITTED"]).default("PIPELINE")),
     expectedCloseDate: z.coerce.date({ invalid_type_error: "Expected close date is required" }),
-    salesOwnerId: z.string().min(1),
+    salesOwnerId: optStr(40),
     presalesOwnerId: optStr(40),
     leadSource: optStr(80),
     competitors: optStr(200),
     nextStep: optStr(300),
     nextStepDate: optDate,
     submissionDueDate: optDate,
-    dealRegStatus: z.enum(["NOT_REQUIRED", "PENDING", "APPROVED", "REJECTED", "EXPIRED"]),
+    dealRegStatus: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["NOT_REQUIRED", "PENDING", "APPROVED", "REJECTED", "EXPIRED"]).default("NOT_REQUIRED")),
     dealRegNumber: optStr(60),
     dealRegExpiry: optDate,
     lossReason: optStr(120),
@@ -46,10 +49,6 @@ export const opportunitySchema = z
     description: optStr(4000),
   })
   .superRefine((v, ctx) => {
-    if (v.revenueModel === "ARR") {
-      if (!v.contractTermMonths || v.contractTermMonths < 1)
-        ctx.addIssue({ path: ["contractTermMonths"], code: "custom", message: "Contract term is required for ARR deals" });
-    }
     if (v.stage === "WON") {
       if (!v.poNumber) ctx.addIssue({ path: ["poNumber"], code: "custom", message: "PO number is required to close as won" });
       if (!v.poDate) ctx.addIssue({ path: ["poDate"], code: "custom", message: "PO date is required to close as won" });

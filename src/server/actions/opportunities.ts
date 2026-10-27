@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/auth";
 import { can, isManager, opportunityScope } from "@/lib/authz";
 import { dealFieldErrors } from "@/lib/stage-rules";
+import { dealTypeFor, needsBidDate, suggestPresales } from "@/lib/deal-setup";
+import type { AccountType, DealType, RevenueModel } from "@prisma/client";
 import { recordChanges, recordEvent } from "@/lib/audit";
 import { nextCode } from "@/lib/sequence";
 import { notify } from "@/lib/notify";
@@ -44,6 +46,7 @@ const AUDITED = [
   "revenueModel",
   "dealType",
   "procurementMode",
+  "presalesRequired",
   "amount",
   "arrAmount",
   "contractTermMonths",
@@ -68,8 +71,12 @@ const AUDITED = [
 
 /** Header classification and value come from the line items (`Derived`), the rest from the form. */
 type Derived = { amount: number; businessUnitId: string; categoryId: string; oemId: string | null };
+/** The form input plus everything the person does not type (account type, deal type, revenue model, owner, probability). */
+type Resolved = OpportunityInput & {
+  accountType: AccountType; dealType: DealType; revenueModel: RevenueModel; salesOwnerId: string; probability: number; presalesRequired: boolean;
+};
 
-function toData(v: OpportunityInput, d: Derived) {
+function toData(v: Resolved, d: Derived) {
   const arrAmount =
     v.revenueModel === "ARR"
       ? (v.arrAmount ?? (v.contractTermMonths ? Math.round(d.amount / (v.contractTermMonths / 12)) : null))
@@ -85,6 +92,7 @@ function toData(v: OpportunityInput, d: Derived) {
     revenueModel: v.revenueModel,
     dealType: v.dealType,
     procurementMode: v.procurementMode,
+    presalesRequired: v.presalesRequired,
     amount: new Prisma.Decimal(d.amount),
     arrAmount: arrAmount === null ? null : new Prisma.Decimal(arrAmount),
     contractTermMonths:
@@ -135,24 +143,45 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
     return { ok: false, error: "You do not have permission to create opportunities." };
   const parsed = opportunitySchema.safeParse(formToObject(form));
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
-  const v = parsed.data;
-  if (user.role === "SALES" && v.salesOwnerId !== user.id) v.salesOwnerId = user.id;
+  const input = parsed.data;
   // New deals enter the funnel at the top; every later stage is earned through the process
-  if (v.stage !== "IDENTIFIED" && v.stage !== "QUALIFIED")
+  if (input.stage !== "IDENTIFIED" && input.stage !== "QUALIFIED")
     return { ok: false, error: "New deals start at Identified or Qualified.", fieldErrors: { stage: "Choose Identified or Qualified" } };
-  if (v.stage === "QUALIFIED" && !v.primaryContactId)
+  if (input.stage === "QUALIFIED" && !input.primaryContactId)
     return { ok: false, error: "Add the customer contact to create a qualified deal.", fieldErrors: { primaryContactId: "Required for a qualified deal" } };
   const fieldErrors = {
-    ...dealFieldErrors(v.stage, { forecastCategory: "", expectedCloseDate: new Date(0), nextStepDate: null }, { forecastCategory: v.forecastCategory, expectedCloseDate: v.expectedCloseDate, nextStepDate: v.nextStepDate ?? null }),
+    ...dealFieldErrors(input.stage, { forecastCategory: "", expectedCloseDate: new Date(0), nextStepDate: null }, { forecastCategory: input.forecastCategory, expectedCloseDate: input.expectedCloseDate, nextStepDate: input.nextStepDate ?? null }),
   };
   if (Object.keys(fieldErrors).length) return { ok: false, error: Object.values(fieldErrors)[0]!, fieldErrors };
-  v.probability = STAGE_META[v.stage].probability;
   const drafts = parseDraftLines(form);
   if (!drafts.ok)
     return {
       ok: false,
       error: "Add at least one line item: a catalogue product, or a quick estimate with OEM, category and value.",
     };
+  const account = await db.account.findFirst({ where: { id: input.accountId, deletedAt: null }, select: { accountType: true } });
+  if (!account) return { ok: false, error: "Select an account.", fieldErrors: { accountId: "Select an account" } };
+  // What the person does not type: account type from the account, deal type allowed for it, revenue model and term
+  // from the lines (refined by the roll-up), presales from the categories unless they chose, owner and probability.
+  const productCats = await db.product.findMany({
+    where: { id: { in: drafts.lines.flatMap((d) => (d.kind === "product" ? [d.productId] : [])) } },
+    select: { categoryId: true },
+  });
+  const categoryIds = [...drafts.lines.flatMap((d) => (d.kind === "estimate" ? [d.categoryId] : [])), ...productCats.map((p) => p.categoryId)];
+  const categories = await db.category.findMany({ where: { id: { in: categoryIds } }, select: { id: true, needsPresales: true } });
+  const recurring = drafts.lines.filter((d) => d.billingFrequency !== "ONE_TIME");
+  const v: Resolved = {
+    ...input,
+    accountType: account.accountType,
+    dealType: dealTypeFor(account.accountType, input.dealType),
+    revenueModel: recurring.length ? "ARR" : "ONE_TIME",
+    contractTermMonths: recurring.length ? Math.max(...recurring.map((d) => d.termMonths ?? 12)) : undefined,
+    salesOwnerId: user.role === "SALES" || !input.salesOwnerId ? user.id : input.salesOwnerId,
+    probability: STAGE_META[input.stage].probability,
+    presalesRequired: input.presalesRequired ?? suggestPresales(categoryIds, categories),
+    presalesOwnerId: undefined,
+    submissionDueDate: needsBidDate(input.procurementMode) ? input.submissionDueDate : undefined,
+  };
 
   let id: string;
   try {
@@ -266,12 +295,35 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
   // The stage is never edited here: it moves through the stage bar and the workflow, under the process rules
   const parsed = opportunitySchema.safeParse({ ...formToObject(form), stage: before.stage });
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
-  const v = parsed.data;
-  const fieldErrors = dealFieldErrors(before.stage as never, before, { forecastCategory: v.forecastCategory, expectedCloseDate: v.expectedCloseDate, nextStepDate: v.nextStepDate ?? null });
+  const input = parsed.data;
+  const fieldErrors = dealFieldErrors(before.stage as never, before, { forecastCategory: input.forecastCategory, expectedCloseDate: input.expectedCloseDate, nextStepDate: input.nextStepDate ?? null });
   if (Object.keys(fieldErrors).length) return { ok: false, error: Object.values(fieldErrors)[0]!, fieldErrors };
-  // Probability follows the stage, so weighted pipeline means the same thing on every deal
-  v.probability = before.probability;
-  if (!can.reassignOpportunity(user)) v.salesOwnerId = before.salesOwnerId;
+  const accountType =
+    input.accountId === before.accountId
+      ? before.accountType
+      : (await db.account.findFirst({ where: { id: input.accountId, deletedAt: null }, select: { accountType: true } }))?.accountType;
+  if (!accountType) return { ok: false, error: "Select an account.", fieldErrors: { accountId: "Select an account" } };
+  const presalesRequired = input.presalesRequired ?? before.presalesRequired;
+  if (!presalesRequired && before.presalesRequired) {
+    const open = await db.presalesRequest.count({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } } });
+    if (open) return { ok: false, error: "Presales is working on this deal. Cancel the BOQ request before switching to a resale deal.", fieldErrors: { presalesRequired: "Presales is working on it" } };
+  }
+  // Revenue model, term, ARR and contract dates come from the lines and the won PO; probability follows the stage
+  const v: Resolved = {
+    ...input,
+    accountType,
+    dealType: dealTypeFor(accountType, input.dealType ?? before.dealType),
+    revenueModel: before.revenueModel,
+    contractTermMonths: before.contractTermMonths ?? undefined,
+    arrAmount: before.arrAmount === null ? undefined : toNumber(before.arrAmount),
+    contractStartDate: before.contractStartDate ?? undefined,
+    expectedMarginPct: input.expectedMarginPct ?? (before.expectedMarginPct === null ? undefined : toNumber(before.expectedMarginPct)),
+    salesOwnerId: can.reassignOpportunity(user) && input.salesOwnerId ? input.salesOwnerId : before.salesOwnerId,
+    presalesOwnerId: before.presalesOwnerId ?? undefined,
+    probability: before.probability,
+    presalesRequired,
+    submissionDueDate: needsBidDate(input.procurementMode) ? input.submissionDueDate : undefined,
+  };
   // Value and primary classification roll up from the line items (edited on the Line items tab)
   const derived: Derived = {
     amount: toNumber(before.amount),

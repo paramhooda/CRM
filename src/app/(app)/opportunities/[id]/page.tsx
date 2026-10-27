@@ -152,7 +152,10 @@ function Overview({ d }: { d: OppDetail }) {
     { label: "Deal type", value: DEAL_TYPE_LABEL[o.dealType] },
     { label: "Revenue", value: REVENUE_MODEL_LABEL[o.revenueModel] + (o.contractTermMonths ? ` · ${o.contractTermMonths} months` : "") },
     { label: "Procurement", value: PROCUREMENT_LABEL[o.procurementMode] + (o.submissionDueDate ? ` · bid due ${fmtDate(o.submissionDueDate)}` : "") },
-    { label: "OEM deal registration", value: DEAL_REG_LABEL[o.dealRegStatus] + (o.dealRegExpiry ? ` · expires ${fmtDate(o.dealRegExpiry)}` : "") },
+    { label: "Path", value: o.presalesRequired ? "Solution · needs presales" : "Resale · no presales" },
+    ...(o.dealRegStatus !== "NOT_REQUIRED"
+      ? [{ label: "OEM deal registration", value: DEAL_REG_LABEL[o.dealRegStatus] + (o.dealRegNumber ? ` · ${o.dealRegNumber}` : "") + (o.dealRegExpiry ? ` · expires ${fmtDate(o.dealRegExpiry)}` : "") }]
+      : []),
     { label: "Competition", value: o.competitors || "—" },
     { label: "Lead source", value: o.leadSource || "—" },
     { label: "Created", value: `${fmtDate(o.createdAt)} (${relativeDays(o.createdAt)})` },

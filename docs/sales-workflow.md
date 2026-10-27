@@ -12,6 +12,37 @@ Each team owns one pipeline stage. The CRM moves the deal to the next stage as e
 
 Deals without presales are fine: sales can add lines and **Request pricing** directly, which moves the deal from Qualified to Pricing.
 
+## What is asked, by whom, and when
+
+Each person enters only what they know at their step. Everything else is derived.
+
+| Step | Who | Asked for | Derived, never typed |
+|---|---|---|---|
+| **New deal** | Sales | Account, customer contact (optional until Qualified), name, expected close, next step; what's being sold as business unit → category → OEM → value (one-time or recurring with a term); presales yes / no; procurement (bid date for RFP / tender); deal registration (only for OEMs that run it). Lead source, competition and notes are optional, under More details. | Account type (from the account), deal type options, stage (Identified), probability, forecast (Pipeline), revenue model, contract term and ARR (from the lines), owner (you) |
+| **Request BOQ** | Sales | Presales engineer, needed by, customer requirement, deliverables (BOQ, solution document, presentation, site survey, PoC / demo); sites, only when a survey is asked for | Presales owner, stage (BOQ) |
+| **Submit BOQ** | Presales | BOQ lines (catalogue products), solution summary, assumptions and exclusions | Which lines purchase must price, stage (Pricing) |
+| **Pricing** | Purchase | Unit cost, distributor, supplier validity | Margin |
+| **Quote** | Sales | Margin %, validity, terms | Sell prices, deal value, stage (Proposal Submitted) |
+| **Won** | Sales | Customer PO number and date | Contract dates, billing lines |
+
+### Does the deal need presales?
+
+The form suggests it from the categories, and sales can change it. An admin sets which categories need presales under Settings → Business units and categories.
+
+- **Needs presales (solution deal)**, for example servers, storage, networking, cloud, managed services, SOC and compliance. Presales designs the solution and prepares the BOQ, then purchase prices it. Pricing cannot be requested until presales has submitted a BOQ.
+- **No presales (resale deal)**, for example laptops, desktops and licences. Sales replaces the estimate with catalogue products on Line items and requests pricing directly; the BOQ stage is skipped. Sales can still pull in presales later, which makes it a solution deal.
+
+### Fields that follow other fields
+
+- Customer contact choices come from the selected account.
+- Deal type: a new logo is always New business. An existing customer chooses Upsell, Cross-sell or Renewal.
+- Category choices come from the business unit. OEM choices come from the category: the OEMs in the catalogue for it are listed first, then the rest, plus "To be decided".
+- The contract term appears only for recurring lines.
+- The bid submission date appears only for RFP and tender.
+- Deal registration appears only when an OEM on the deal runs a registration programme. An admin sets which OEMs do, under Settings → OEMs.
+- Sites to survey appear only when a site survey is asked for.
+- On the edit form, expected margin is shown only until purchase prices the lines.
+
 ## Stage rules (enforced for everyone)
 
 The rules apply to the stage bar, the pipeline board and the edit form, and the server checks them again on every change. A stage that can't be clicked explains why when you point at it.

@@ -22,7 +22,7 @@ export default async function NewOpportunityPage({ searchParams }: { searchParam
   }
   return (
     <>
-      <PageHeader crumbs={[{ href: "/opportunities", label: "Opportunities" }]} title="New opportunity" description="Required fields are marked. You can pull in presales from the deal once it is created." />
+      <PageHeader crumbs={[{ href: "/opportunities", label: "Opportunities" }]} title="New opportunity" description="Only what you know today. Everything else is filled in as the deal moves through presales, pricing and the quote." />
       <PageBody className="max-w-5xl">
         <OppForm mode="create" initial={initial} accounts={accounts} options={options} canReassign={isManager(user)} currentUserId={user.id} />
       </PageBody>

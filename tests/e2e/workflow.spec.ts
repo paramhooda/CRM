@@ -34,12 +34,16 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.goto("/opportunities/new");
     await page.fill("#name", dealName);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
-    await page.getByRole("button", { name: "Add product" }).click();
+    // Exact catalogue products instead of the rough split
+    await page.getByRole("button", { name: "Pick an exact product" }).click();
+    await page.getByRole("button", { name: "Remove line 1" }).click();
     await pickProduct(page, 0, "CSCO-NET-02");
-    await page.getByLabel("New line 1 quantity").fill("10");
-    await page.getByRole("button", { name: "Add product" }).click();
+    await page.getByLabel("Line 1 quantity").fill("10");
+    await page.getByRole("button", { name: "Pick an exact product" }).click();
     await pickProduct(page, 1, "FTNT-SLC-02");
-    await page.getByLabel("New line 2 quantity").fill("2");
+    await page.getByLabel("Line 2 quantity").fill("2");
+    // Networking needs a solution design, so presales is suggested
+    await expect(page.getByRole("radio", { name: /Needs presales/ })).toHaveAttribute("aria-checked", "true");
     // Value rolls up from the lines: 10 × 2,52,350 + 2 × 9,10,800
     await expect(page.getByText("₹43.5 L").first()).toBeVisible();
     await page.fill("#nextStep", "Requirement workshop");
@@ -341,14 +345,14 @@ test.describe("Process guardrails", () => {
   test("a new deal cannot jump stages; hold needs a reason and resumes where it was; the edit form cannot change the stage", async ({ page }) => {
     await login(page, SALES);
     await page.goto("/opportunities/new");
-    await expect(page.locator("#stage option")).toHaveText(["Identified", "Qualified"]);
+    await expect(page.locator("#stage")).toHaveCount(0); // new deals always start at Identified
     const name = `E2E Guardrails ${Date.now().toString().slice(-6)}`;
     await page.fill("#name", name);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
-    await page.getByRole("button", { name: "Quick estimate" }).click();
-    await page.getByLabel("New line 1 OEM").selectOption({ label: "Dell" });
-    await page.getByLabel("New line 1 category").selectOption({ label: "Server" });
-    await page.getByLabel("New line 1 value").fill("1500000");
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "IT Infrastructure" });
+    await page.getByLabel("Line 1 category").selectOption({ label: "Server" });
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "Dell" });
+    await page.getByLabel("Line 1 value").fill("1500000");
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     const url = new URL(page.url()).pathname;
@@ -375,7 +379,7 @@ test.describe("Process guardrails", () => {
     // The edit form shows the stage but cannot change it
     await page.goto(`${url}/edit`);
     await expect(page.locator("#stage")).toHaveCount(0);
-    await expect(page.getByText("Change it from the stage bar on the deal")).toBeVisible();
+    await expect(page.getByText("Moves through the stage bar on the deal")).toBeVisible();
     await expect(page.locator("#forecastCategory option[value=COMMIT]")).toBeDisabled();
   });
 
@@ -392,6 +396,61 @@ test.describe("Process guardrails", () => {
   });
 });
 
+test.describe("Deal setup", () => {
+  test("the new deal form asks the minimum and each field follows the one before it", async ({ page }) => {
+    await login(page, HEAD);
+    await page.goto("/opportunities/new");
+    // Nothing that is derived is asked for
+    for (const f of ["#stage", "#probability", "#accountType", "#revenueModel", "#contractTermMonths", "#presalesOwnerId", "#forecastCategory"])
+      await expect(page.locator(f)).toHaveCount(0);
+    // Category follows the business unit, OEM follows the category
+    await expect(page.getByLabel("Line 1 category")).toBeDisabled();
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "IT Infrastructure" });
+    await expect(page.getByLabel("Line 1 category").locator("option")).toContainText(["Server", "Laptop", "Networking"]);
+    await expect(page.getByLabel("Line 1 category").locator("option", { hasText: "SOC" })).toHaveCount(0);
+    await page.getByLabel("Line 1 category").selectOption({ label: "Laptop" });
+    await expect(page.getByLabel("Line 1 OEM").locator("optgroup[label='Usual for this category'] option")).toContainText(["Lenovo", "Dell"]);
+    // Laptops are resale: no presales suggested
+    await expect(page.getByRole("radio", { name: /No presales/ })).toHaveAttribute("aria-checked", "true");
+    await page.getByLabel("Line 1 category").selectOption({ label: "Server" });
+    await expect(page.getByRole("radio", { name: /Needs presales/ })).toHaveAttribute("aria-checked", "true");
+    // Deal registration only for an OEM that runs it; the term only for recurring billing; the bid date only for RFP / tender
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "Dell" });
+    await expect(page.locator("#dealRegStatus")).toBeVisible();
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "To be decided" });
+    await expect(page.locator("#dealRegStatus")).toHaveCount(0);
+    await expect(page.getByLabel("Line 1 term")).toHaveCount(0);
+    await page.getByLabel("Line 1 billing").selectOption("RECURRING");
+    await expect(page.getByLabel("Line 1 term")).toBeVisible();
+    await expect(page.locator("#submissionDueDate")).toHaveCount(0);
+    await page.getByRole("radio", { name: "RFP" }).click();
+    await expect(page.locator("#submissionDueDate")).toBeVisible();
+    // Deal type follows the account: a new logo is always new business
+    await page.selectOption("#accountId", { label: "SwiftMove Logistics Pvt Ltd" });
+    await expect(page.getByText("New logo · New business")).toBeVisible();
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await expect(page.getByRole("radiogroup", { name: "Deal type" }).getByRole("radio")).toHaveText(["Upsell", "Cross-sell", "Renewal"]);
+  });
+
+  test("a resale deal skips presales: sales adds products and goes straight to pricing", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    const name = `E2E Resale Laptops ${Date.now().toString().slice(-6)}`;
+    await page.fill("#name", name);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "IT Infrastructure" });
+    await page.getByLabel("Line 1 category").selectOption({ label: "Laptop" });
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "Lenovo" });
+    await page.getByLabel("Line 1 value").fill("1800000");
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    await expect(page.getByLabel("Deal status")).toContainText("Estimate only · resale");
+    await expect(page.getByLabel("Deal status").getByRole("link", { name: "Add products" })).toBeVisible();
+    await expect(page.getByLabel("Deal status").getByRole("button", { name: "Request BOQ from presales" })).toHaveCount(0); // not the main path
+    await expect(page.getByText("Resale · no presales")).toBeVisible();
+  });
+});
+
 test.describe("Line items, navigation and filters", () => {
   test("a deal can start from a quick estimate; OEM lives on the line", async ({ page }) => {
     await login(page, SALES);
@@ -400,12 +459,11 @@ test.describe("Line items, navigation and filters", () => {
     const name = `E2E Estimate - Server Refresh ${Date.now().toString().slice(-6)}`;
     await page.fill("#name", name);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
-    await page.getByRole("button", { name: "Quick estimate" }).click();
     // Early on the OEM may not be known yet
-    await page.getByLabel("New line 1 OEM").selectOption({ label: "To be decided" });
-    await page.getByLabel("New line 1 category").selectOption({ label: "Server" });
-    await page.getByLabel("New line 1 value").fill("2500000");
-    await expect(page.getByText("· To be decided").first()).toBeVisible();
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "IT Infrastructure" });
+    await page.getByLabel("Line 1 category").selectOption({ label: "Server" });
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "To be decided" });
+    await page.getByLabel("Line 1 value").fill("2500000");
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     await expect(page.getByText("₹25 L").first()).toBeVisible();

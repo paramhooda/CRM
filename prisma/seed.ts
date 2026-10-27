@@ -4,7 +4,7 @@
 import { PrismaClient, Prisma, type Stage, type ForecastCategory } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import {
-  ACCOUNTS, ADMIN_NAME, BUSINESS_UNITS, CATEGORY_OEMS, CATEGORY_PROFILE, CONTACT_TEMPLATES, FIRST_NAMES,
+  ACCOUNTS, ADMIN_NAME, BUSINESS_UNITS, CATEGORY_OEMS, PRESALES_CATEGORIES, DEAL_REG_OEMS, CATEGORY_PROFILE, CONTACT_TEMPLATES, FIRST_NAMES,
   LAST_NAMES, OEMS, PICKLISTS, PRESALES_PEOPLE, PURCHASE_PEOPLE, SALES_HEAD, SALES_PEOPLE, PRODUCT_TEMPLATES, COMPLEMENTS,
   OEM_CODE,
 } from "./seed-data";
@@ -116,12 +116,12 @@ async function main() {
     const row = await db.businessUnit.create({ data: { name: bu.name, code: bu.code, sortOrder: i } });
     bus[bu.name] = { id: row.id, cats: {} };
     for (const [j, c] of bu.categories.entries()) {
-      const cat = await db.category.create({ data: { name: c, businessUnitId: row.id, sortOrder: j } });
+      const cat = await db.category.create({ data: { name: c, businessUnitId: row.id, sortOrder: j, needsPresales: PRESALES_CATEGORIES.has(`${bu.name}|${c}`) } });
       bus[bu.name]!.cats[c] = cat.id;
     }
   }
   const oems: Record<string, string> = {};
-  for (const [i, name] of OEMS.entries()) oems[name] = (await db.oem.create({ data: { name, sortOrder: i } })).id;
+  for (const [i, name] of OEMS.entries()) oems[name] = (await db.oem.create({ data: { name, sortOrder: i, dealRegistration: DEAL_REG_OEMS.has(name) } })).id;
   // Early estimates may not know the OEM yet; it must be replaced before quoting.
   // The migration creates this row on a fresh database; a forced re-seed truncates it, so upsert either way.
   const tbdRow = { name: "To be decided", sortOrder: -1, isPlaceholder: true, active: true };
@@ -332,7 +332,7 @@ async function main() {
     const submissionDue = procurement === "TENDER" || procurement === "RFP"
       ? order < STAGE_META.PROPOSAL.order && !isClosed ? daysAhead(int(3, 25)) : daysAgo(int(10, 40))
       : null;
-    const oemNeedsReg = !["Progression", "Neon Cloud"].includes(oemName) && (buName === "IT Infrastructure" || buName === "Cybersecurity");
+    const oemNeedsReg = DEAL_REG_OEMS.has(oemName);
     let dealRegStatus: "NOT_REQUIRED" | "PENDING" | "APPROVED" = "NOT_REQUIRED";
     let dealRegExpiry: Date | null = null;
     if (oemNeedsReg && order >= 2) {
@@ -363,6 +363,7 @@ async function main() {
         revenueModel: arr ? "ARR" : "ONE_TIME",
         dealType: arr && chance(0.3) ? "RENEWAL" : wonByAccount.has(account.id) ? pick(["UPSELL", "CROSS_SELL"]) : "NEW_BUSINESS",
         procurementMode: procurement,
+        presalesRequired: !!presalesUser || PRESALES_CATEGORIES.has(catKey),
         amount, arrAmount, contractTermMonths: term,
         contractStartDate: p.stage === "WON" && arr ? closedAt : null,
         contractEndDate: p.stage === "WON" && arr && term ? new Date(closedAt!.getTime() + term * 30.4 * DAY) : null,

@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
-import { saveUser, addPicklistValue, togglePicklistValue, saveTargets, runRecompute } from "@/server/actions/admin";
+import { saveUser, addPicklistValue, togglePicklistValue, togglePicklistFlag, saveTargets, runRecompute } from "@/server/actions/admin";
 import { ROLE_LABEL } from "@/lib/constants";
 import { inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -53,27 +53,53 @@ export function UserDialog({ id, initial }: { id?: string; initial?: { name: str
   );
 }
 
+/**
+ * Picklist values: click to activate or deactivate. Categories and OEMs also carry a flag (needs presales / runs deal
+ * registration) that is switched in the second mode; flagged values are marked with a dot.
+ */
 export function PicklistEditor({
-  title, type, kind, values,
-}: { title: string; type: string; kind: "OEM" | "CATEGORY" | "VALUE"; values: { id: string; label: string; active: boolean }[] }) {
+  title, type, kind, values, flagLabel,
+}: { title: string; type: string; kind: "OEM" | "CATEGORY" | "VALUE"; values: { id: string; label: string; active: boolean; flag?: boolean }[]; flagLabel?: string }) {
   const [v, setV] = useState("");
+  const [mode, setMode] = useState<"active" | "flag">("active");
   const { pending, run } = useAction();
+  const click = (x: (typeof values)[number]) =>
+    mode === "flag" && kind !== "VALUE"
+      ? run(() => togglePicklistFlag(kind, x.id), { success: `${x.label}: ${flagLabel?.toLowerCase()} ${x.flag ? "off" : "on"}` })
+      : run(() => togglePicklistValue(kind, x.id), { success: x.active ? `${x.label} deactivated` : `${x.label} activated` });
   return (
     <div className="rounded-xl border border-border bg-surface">
-      <p className="border-b border-border px-3 py-2 text-[13px] font-semibold">{title} <span className="font-normal text-ink-3">{values.filter((x) => x.active).length}</span></p>
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <p className="text-[13px] font-semibold">{title} <span className="font-normal text-ink-3">{values.filter((x) => x.active).length}</span></p>
+        {flagLabel && (
+          <div role="radiogroup" aria-label={`${title} click action`} className="ml-auto inline-flex rounded-md bg-surface-2 p-0.5 text-[11px]">
+            {(["active", "flag"] as const).map((m) => (
+              <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)} className={cn("rounded px-1.5 py-0.5 cursor-pointer", mode === m ? "bg-surface font-medium shadow-sm" : "text-ink-3")}>
+                {m === "active" ? "Active" : flagLabel}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="flex flex-wrap gap-1.5 p-3">
         {values.map((x) => (
           <button
             key={x.id}
             disabled={pending}
-            onClick={() => run(() => togglePicklistValue(kind, x.id), { success: x.active ? `${x.label} deactivated` : `${x.label} activated` })}
-            title={x.active ? "Click to deactivate" : "Click to reactivate"}
-            className={cn("rounded-full border px-2.5 py-0.5 text-xs cursor-pointer", x.active ? "border-border bg-surface-2 text-ink" : "border-dashed border-border text-ink-3 line-through")}
+            onClick={() => click(x)}
+            title={mode === "flag" ? `Click to turn "${flagLabel}" ${x.flag ? "off" : "on"}` : x.active ? "Click to deactivate" : "Click to reactivate"}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs cursor-pointer",
+              x.active ? "border-border bg-surface-2 text-ink" : "border-dashed border-border text-ink-3 line-through",
+              x.flag && "border-[color-mix(in_srgb,var(--primary)_40%,transparent)]",
+            )}
           >
+            {x.flag && <span className="size-1.5 rounded-full bg-primary" aria-label={flagLabel} />}
             {x.label}
           </button>
         ))}
       </div>
+      {flagLabel && <p className="px-3 pb-2 text-[11px] text-ink-3"><span className="mr-1 inline-block size-1.5 rounded-full bg-primary align-middle" />{flagLabel}</p>}
       <form
         className="flex gap-2 border-t border-border p-2"
         onSubmit={(e) => { e.preventDefault(); run(() => addPicklistValue(type, v), { success: "Added", onOk: () => setV("") }); }}
