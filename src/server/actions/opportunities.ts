@@ -14,7 +14,7 @@ import { notify } from "@/lib/notify";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { CLOSED_STAGES, STAGE_META } from "@/lib/constants";
 import { applyStageChange, UserError } from "@/server/domain/stage";
-import { lineInputSchema, resolveSpec, rollUpDeal, draftLineSchema, createEstimateLine, type DraftLine } from "@/server/domain/lines";
+import { lineInputSchema, resolveSpec, rollUpDeal, draftLineSchema, createEstimateLine, costFactsLoader, initialCost, type DraftLine } from "@/server/domain/lines";
 import { z } from "zod";
 import { toNumber } from "@/lib/format";
 
@@ -208,6 +208,7 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
           data: { opportunityId: opp.id, contactId: v.primaryContactId, role: c?.role ?? "INFLUENCER" },
         });
       }
+      const costFacts = await costFactsLoader(tx);
       for (const [i, d] of drafts.lines.entries()) {
         if (d.kind === "estimate") {
           const cat = await tx.category.findUnique({ where: { id: d.categoryId }, select: { businessUnitId: true } });
@@ -237,6 +238,7 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
             opportunityId: opp.id,
             lineNo: i + 1,
             ...spec,
+            ...initialCost(await costFacts(spec)),
             unitPrice:
               d.unitPrice === null || d.unitPrice === undefined ? null : new Prisma.Decimal(d.unitPrice),
             createdById: user.id,

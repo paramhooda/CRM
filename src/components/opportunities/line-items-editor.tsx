@@ -10,13 +10,14 @@ import { ProductPicker } from "@/components/opportunities/product-picker";
 import { saveBoq } from "@/server/actions/workflow";
 import type { OppDetail } from "@/server/queries/opportunity-detail";
 import type { ProductOption } from "@/server/queries/options";
-import { inr, pct, fmtDate } from "@/lib/format";
+import { inr, pct, fmtDate, isoDate } from "@/lib/format";
+import { COST_SOURCE_META, allowedCostSources, defaultCostSource, type CostSourceKey } from "@/lib/costing";
 import { billingPeriods, type BillingFrequencyKey } from "@/lib/boq";
 import { BILLING_FREQUENCY_LABEL, LINE_BILLING_STATUS_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 type Line = OppDetail["lines"][number] & { _key: string; _custom?: boolean };
-type Perms = { spec: boolean; cost: boolean; price: boolean; viewCost: boolean };
+type Perms = { spec: boolean; cost: boolean; internalCost: boolean; price: boolean; viewCost: boolean };
 type Opt = { id: string; name: string };
 
 const UNITS = ["Nos", "Lot", "Users", "Cores", "Devices", "VMs", "TB", "Racks", "Resources", "Days", "Month", "Year", "Pool", "Drill"];
@@ -36,7 +37,7 @@ export function LineItemsEditor({
   products: ProductOption[];
   bus: Opt[];
   categories: (Opt & { buId: string })[];
-  oems: Opt[];
+  oems: (Opt & { ownBrand: boolean })[];
   distributors: string[];
   defaultTerm: number | null;
   locked: boolean;
@@ -64,11 +65,17 @@ export function LineItemsEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial, initialVersion]);
   // What this person may change; fields are only editable in edit mode, which they open with the Edit button
-  const allowed = { spec: perms.spec && !locked && !lockReason, cost: perms.cost && !locked, price: perms.price && !locked };
-  const editable = allowed.spec || allowed.cost || allowed.price;
+  const allowed = { spec: perms.spec && !locked && !lockReason, cost: perms.cost && !locked, internal: perms.internalCost && !locked, price: perms.price && !locked };
+  const editable = allowed.spec || allowed.cost || allowed.internal || allowed.price;
   const [editing, setEditing] = useState(startEditing && editable);
-  const can = editing ? allowed : { spec: false, cost: false, price: false };
-  const editLabel = allowed.spec ? "Edit line items" : allowed.cost && !allowed.price ? "Enter costs" : allowed.price && !allowed.cost ? "Set prices" : "Edit";
+  const can = editing ? allowed : { spec: false, cost: false, internal: false, price: false };
+  const editLabel = allowed.spec ? "Edit line items" : (allowed.cost || allowed.internal) && !allowed.price ? "Enter costs" : allowed.price && !allowed.cost ? "Set prices" : "Edit";
+  // Who enters a line's cost: purchase for purchase lines, presales for own-brand lines (editing a rate card cost
+  // makes it a presales cost for this deal); rate card lines take the catalogue's standard cost
+  const costEditable = (l: Line) => (l.costSource === "PURCHASE" ? can.cost : can.internal);
+  const sourcesFor = (l: Line) => allowedCostSources({ ownBrand: l.ownBrand, standardCost: l.standardCost, isProduct: !!l.productId });
+  const setSource = (l: Line, src: CostSourceKey) =>
+    set(l._key, { costSource: src, ...(src === "RATE_CARD" ? { unitCost: l.standardCost } : {}) });
   const stopEditing = () => { setLines(start()); setDirty(false); setErrors({}); setEditing(false); };
 
   const set = (key: string, patch: Partial<Line>) => {
@@ -77,7 +84,11 @@ export function LineItemsEditor({
   };
   const pickProduct = (key: string, p: ProductOption | null) => {
     if (!p) return set(key, { productId: null, _custom: true });
+    const src = defaultCostSource({ ownBrand: p.ownBrand, standardCost: p.standardCost, isProduct: true });
+    const was = lines.find((l) => l._key === key);
     set(key, {
+      ownBrand: p.ownBrand, costSource: src,
+      ...(src === "RATE_CARD" ? { unitCost: p.standardCost } : was?.costSource === "RATE_CARD" ? { unitCost: null } : {}),
       productId: p.id, _custom: false, isEstimate: false, businessUnitId: p.businessUnitId, categoryId: p.categoryId, oemId: p.oemId, oemName: p.oemName,
       buName: p.buName, categoryName: p.categoryName, partNumber: p.code, description: p.name, unit: p.unit,
       billingFrequency: p.billingFrequency, termMonths: p.billingFrequency === "ONE_TIME" ? null : defaultTerm ?? p.defaultTermMonths ?? 12,
@@ -91,7 +102,7 @@ export function LineItemsEditor({
         _key: k(), _custom: false, isEstimate: false, id: "", lineNo: ls.length + 1, productId: null, businessUnitId: "", categoryId: "", oemId: "",
         oemName: "", buName: "", categoryName: "", partNumber: "", description: "", quantity: 1, unit: "Nos", billingFrequency: "ONE_TIME",
         termMonths: null, hsnSac: null, gstRatePct: 18, unitCost: null, distributor: null, oemQuoteRef: null, leadTimeDays: null,
-        pricingStatus: "PENDING", costStale: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
+        pricingStatus: "PENDING", costStale: false, ownBrand: false, costSource: "PURCHASE", costValidTill: null, costNote: null, costExpired: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
       },
     ]);
     setDirty(true);
@@ -100,8 +111,8 @@ export function LineItemsEditor({
     setLines((ls) => ls.filter((l) => l._key !== key));
     setDirty(true);
   };
-  const fill = (field: "unitPrice" | "unitCost", from: "listPrice" | "standardCost") => {
-    setLines((ls) => ls.map((l) => (l[field] === null && l[from] !== null ? { ...l, [field]: l[from] } : l)));
+  const fill = (field: "unitPrice" | "unitCost", from: "listPrice" | "standardCost", only: (l: Line) => boolean = () => true) => {
+    setLines((ls) => ls.map((l) => (only(l) && l[field] === null && l[from] !== null ? { ...l, [field]: l[from] } : l)));
     setDirty(true);
   };
   const applyMargin = () => {
@@ -144,6 +155,7 @@ export function LineItemsEditor({
             oemId: l.oemId || null, partNumber: l.partNumber, description: l.description, isEstimate: l.isEstimate, quantity: l.quantity, unit: l.unit,
             billingFrequency: l.billingFrequency, termMonths: l.termMonths, hsnSac: l.hsnSac, gstRatePct: l.gstRatePct,
             unitCost: l.unitCost, distributor: l.distributor, oemQuoteRef: l.oemQuoteRef, leadTimeDays: l.leadTimeDays,
+            costSource: l.costSource, costValidTill: l.costValidTill, costNote: l.costNote,
             unitPrice: l.unitPrice, notes: l.notes,
           })),
           version,
@@ -186,7 +198,7 @@ export function LineItemsEditor({
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {!editing && editable && <Button size="sm" variant="primary" onClick={() => setEditing(true)}><Pencil /> {editLabel}</Button>}
-          {can.cost && <Button size="sm" variant="ghost" onClick={() => fill("unitCost", "standardCost")} title="Fill empty costs with catalogue standard cost"><Wand2 /> Standard costs</Button>}
+          {can.cost && <Button size="sm" variant="ghost" onClick={() => fill("unitCost", "standardCost", (l) => l.costSource === "PURCHASE")} title="Fill empty purchase costs with the catalogue standard cost"><Wand2 /> Standard costs</Button>}
           {can.price && <Button size="sm" variant="ghost" onClick={() => fill("unitPrice", "listPrice")} title="Fill empty sell prices with catalogue list price"><Tag /> List prices</Button>}
           {can.price && perms.viewCost && (
             <div className="flex items-center gap-1 rounded-md border border-border pl-2">
@@ -214,16 +226,16 @@ export function LineItemsEditor({
         <BoqView lines={lines} viewCost={perms.viewCost} locked={locked} />
       ) : (
       <div className="overflow-x-auto scrollbar-thin">
-        <table className="w-full min-w-[1120px] table-fixed text-[13px]">
+        <table className="w-full min-w-[1140px] table-fixed text-[13px]">
           <thead>
             <tr className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wide text-ink-3">
               <th scope="col" className="w-9 px-3 py-2.5 font-medium">#</th>
-              <th scope="col" className="w-[300px] px-2 py-2.5 font-medium">Product</th>
-              <th scope="col" className="w-[148px] px-2 py-2.5 font-medium">Quantity</th>
-              <th scope="col" className="w-[140px] px-2 py-2.5 font-medium">Billing</th>
-              <th scope="col" className="w-[84px] px-2 py-2.5 font-medium">HSN/SAC</th>
+              <th scope="col" className="px-2 py-2.5 font-medium">Product</th>
+              <th scope="col" className="w-[136px] px-2 py-2.5 font-medium">Quantity</th>
+              <th scope="col" className="w-[128px] px-2 py-2.5 font-medium">Billing</th>
+              <th scope="col" className="w-[80px] px-2 py-2.5 font-medium">HSN/SAC</th>
               {perms.viewCost && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-amber)" }}>Unit cost</th>}
-              {perms.viewCost && <th scope="col" className="w-[112px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>Distributor</th>}
+              {perms.viewCost && <th scope="col" className="w-[164px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>Cost from</th>}
               <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-green)" }}>Unit price</th>
               <th scope="col" className="w-[100px] px-2 py-2.5 text-right font-medium">Value</th>
               {perms.viewCost && <th scope="col" className="w-[56px] px-2 py-2.5 text-right font-medium">GM %</th>}
@@ -264,7 +276,11 @@ export function LineItemsEditor({
                         <div className="flex gap-1">
                           {sel(l.businessUnitId, (v) => set(l._key, { businessUnitId: v, categoryId: "", buName: bus.find((b) => b.id === v)?.name ?? "" }), bus, `Line ${i + 1} business unit`, "BU")}
                           {sel(l.categoryId, (v) => set(l._key, { categoryId: v, categoryName: cats.find((c) => c.id === v)?.name ?? "" }), cats, `Line ${i + 1} category`, "Category")}
-                          {sel(l.oemId, (v) => set(l._key, { oemId: v, oemName: [...oems, ...(oemTbd ? [oemTbd] : [])].find((o) => o.id === v)?.name ?? "" }), l.isEstimate && oemTbd ? [oemTbd, ...oems] : oems, `Line ${i + 1} OEM`, "OEM")}
+                          {sel(l.oemId, (v) => {
+                            const oem = oems.find((o) => o.id === v);
+                            const ownBrand = !!oem?.ownBrand;
+                            set(l._key, { oemId: v, oemName: oem?.name ?? oemTbd?.name ?? "", ownBrand, costSource: defaultCostSource({ ownBrand, standardCost: null, isProduct: false }) });
+                          }, l.isEstimate && oemTbd ? [oemTbd, ...oems] : oems, `Line ${i + 1} OEM`, "OEM")}
                         </div>
                       ) : (
                         <span className="text-[11px] text-ink-3">
@@ -318,15 +334,24 @@ export function LineItemsEditor({
                       <span className={cn("font-mono text-xs", !l.hsnSac && "text-ink-3")}>{l.hsnSac ?? "—"}</span>
                     )}
                   </td>
-                  {perms.viewCost && <td className="px-2 py-2">{numIn(l.unitCost, (n) => set(l._key, { unitCost: n }), !can.cost, `Line ${i + 1} unit cost`, l.standardCost)}</td>}
                   {perms.viewCost && (
                     <td className="px-2 py-2">
-                      {can.cost ? (
-                        <select value={l.distributor ?? ""} onChange={(e) => set(l._key, { distributor: e.target.value || null })} aria-label={`Line ${i + 1} distributor`} className="h-8 w-full rounded-md border border-border bg-surface px-1.5 text-xs">
-                          <option value="">—</option>
-                          {distributors.map((d) => <option key={d}>{d}</option>)}
-                        </select>
-                      ) : <span className="text-xs">{l.distributor ?? "—"}</span>}
+                      {numIn(
+                        l.unitCost,
+                        (n) => set(l._key, { unitCost: n, ...(l.costSource === "RATE_CARD" ? { costSource: "PRESALES" as const } : {}) }),
+                        !costEditable(l),
+                        `Line ${i + 1} unit cost`,
+                        l.standardCost,
+                      )}
+                    </td>
+                  )}
+                  {perms.viewCost && (
+                    <td className="px-2 py-2">
+                      <CostSourceCell
+                        line={l} n={i + 1} sources={sourcesFor(l)} distributors={distributors}
+                        canChoose={can.spec || can.internal} canPurchase={can.cost && l.costSource === "PURCHASE"} canNote={can.internal && l.costSource === "PRESALES"}
+                        onSource={(src) => setSource(l, src)} onChange={(patch) => set(l._key, patch)}
+                      />
                     </td>
                   )}
                   <td className="px-2 py-2">{numIn(l.unitPrice, (n) => set(l._key, { unitPrice: n }), !can.price, `Line ${i + 1} unit price`, l.listPrice)}</td>
@@ -371,6 +396,70 @@ export function LineItemsEditor({
           <MixBar label="By business unit" mix={totals.buMix} />
         </div>
       </div>
+    </div>
+  );
+}
+
+const SOURCE_TONE: Record<CostSourceKey, "aqua" | "violet" | "slate"> = { PURCHASE: "aqua", RATE_CARD: "slate", PRESALES: "violet" };
+
+/** Where the line's cost comes from, and whether it is current: supplier validity for purchase lines. */
+function SourceBadge({ line: l }: { line: Line }) {
+  const src = l.costSource as CostSourceKey;
+  const waiting = l.unitCost === null || l.pricingStatus !== "QUOTED";
+  if (waiting && !l.costStale) return <Badge tone="amber">Waiting on {COST_SOURCE_META[src].who}</Badge>;
+  if (src === "PURCHASE" && l.costExpired) return <Badge tone="red">Supplier price expired {fmtDate(l.costValidTill, "short")}</Badge>;
+  return (
+    <Badge tone={SOURCE_TONE[src]}>
+      {COST_SOURCE_META[src].label}
+      {src === "PURCHASE" && l.costValidTill ? ` · valid till ${fmtDate(l.costValidTill, "short")}` : ""}
+      {src === "PURCHASE" && l.distributor ? ` · ${l.distributor}` : ""}
+    </Badge>
+  );
+}
+
+/** Edit mode: choose the cost source (own-brand lines), and the supplier details or costing note it needs. */
+function CostSourceCell({
+  line: l, n, sources, distributors, canChoose, canPurchase, canNote, onSource, onChange,
+}: {
+  line: Line; n: number; sources: CostSourceKey[]; distributors: string[];
+  canChoose: boolean; canPurchase: boolean; canNote: boolean;
+  onSource: (s: CostSourceKey) => void; onChange: (patch: Partial<Line>) => void;
+}) {
+  const src = l.costSource as CostSourceKey;
+  const field = "h-7 w-full rounded-md border border-border bg-surface px-1.5 text-xs";
+  return (
+    <div className="flex flex-col gap-1">
+      {canChoose && sources.length > 1 ? (
+        <select value={src} onChange={(e) => onSource(e.target.value as CostSourceKey)} aria-label={`Line ${n} cost source`} className={field} title={COST_SOURCE_META[src].hint}>
+          {sources.map((s) => <option key={s} value={s}>{s === "PURCHASE" ? "Source via purchase" : COST_SOURCE_META[s].label}</option>)}
+        </select>
+      ) : (
+        <span className="text-xs" title={COST_SOURCE_META[src].hint}>{COST_SOURCE_META[src].label}</span>
+      )}
+      {src === "PURCHASE" && (canPurchase ? (
+        <>
+          <select value={l.distributor ?? ""} onChange={(e) => onChange({ distributor: e.target.value || null })} aria-label={`Line ${n} distributor`} className={field}>
+            <option value="">Distributor</option>
+            {[...new Set([...(l.distributor ? [l.distributor] : []), ...distributors])].map((d) => <option key={d}>{d}</option>)}
+          </select>
+          <label className="flex items-center gap-1 text-[11px] text-ink-3">
+            Valid till
+            <input
+              type="date" value={isoDate(l.costValidTill)} aria-label={`Line ${n} supplier validity`}
+              onChange={(e) => onChange({ costValidTill: e.target.value ? new Date(`${e.target.value}T23:59:59+05:30`) : null })}
+              className="h-7 min-w-0 flex-1 rounded-md border border-border bg-surface px-1 text-xs tabular"
+            />
+          </label>
+        </>
+      ) : (
+        <span className={cn("text-[11px]", l.costExpired ? "text-[var(--t-red)]" : "text-ink-3")}>
+          {[l.distributor, l.costValidTill && `${l.costExpired ? "expired" : "valid till"} ${fmtDate(l.costValidTill, "short")}`].filter(Boolean).join(" · ") || "—"}
+        </span>
+      ))}
+      {src === "PRESALES" && (canNote ? (
+        <Input value={l.costNote ?? ""} onChange={(e) => onChange({ costNote: e.target.value || null })} className="h-7 text-xs" placeholder="How it was costed" aria-label={`Line ${n} costing note`} />
+      ) : l.costNote ? <span className="line-clamp-2 text-[11px] text-ink-3" title={l.costNote}>{l.costNote}</span> : null)}
+      {src === "RATE_CARD" && <span className="text-[11px] text-ink-3">Catalogue standard cost</span>}
     </div>
   );
 }
@@ -463,6 +552,7 @@ function BoqView({ lines, viewCost, locked }: { lines: Line[]; viewCost: boolean
                           <div className="mt-1 flex flex-wrap gap-1 empty:hidden">
                             {l.isEstimate && <Badge tone="amber">Estimate</Badge>}
                             {l.costStale && viewCost && <Badge tone="amber"><RefreshCw className="size-3" /> Needs re-pricing</Badge>}
+                            {viewCost && !l.isEstimate && <SourceBadge line={l} />}
                             {locked && <Badge tone="green">{LINE_BILLING_STATUS_LABEL[l.billingStatus]}</Badge>}
                           </div>
                         </div>

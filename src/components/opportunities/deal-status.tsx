@@ -25,6 +25,7 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   const quote = o.quotes[0];
   const sales = o.salesOwner.name;
   const realLines = d.lines.filter((l) => !l.isEstimate);
+  const purchaseLines = realLines.filter((l) => l.costSource === "PURCHASE");
   // Solution deals get their BOQ from presales; resale deals are built by sales from the catalogue
   const solution = o.presalesRequired;
   const boqSubmitted = o.presalesRequests.some((r) => r.status === "BOQ_SUBMITTED");
@@ -60,8 +61,15 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       break;
     case "WITH_PURCHASE":
       headline = openPq && openPq.kind !== "FULL" ? (openPq.kind === "REPRICE" ? "Re-pricing with purchase" : "Re-validation with purchase") : "Pricing with purchase";
-      detail = `${openPq?.assignedTo.name} is getting OEM and distributor costs for ${w.needsCost || realLines.length} line${(w.needsCost || realLines.length) > 1 ? "s" : ""}.`;
+      detail = `${openPq?.assignedTo.name} is getting OEM and distributor costs for ${w.needsCost || purchaseLines.length} line${(w.needsCost || purchaseLines.length) > 1 ? "s" : ""}.`;
       who = { name: openPq!.assignedTo.name, role: "Purchase" };
+      break;
+    case "NEEDS_COSTING":
+      headline = "Own-brand lines need a cost";
+      detail = o.presalesOwner
+        ? `${o.presalesOwner.name} (presales) enters the cost on Line items, or changes it to Source via purchase.`
+        : "No presales on this deal. Pull in presales to cost them, or switch the lines to Source via purchase.";
+      who = o.presalesOwner ? { name: o.presalesOwner.name, role: "Presales" } : { name: sales, role: "Sales" };
       break;
     case "READY_TO_QUOTE":
       headline = quote ? "BOQ changed · send a revised quote" : "Priced · ready to quote";
@@ -123,6 +131,9 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
         {!closed && w.state === "ESTIMATE" && !solution && d.perms.spec && (
           <Button asChild size="sm" variant="primary"><Link href={`/opportunities/${o.id}?tab=boq&edit=1`}><Package /> Add products</Link></Button>
         )}
+        {!closed && w.state === "NEEDS_COSTING" && d.perms.internalCost && (
+          <Button asChild size="sm" variant="primary"><Link href={`/opportunities/${o.id}?tab=boq&edit=1`}><Package /> Enter costs</Link></Button>
+        )}
         <DealActions actions={actions} />
       </div>
     </section>
@@ -151,6 +162,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
   const lastPs = o.presalesRequests[0];
   const quote = o.quotes[0];
   const realLines = d.lines.filter((l) => !l.isEstimate);
+  const purchaseLines = realLines.filter((l) => l.costSource === "PURCHASE");
   const solution = o.presalesRequired;
   const needsBoq = solution && !o.presalesRequests.some((r) => r.status === "BOQ_SUBMITTED");
   const closed = ["WON", "LOST", "DROPPED"].includes(o.stage);
@@ -170,7 +182,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
   const boqChange = (): DealAction => ({ id: "rev", kind: "pullPresales", label: "Request BOQ change", oppId: o.id, presales: options.presales, revision });
   const pricing = (label: string, toPrice: number, primary = false): DealAction => ({
     id: `price-${toPrice}`, kind: "requestPricing", label, primary, oppId: o.id, purchase: options.purchase, toPrice,
-    first: !o.pricingRequests.some((r) => r.status !== "CANCELLED"),
+    first: !o.pricingRequests.some((r) => r.status !== "CANCELLED"), expired: w.expiredCost,
   });
   const quoteAction = (primary: boolean): DealAction => ({
     id: "quote", kind: "quote", primary, oppId: o.id, version: (quote?.version ?? 0) + 1,
@@ -187,6 +199,9 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
         actions.push({
           id: "submit", kind: "submitBoq", label: "Submit BOQ", primary: openPs.status !== "NEEDS_INFO" || !isSales, requestId: openPs.id, purchase: options.purchase,
           lineCount: d.lines.length, toPrice: w.needsCost, asked: openPs.deliverables.map((k) => DELIVERABLE_LABEL[k] ?? k),
+          disabledReason: w.needsInternalCost
+            ? `Enter the cost of ${w.needsInternalCost} own-brand line${w.needsInternalCost > 1 ? "s" : ""} in Line items, or mark ${w.needsInternalCost > 1 ? "them" : "it"} Source via purchase`
+            : undefined,
         });
         if (openPs.status !== "NEEDS_INFO") actions.push({ id: "ask", kind: "askSales", label: "Ask sales a question", requestId: openPs.id });
       }
@@ -194,7 +209,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       if (isSales) actions.push({ id: "x-ps", kind: "cancel", label: "Cancel BOQ request", reqKind: "presales", requestId: openPs.id });
     } else if (openPq) {
       if (isPurchase) {
-        const missing = realLines.filter((l) => l.unitCost === null).length;
+        const missing = purchaseLines.filter((l) => l.unitCost === null).length;
         actions.push({ id: "done", kind: "completePricing", label: "Pricing complete", primary: true, requestId: openPq.id, disabledReason: missing ? `Enter a unit cost on ${missing} more line${missing > 1 ? "s" : ""} in Line items` : undefined });
         actions.push({ id: "back", kind: "sendBack", label: o.presalesOwner ? "Send back to presales" : "Send back to sales", requestId: openPq.id, presalesName: o.presalesOwner?.name ?? null });
       }
@@ -202,17 +217,17 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       if (isPurchase || isSales) actions.push({ id: "re-pq", kind: "reassign", label: "Reassign purchase", reqKind: "pricing", requestId: openPq.id, people: options.purchase, currentId: openPq.assignedTo.id });
       if (isSales) actions.push({ id: "x-pq", kind: "cancel", label: "Cancel pricing request", reqKind: "pricing", requestId: openPq.id });
     } else if (isSales || d.perms.spec) {
-      const expired = w.blockers.some((b) => b.startsWith("Supplier pricing expired"));
+      const expired = w.expiredCost > 0;
       const qualified = o.stage !== "IDENTIFIED" && o.stage !== "HOLD";
-      if ((w.state === "ESTIMATE" || w.state === "NEEDS_PRICING") && !lastPs && qualified)
+      if ((w.state === "ESTIMATE" || w.state === "NEEDS_PRICING" || w.state === "NEEDS_COSTING") && !lastPs && qualified)
         actions.push({ id: "pull", kind: "pullPresales", label: solution ? "Request BOQ from presales" : "Pull in presales instead", primary: solution, oppId: o.id, presales: options.presales });
       if (w.state === "NEEDS_PRICING" && !needsBoq && qualified) actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
-      if (d.perms.quote && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
+      if (d.perms.quote && !needsBoq && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
       if (d.perms.quote && w.state === "QUOTE_SENT" && quote) {
         actions.push({ id: "resp", kind: "response", label: "Record customer response", primary: true, quoteId: quote.id, version: quote.version });
         actions.push(quoteAction(false));
       }
-      if (realLines.length && w.needsCost === 0 && ["READY_TO_QUOTE", "CHANGES_REQUESTED", "QUOTE_SENT"].includes(w.state))
+      if (purchaseLines.length && w.needsCost === 0 && ["READY_TO_QUOTE", "CHANGES_REQUESTED", "QUOTE_SENT"].includes(w.state))
         actions.push(pricing("Re-validate costs", 0, expired));
       if (isSales && revision && w.state !== "ESTIMATE") actions.push(boqChange());
     }
@@ -240,8 +255,10 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
     } else {
       // Into Pricing: presales submits the BOQ on a solution deal; on a resale deal (even one sitting in BOQ) sales
       // requests pricing for the catalogue lines
-      const action = next === "BOQ" ? find("pull") : next === "PRICING" ? (stage === "BOQ" && solution ? find("submit") : find("price")) : find("quote");
-      if (action && !action.disabledReason) advance = { kind: "action", label: to(next), action };
+      // Nothing for purchase to price (own-brand lines on the rate card): the next real step is the quote
+      const skipPricing = next === "PRICING" && !needsBoq && realLines.length > 0 && w.state === "READY_TO_QUOTE";
+      const action = next === "BOQ" ? find("pull") : skipPricing ? find("quote") : next === "PRICING" ? (stage === "BOQ" && solution ? find("submit") : find("price")) : find("quote");
+      if (action && !action.disabledReason) advance = { kind: "action", label: to(skipPricing ? "PROPOSAL" : next), action };
       else {
         const reason =
           action?.disabledReason ??
@@ -251,6 +268,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
             : next === "BOQ" ? "The deal owner requests the BOQ from presales."
             : next === "PRICING" && stage === "BOQ" && solution ? "Request a BOQ from presales first."
             : next === "PRICING" && !realLines.length ? "No presales on this deal: pick the catalogue products on Line items, then request pricing."
+            : w.state === "NEEDS_COSTING" ? "Own-brand lines need a cost from presales first."
             : next === "PRICING" ? "The deal owner requests pricing from purchase."
             : w.needsCost ? "Lines need a current cost from purchase first."
             : "The deal owner sends the quote.");

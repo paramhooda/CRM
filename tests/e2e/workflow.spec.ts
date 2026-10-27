@@ -33,6 +33,10 @@ async function stageMenu(page: Page, item: string) {
   await page.getByRole("menuitem", { name: item }).click();
 }
 
+/** A date input value `days` from today, and how the app prints it */
+const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+const shortDate = (days: number) => new Date(Date.now() + days * 86_400_000).toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" });
+
 async function pickProduct(page: Page, pickerIndex: number, sku: string) {
   await page.getByRole("button", { name: "Product", exact: true }).nth(pickerIndex).click();
   await page.getByPlaceholder("Search SKU, product, OEM or category").fill(sku);
@@ -118,12 +122,17 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Add line" }).click();
     await pickProduct(page, 2, "PRG-PSV-02");
     await page.getByLabel("Line 3 quantity").fill("20");
+    // Progression is our own brand: its cost comes from the rate card, not from purchase
+    await expect(page.getByLabel("Line 3 cost source")).toHaveValue("RATE_CARD");
+    await expect(page.getByLabel("Line 1 cost source")).toHaveCount(0); // Cisco: purchase only
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
+    await expect(page.getByLabel("Line items").getByText("Rate card", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Advance to Pricing" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Submit BOQ")).toBeVisible();
+    await expect(dlg.getByText("2 of 3 lines go to purchase")).toBeVisible();
     await dlg.locator("textarea[name=solutionSummary]").fill("Cisco SD-WAN edge with Fortinet NGFW at hub, sized for 40 branches.");
     await dlg.locator("select[name=purchaseUserId]").selectOption({ label: PURCHASE.name });
     await dlg.getByRole("button", { name: "Submit" }).click();
@@ -142,11 +151,18 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByTestId("work-queue").locator("li", { hasText: dealName }).getByRole("link", { name: /Price it/ }).click();
     await page.waitForURL(/tab=boq/);
     await page.getByRole("button", { name: "Standard costs" }).click();
+    // The rate-carded Progression line is not purchase's to cost
+    await expect(page.getByLabel("Line 3 unit cost")).toHaveCount(0);
+    // Each supplier quotes its own validity
+    await page.getByLabel("Line 2 supplier validity").fill(inDays(12));
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await page.getByRole("button", { name: "Pricing complete" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
+    // Line 1 took the dialog's date (30 days), line 2 kept the supplier's own
+    await expect(page.getByText(/^Purchase · valid till/)).toHaveCount(2);
+    await expect(page.getByText(new RegExp(`valid till ${shortDate(12)}`))).toBeVisible();
   });
 
   test("sales asks for a BOQ revision; presales asks a question and sales answers", async ({ page }) => {
@@ -170,10 +186,15 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0);
     await page.getByRole("button", { name: "Edit line items" }).click();
     await page.getByLabel("Line 1 quantity").fill("12");
+    // Presales reworks the rate card for this deal: the line becomes a presales cost
+    await page.getByLabel("Line 3 unit cost").fill("4500");
+    await expect(page.getByLabel("Line 3 cost source")).toHaveValue("PRESALES");
+    await page.getByLabel("Line 3 costing note").fill("Two extra days of on-site cutover");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0); // back to the read view
     await expect(page.getByText("Needs re-pricing")).toBeVisible();
+    await expect(page.getByLabel("Line items").getByText("Presales", { exact: true })).toBeVisible();
     await statusMenu(page, "Ask sales a question");
     dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=question]").fill("Do the two extra devices need their own licence?");
@@ -193,7 +214,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.goto(`${oppUrl}?tab=boq`);
     await page.getByRole("button", { name: "Advance to Pricing" }).click();
     dlg = page.getByRole("dialog");
-    await expect(dlg.getByText("1 of 3 lines need a cost")).toBeVisible(); // unchanged lines keep their cost
+    await expect(dlg.getByText("1 of 3 lines go to purchase")).toBeVisible(); // unchanged and own-brand lines keep their cost
     await dlg.locator("textarea[name=solutionSummary]").fill("Revision 2: 12 edge devices with licences.");
     await dlg.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
@@ -307,6 +328,40 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     expect(csv).toContain("HSN/SAC");
     expect(csv).toContain("Ready to bill");
     expect(csv.split("\r\n").length).toBe(4); // header + 3 lines
+  });
+});
+
+test.describe("Cost sources", () => {
+  test("an own-brand resale deal is costed from the rate card and quoted without purchase", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    await page.fill("#name", `E2E Neon storage ${Date.now().toString().slice(-6)}`);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByRole("button", { name: "Pick an exact product" }).click();
+    await page.getByRole("button", { name: "Remove line 1" }).click();
+    await pickProduct(page, 0, "NEON-HST-02");
+    await page.getByLabel("Line 1 quantity").fill("50");
+    await page.getByRole("radio", { name: /No presales/ }).click();
+    await page.fill("#nextStep", "Send the proposal");
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    const url = new URL(page.url()).pathname;
+    await page.getByRole("button", { name: "Advance to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+
+    await page.goto(`${url}?tab=boq`);
+    await expect(page.getByLabel("Line items").getByText("Rate card", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("Priced · ready to quote");
+    // Nothing for purchase to price: the next step is the quote itself
+    await page.getByRole("button", { name: "Advance to Proposal" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Gross margin %").fill("20"); // no sell prices yet: priced from the rate card cost
+    await expect(dlg.getByText("20.0%")).toBeVisible();
+    const popup = page.waitForEvent("popup");
+    await dlg.getByRole("button", { name: "Create & send quote" }).click();
+    await (await popup).close();
+    await expect(page.getByLabel("Deal status")).toContainText("Quote v1 with customer");
+    await expect(currentStage(page)).toHaveText("Proposal Submitted");
   });
 });
 

@@ -47,16 +47,47 @@ describe("deriveWorkflow", () => {
     expect(w.blockers.join(" ")).toContain("Part is end-of-sale");
   });
 
-  it("ready to quote lists what still blocks the quote: estimates and expired supplier pricing", () => {
+  it("ready to quote lists what still blocks the quote: estimates and lines whose supplier price lapsed", () => {
     const w = deriveWorkflow(input({
-      lines: [line(), line({ unitPrice: null }), line({ isEstimate: true, unitCost: null, pricingStatus: "PENDING" })],
+      lines: [
+        line({ lineNo: 1, costValidTill: ahead(20) }),
+        line({ lineNo: 2, unitPrice: null, costValidTill: ago(5) }),
+        line({ lineNo: 3, isEstimate: true, unitCost: null, pricingStatus: "PENDING" }),
+      ],
       pricing: req({ status: "QUOTED", quotedAt: ago(40), quoteValidTill: ago(5) }),
     }));
     expect(w.state).toBe("READY_TO_QUOTE");
     // Missing sell prices are not a blocker: the quote dialog prices lines from the margin
     expect(w.blockers).toHaveLength(2);
-    expect(w.blockers[1]).toMatch(/Supplier pricing expired/);
+    expect(w.blockers[1]).toMatch(/Supplier pricing on line 2 expired/);
+    expect(w.expiredCost).toBe(1);
     expect(w.needsPrice).toBe(1);
+  });
+
+  it("each supplier's validity counts on its own lines only", () => {
+    const w = deriveWorkflow(input({ lines: [line({ costValidTill: ahead(3) }), line({ costValidTill: ahead(30) })] }));
+    expect(w.state).toBe("READY_TO_QUOTE");
+    expect(w.blockers).toHaveLength(0);
+  });
+
+  it("own-brand lines are not priced by purchase: rate card lines are ready, presales lines wait on presales", () => {
+    const rateCard = deriveWorkflow(input({ lines: [line({ costSource: "RATE_CARD" }), line()] }));
+    expect(rateCard.state).toBe("READY_TO_QUOTE");
+    const w = deriveWorkflow(input({ lines: [line(), line({ lineNo: 2, costSource: "PRESALES", unitCost: null, pricingStatus: "PENDING" })] }));
+    expect(w.state).toBe("NEEDS_COSTING");
+    expect(w.waitingOn).toBe("PRESALES");
+    expect(w.needsCost).toBe(0);
+    expect(w.needsInternalCost).toBe(1);
+    expect(w.blockers[0]).toBe("Line 2 needs a cost from presales.");
+  });
+
+  it("purchase lines come first: a deal with both kinds missing needs pricing, and says so for both", () => {
+    const w = deriveWorkflow(input({
+      lines: [line({ lineNo: 1, pricingStatus: "PENDING" }), line({ lineNo: 2, costSource: "PRESALES", unitCost: null, pricingStatus: "PENDING" })],
+    }));
+    expect(w.state).toBe("NEEDS_PRICING");
+    expect(w.needsCost).toBe(1);
+    expect(w.blockers).toEqual(["1 line needs a current cost from purchase.", "Line 2 needs a cost from presales."]);
   });
 
   it("a sent quote is with the customer; an expired one is flagged", () => {

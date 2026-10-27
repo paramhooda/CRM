@@ -18,7 +18,8 @@ import { THRESHOLDS, STAGE_META, CLOSED_STAGES, type StageKey } from "@/lib/cons
 import { OPEN_PRESALES, OPEN_PRICING, resumeDueDate, specChanged, specLock } from "@/lib/workflow";
 import { zodErrors, type ActionResult } from "@/lib/validation";
 import { applyStageChange, UserError } from "@/server/domain/stage";
-import { lineInputSchema, resolveSpec, rollUpDeal } from "@/server/domain/lines";
+import { lineInputSchema, resolveSpec, rollUpDeal, costFactsLoader } from "@/server/domain/lines";
+import { costExpired, lineCostStatus, linesText, needsInternalCost, needsPurchaseCost, resolveCostSource, type CostSourceKey } from "@/lib/costing";
 
 const DAY = 86_400_000;
 const openPresales = { in: [...OPEN_PRESALES] };
@@ -82,9 +83,11 @@ async function placeholderOemIds(tx: Tx) {
   return new Set((await tx.oem.findMany({ where: { isPlaceholder: true }, select: { id: true } })).map((o) => o.id));
 }
 
-/** Lines that are part of the real BOQ (not quick estimates) and still need a current cost from purchase. */
-function needsCost(l: { isEstimate: boolean; pricingStatus: string; unitCost: unknown }) {
-  return !l.isEstimate && (l.pricingStatus !== "QUOTED" || l.unitCost === null);
+/** Own-brand lines must carry their internal cost before the BOQ moves on: presales enters it, or the rate card. */
+function assertInternalCosts(lines: Parameters<typeof needsInternalCost>[0][], what: string) {
+  const missing = lines.filter(needsInternalCost).map((l) => l.lineNo!);
+  if (missing.length)
+    throw new UserError(`Enter the cost of own-brand ${linesText(missing)} before ${what}, or mark ${missing.length > 1 ? "them" : "it"} "Source via purchase".`);
 }
 
 /** BOQ must be made of real, fully classified lines before it goes to purchase or the customer. */
@@ -284,7 +287,8 @@ export async function submitBoq(requestId: string, input: Record<string, unknown
     db.$transaction(async (tx) => {
       const count = await assertRealBoq(tx, r.opportunityId, "submitting");
       const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: r.opportunityId } });
-      const pending = lines.filter(needsCost);
+      assertInternalCosts(lines, "submitting");
+      const pending = lines.filter(needsPurchaseCost);
       const now = new Date();
       await tx.presalesRequest.update({
         where: { id: requestId },
@@ -310,7 +314,7 @@ export async function submitBoq(requestId: string, input: Record<string, unknown
           title: `${kind === "REPRICE" ? "Re-pricing" : "Pricing"} requested: ${opp.name}`,
           body: kind === "REPRICE"
             ? `BOQ revision ${r.revision}: ${pending.length} of ${count} lines changed and need a cost. ${r.reason ?? ""}`.trim()
-            : `${user.name} submitted a ${count}-line BOQ. Get OEM / distributor pricing.`,
+            : `${user.name} submitted a ${count}-line BOQ. Get OEM / distributor pricing for ${pending.length} line${pending.length > 1 ? "s" : ""}.`,
           link: boqLink(r.opportunityId),
         });
       }
@@ -366,13 +370,18 @@ export async function requestPricing(oppId: string, input: Record<string, unknow
         throw new UserError("This deal needs a BOQ from presales before pricing. Request a BOQ from presales, or mark it as a resale deal in Edit.");
       await assertRealBoq(tx, oppId, "requesting pricing");
       const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId } });
-      const pending = lines.filter(needsCost);
+      const purchaseLines = lines.filter((l) => !l.isEstimate && l.costSource === "PURCHASE");
+      if (!purchaseLines.length)
+        throw new UserError("No line on this deal is costed by purchase. Own-brand lines use the rate card or a cost from presales.");
+      const pending = lines.filter(needsPurchaseCost);
+      const expired = lines.filter((l) => costExpired(l, new Date()));
       const previous = await tx.pricingRequest.count({ where: { opportunityId: oppId, status: { not: "CANCELLED" } } });
       const kind = pending.length ? (previous ? "REPRICE" : "FULL") : "REVALIDATE";
       if (kind !== "FULL" && (!parsed.data.reason || parsed.data.reason.length < 5))
         throw new UserError(kind === "REVALIDATE" ? "Say why the costs need re-validating." : "Say what changed so purchase knows what to price.");
       const purchaseId = await purchaseFor(tx, parsed.data.assignedToId || opp.purchaseOwnerId);
-      const target = kind === "REVALIDATE" ? lines.filter((l) => !l.isEstimate) : pending;
+      // Re-validation sends back only the lines whose supplier price has lapsed (all purchase lines when none has)
+      const target = kind === "REVALIDATE" ? (expired.length ? expired : purchaseLines) : pending;
       await tx.opportunityLineItem.updateMany({ where: { id: { in: target.map((l) => l.id) } }, data: { pricingStatus: "PENDING" } });
       await tx.pricingRequest.create({
         data: { opportunityId: oppId, requestedById: user.id, assignedToId: purchaseId, kind, reason: parsed.data.reason || null, dueDate: parsed.data.dueDate, notes: parsed.data.notes || null },
@@ -424,20 +433,28 @@ export async function completePricing(requestId: string, input: Record<string, u
   const parsed = completePricingSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   if (parsed.data.quoteValidTill.getTime() < Date.now() - DAY) return { ok: false, error: "Supplier pricing validity is in the past.", fieldErrors: { quoteValidTill: "Already expired" } };
-  const missing = await db.opportunityLineItem.findMany({ where: { opportunityId: r.opportunityId, isEstimate: false, unitCost: null }, select: { lineNo: true } });
+  const purchaseLines = { opportunityId: r.opportunityId, isEstimate: false, costSource: "PURCHASE" as const };
+  const missing = await db.opportunityLineItem.findMany({ where: { ...purchaseLines, unitCost: null }, select: { lineNo: true } });
   if (missing.length) return { ok: false, error: `Line ${missing.map((l) => l.lineNo).join(", ")} still need${missing.length === 1 ? "s" : ""} a unit cost.` };
+  const now = new Date();
+  // Each supplier quotes its own validity. Lines without one, or with a lapsed one, take the date confirmed here.
   await db.$transaction(async (tx) => {
-    const now = new Date();
+    await tx.opportunityLineItem.updateMany({
+      where: { ...purchaseLines, OR: [{ costValidTill: null }, { costValidTill: { lt: now } }] },
+      data: { costValidTill: parsed.data.quoteValidTill },
+    });
+    await tx.opportunityLineItem.updateMany({ where: purchaseLines, data: { pricingStatus: "QUOTED" } });
+    const first = await tx.opportunityLineItem.findFirst({ where: purchaseLines, orderBy: { costValidTill: "asc" }, select: { costValidTill: true } });
+    const validTill = first?.costValidTill ?? parsed.data.quoteValidTill;
     await tx.pricingRequest.update({
       where: { id: requestId },
-      data: { status: "QUOTED", quotedAt: now, startedAt: r.startedAt ?? now, quoteValidTill: parsed.data.quoteValidTill, responseNotes: parsed.data.responseNotes || null },
+      data: { status: "QUOTED", quotedAt: now, startedAt: r.startedAt ?? now, quoteValidTill: validTill, responseNotes: parsed.data.responseNotes || null },
     });
-    await tx.opportunityLineItem.updateMany({ where: { opportunityId: r.opportunityId, isEstimate: false }, data: { pricingStatus: "QUOTED" } });
-    await recordEvent(tx, { entityType: "Opportunity", entityId: r.opportunityId, action: "PRICING_COMPLETED", userId: user.id, newValue: `Valid till ${fmtDate(parsed.data.quoteValidTill)}` });
+    await recordEvent(tx, { entityType: "Opportunity", entityId: r.opportunityId, action: "PRICING_COMPLETED", userId: user.id, newValue: `Earliest validity ${fmtDate(validTill)}` });
     await notify(tx, [r.opportunity.salesOwnerId, r.opportunity.presalesOwnerId, r.requestedById], {
       type: "PRICING_COMPLETE",
       title: `Pricing ready: ${r.opportunity.name}`,
-      body: `${user.name} added costs, valid till ${fmtDate(parsed.data.quoteValidTill)}. Set sell prices and generate the quote.`,
+      body: `${user.name} added costs, the earliest valid till ${fmtDate(validTill)}. Set sell prices and generate the quote.`,
       link: boqLink(r.opportunityId),
       exclude: user.id,
     });
@@ -591,6 +608,9 @@ export async function cancelRequest(kind: ReqKind, requestId: string, input: Rec
  * - Specification is locked while purchase is pricing, and to the assignee while presales is working on it.
  * - A costed line whose specification changes is flagged for re-pricing.
  * - "To be decided" OEM is only allowed on estimate lines.
+ * - Each line's cost comes from its source: purchase lines from purchase (with the supplier's validity), rate card
+ *   lines from the catalogue's standard cost, presales lines from presales. Spec editors choose the source, within
+ *   what the line allows; moving a line to or from purchase is a specification change.
  */
 export async function saveBoq(oppId: string, rawLines: unknown[], version?: number): Promise<ActionResult<{ version: number }>> {
   const user = await requireUser();
@@ -602,7 +622,8 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
   const spec = can.editBoqSpec(user, opp);
   const cost = can.editBoqCost(user);
   const price = can.editBoqPrice(user, opp);
-  if (!spec && !cost && !price) return { ok: false, error: "You cannot edit these line items." };
+  const internal = can.editInternalCost(user, opp);
+  if (!spec && !cost && !price && !internal) return { ok: false, error: "You cannot edit these line items." };
   if (isClosed(opp.stage)) return { ok: false, error: "Line items are locked on closed deals." };
 
   const dec = (n: number | null | undefined) => (n === null || n === undefined ? null : new Prisma.Decimal(n));
@@ -625,6 +646,7 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
       await tx.pricingRequest.updateMany({ where: { opportunityId: oppId, status: "REQUESTED", assignedToId: user.id }, data: { status: "IN_PROGRESS", startedAt } });
       const lock = spec ? specLock({ presalesOpen: presalesOpen && { assigneeId: presalesOpen.assignedToId }, pricingOpen: pricingOpen > 0, userId: user.id, isManager: isManager(user) }) : null;
 
+      const costFacts = await costFactsLoader(tx);
       const existing = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId } });
       const byId = new Map(existing.map((l) => [l.id, l]));
       const incomingIds = new Set(parsed.data.filter((l) => l.id).map((l) => l.id!));
@@ -639,16 +661,40 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
       for (const l of parsed.data) {
         lineNo++;
         const cur = l.id ? byId.get(l.id) : undefined;
-        const costData = { unitCost: dec(l.unitCost), distributor: l.distributor || null, oemQuoteRef: l.oemQuoteRef || null, leadTimeDays: l.leadTimeDays ?? null };
         const priceData = { unitPrice: dec(l.unitPrice) };
         const specData = spec ? await resolveSpec(tx, l, opp.contractTermMonths) : null;
         if (specData && !specData.isEstimate && tbd.has(specData.oemId))
           throw new UserError(`Line ${lineNo}: choose the OEM. "To be decided" is only allowed on estimate lines.`);
+        if (!cur && !spec) continue;
+
+        // Cost source, and what this user may enter for it
+        const facts = await costFacts(specData ?? cur!);
+        const source = resolveCostSource(spec || internal ? l.costSource ?? cur?.costSource : cur!.costSource, facts);
+        const sourceChanged = !!cur && source !== cur.costSource;
+        if (sourceChanged && lock && (source === "PURCHASE" || cur!.costSource === "PURCHASE")) throw new UserError(lock);
+        const canCost = source === "PURCHASE" ? cost : source === "PRESALES" && internal;
+        const costData: {
+          costSource: CostSourceKey; unitCost?: Prisma.Decimal | null; costValidTill?: Date | null; costNote?: string | null;
+          distributor?: string | null; oemQuoteRef?: string | null; leadTimeDays?: number | null;
+        } = { costSource: source };
+        if (source === "RATE_CARD") Object.assign(costData, { unitCost: dec(facts.standardCost), costValidTill: null });
+        else if (canCost) {
+          Object.assign(costData, { unitCost: dec(l.unitCost), costNote: l.costNote || null });
+          if (source === "PURCHASE")
+            Object.assign(costData, { distributor: l.distributor || null, oemQuoteRef: l.oemQuoteRef || null, leadTimeDays: l.leadTimeDays ?? null, costValidTill: l.costValidTill ?? null });
+        } else if (spec && l.costNote !== undefined) costData.costNote = l.costNote || null;
+        const costChanged = canCost && (!cur || num(cur.unitCost) !== (l.unitCost ?? null) || (cur.distributor ?? null) !== (l.distributor || null)
+          || (cur.costValidTill?.getTime() ?? null) !== (l.costValidTill?.getTime() ?? null));
+        const hasCost = source === "RATE_CARD" ? facts.standardCost !== null : canCost ? l.unitCost !== null && l.unitCost !== undefined : !!cur && cur.unitCost !== null;
+
         if (!cur) {
-          if (!spec) continue;
           if (lock) throw new UserError(lock);
+          const { status } = lineCostStatus({ source, prevStatus: null, sourceChanged: false, specChanged: true, canCost, costChanged: true, hasCost });
           await tx.opportunityLineItem.create({
-            data: { opportunityId: oppId, lineNo, ...specData!, ...(cost ? costData : {}), ...(price ? priceData : {}), createdById: user.id, updatedById: user.id },
+            data: {
+              opportunityId: oppId, lineNo, ...specData!, ...costData,
+              pricingStatus: status, ...(price ? priceData : {}), createdById: user.id, updatedById: user.id,
+            },
           });
           saved++;
           continue;
@@ -663,15 +709,12 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
           if (changedSpec && lock) throw new UserError(lock);
           Object.assign(data, specData);
         }
-        const costChanged = cost && (num(cur.unitCost) !== (l.unitCost ?? null) || (cur.distributor ?? null) !== (l.distributor || null));
-        if (cost) Object.assign(data, costData);
+        Object.assign(data, costData);
         if (price) Object.assign(data, priceData);
-        if (cost && costChanged) data.pricingStatus = l.unitCost !== null && l.unitCost !== undefined ? "QUOTED" : "PENDING";
-        else if (changedSpec && cur.pricingStatus === "QUOTED") {
-          // Purchase priced a different specification: the cost stays as a reference but must be re-confirmed
-          data.pricingStatus = "PENDING";
-          repriced++;
-        } else if (cost && !changedSpec && l.unitCost !== null && l.unitCost !== undefined) data.pricingStatus = "QUOTED";
+        // A purchase line whose specification changed keeps its old cost as a reference until purchase re-confirms it
+        const st = lineCostStatus({ source, prevStatus: cur.pricingStatus, sourceChanged, specChanged: changedSpec, canCost, costChanged, hasCost });
+        data.pricingStatus = st.status;
+        if (st.repriced) repriced++;
         await tx.opportunityLineItem.update({ where: { id: cur.id }, data });
         saved++;
       }
@@ -713,6 +756,8 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
         throw new UserError("Presales is still working on the BOQ. Quote once they submit it.");
       if (await tx.pricingRequest.count({ where: { opportunityId: oppId, status: openPricing } }))
         throw new UserError("Purchase is still pricing the BOQ. Quote once pricing is complete.");
+      if (opp.presalesRequired && !(await tx.presalesRequest.count({ where: { opportunityId: oppId, status: "BOQ_SUBMITTED" } })))
+        throw new UserError("This deal needs a BOQ from presales before it can be quoted.");
       await assertRealBoq(tx, oppId, "quoting");
       const m = parsed.data.marginPct;
       if (m !== undefined) {
@@ -726,13 +771,16 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
         include: { oem: { select: { name: true } }, product: { select: { hsnSac: true } } },
       });
       const t = boqTotals(lines);
-      const pending = lines.filter(needsCost).map((l) => l.lineNo);
-      if (pending.length) throw new UserError(`Line ${pending.join(", ")} changed since purchase priced ${pending.length > 1 ? "them" : "it"}. Request pricing first.`);
+      const pending = lines.filter(needsPurchaseCost).map((l) => l.lineNo);
+      if (pending.length) throw new UserError(`${linesText(pending).replace(/^l/, "L")} still need${pending.length > 1 ? "" : "s"} a current cost from purchase. Request pricing first.`);
+      assertInternalCosts(lines, "quoting");
       if (!t.fullyPriced) throw new UserError("Every BOQ line needs a sell price before quoting.");
-      if (!t.fullyCosted) throw new UserError("Pricing from Purchase is incomplete.");
-      const pricing = await tx.pricingRequest.findFirst({ where: { opportunityId: oppId, status: "QUOTED" }, orderBy: { quotedAt: "desc" } });
-      if (pricing?.quoteValidTill && pricing.quoteValidTill < new Date())
-        throw new UserError(`Supplier pricing expired on ${fmtDate(pricing.quoteValidTill)}. Ask purchase to re-validate it before quoting.`);
+      if (!t.fullyCosted) throw new UserError("Some lines have no cost yet.");
+      const expired = lines.filter((l) => costExpired(l, new Date()));
+      if (expired.length) {
+        const first = new Date(Math.min(...expired.map((l) => l.costValidTill!.getTime())));
+        throw new UserError(`Supplier pricing on ${linesText(expired.map((l) => l.lineNo))} expired on ${fmtDate(first)}. Ask purchase to re-validate it before quoting.`);
+      }
 
       const last = await tx.quote.findFirst({ where: { opportunityId: oppId }, orderBy: { version: "desc" } });
       await tx.quote.updateMany({ where: { opportunityId: oppId, status: { in: ["DRAFT", "SUBMITTED", "CHANGES_REQUESTED"] } }, data: { status: "SUPERSEDED" } });

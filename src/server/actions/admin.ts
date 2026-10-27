@@ -84,18 +84,22 @@ export async function addPicklistValue(type: string, value: string): Promise<Act
   return { ok: true };
 }
 
-/** Category "needs presales" (solution vs resale default) and OEM "runs deal registration". */
-export async function togglePicklistFlag(kind: "OEM" | "CATEGORY", id: string): Promise<ActionResult> {
+/**
+ * Category "needs presales" (solution vs resale default); OEM "runs deal registration" and "own brand" (costed from
+ * the rate card or by presales instead of purchase, for lines added from now on).
+ */
+export async function togglePicklistFlag(kind: "OEM" | "CATEGORY", id: string, flag = "dealRegistration"): Promise<ActionResult> {
   const admin = await requireAdmin();
   if (kind === "OEM") {
     const o = await db.oem.findUniqueOrThrow({ where: { id } });
-    if (o.isPlaceholder) return { ok: false, error: "\"To be decided\" cannot run deal registration." };
-    await db.oem.update({ where: { id }, data: { dealRegistration: !o.dealRegistration } });
+    if (o.isPlaceholder) return { ok: false, error: "\"To be decided\" is a placeholder and cannot carry flags." };
+    if (flag === "ownBrand") await db.oem.update({ where: { id }, data: { ownBrand: !o.ownBrand } });
+    else await db.oem.update({ where: { id }, data: { dealRegistration: !o.dealRegistration } });
   } else {
     const c = await db.category.findUniqueOrThrow({ where: { id } });
     await db.category.update({ where: { id }, data: { needsPresales: !c.needsPresales } });
   }
-  await db.auditLog.create({ data: { entityType: "Picklist", entityId: id, action: "FLAG", changedById: admin.id } });
+  await db.auditLog.create({ data: { entityType: "Picklist", entityId: id, action: "FLAG", field: kind === "OEM" ? flag : "needsPresales", changedById: admin.id } });
   revalidatePath("/admin");
   return { ok: true };
 }

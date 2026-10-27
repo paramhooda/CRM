@@ -29,7 +29,7 @@ export type DealAction = Base &
     | { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number; asked?: string[] }
     | { kind: "askSales"; requestId: string }
     | { kind: "answer"; requestId: string; question: string; askedBy: string }
-    | { kind: "requestPricing"; oppId: string; purchase: U[]; toPrice: number; first: boolean }
+    | { kind: "requestPricing"; oppId: string; purchase: U[]; toPrice: number; first: boolean; expired?: number }
     | { kind: "completePricing"; requestId: string }
     | { kind: "sendBack"; requestId: string; presalesName: string | null }
     | { kind: "reassign"; reqKind: "presales" | "pricing"; requestId: string; people: U[]; currentId: string }
@@ -104,7 +104,7 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
       return (
         <DialogContent
           title="Submit BOQ"
-          description={a.toPrice ? `${a.toPrice} of ${a.lineCount} lines need a cost and go to purchase. The deal moves to Pricing.` : `All ${a.lineCount} lines already have a cost. Sales can quote straight away.`}
+          description={a.toPrice ? `${a.toPrice} of ${a.lineCount} lines go to purchase for a supplier price. The deal moves to Pricing.` : `None of the ${a.lineCount} lines needs a price from purchase. Sales can quote straight away.`}
         >
           <form className={form} onSubmit={submit((f) => () => submitBoq(a.requestId, f), a.toPrice ? "BOQ submitted. Purchase notified." : "BOQ submitted. Sales notified.")}>
             {a.asked && a.asked.length > 0 && <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">Sales asked for: {a.asked.join(", ")}</p>}
@@ -159,7 +159,13 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
       return (
         <DialogContent
           title={a.label}
-          description={revalidate ? "Purchase re-confirms every line's cost and sets a new validity." : `${a.toPrice} line${a.toPrice > 1 ? "s" : ""} go to purchase for costs. The deal moves to Pricing.`}
+          description={
+            revalidate
+              ? a.expired
+                ? `The ${a.expired} line${a.expired > 1 ? "s" : ""} whose supplier price lapsed go${a.expired > 1 ? "" : "es"} back to purchase to re-confirm.`
+                : "Purchase re-confirms the supplier price of every purchase line."
+              : `${a.toPrice} line${a.toPrice > 1 ? "s" : ""} go to purchase for a supplier price. The deal moves to Pricing.`
+          }
         >
           <form className={form} onSubmit={submit((f) => () => requestPricing(a.oppId, f), "Purchase notified")}>
             {(!a.first || revalidate) && (
@@ -185,9 +191,9 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
     }
     case "completePricing":
       return (
-        <DialogContent title="Pricing complete" description="Sales is notified to add margin and send the quote.">
+        <DialogContent title="Pricing complete" description="Sales is notified to add margin and send the quote. Set each supplier's validity on its lines; this date applies to lines without one.">
           <form className={form} onSubmit={submit((f) => () => completePricing(a.requestId, f), "Pricing sent to sales")}>
-            <Field label="Supplier pricing valid till" required error={errors.quoteValidTill}>
+            <Field label="Valid till, for lines without their own date" required error={errors.quoteValidTill}>
               <Input name="quoteValidTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} />
             </Field>
             <Field label="Notes for sales"><Textarea name="responseNotes" className="min-h-14" placeholder="Stock, price hold, lead times" /></Field>

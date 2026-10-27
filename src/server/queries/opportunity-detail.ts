@@ -9,6 +9,7 @@ import { loadStageFacts } from "@/server/domain/stage-facts";
 import { toNumber } from "@/lib/format";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { boqTotals } from "@/lib/boq";
+import { costExpired } from "@/lib/costing";
 
 export async function getOpportunityDetail(user: CurrentUser, id: string) {
   const exists = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] }, select: { id: true } });
@@ -26,7 +27,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
       presalesOwner: { select: { id: true, name: true } },
       purchaseOwner: { select: { id: true, name: true } },
       contacts: { include: { contact: { select: { id: true, firstName: true, lastName: true, title: true, email: true, phone: true, mobile: true } } } },
-      lineItems: { orderBy: { lineNo: "asc" }, include: { oem: { select: { name: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } }, product: { select: { listPrice: true, standardCost: true } } } },
+      lineItems: { orderBy: { lineNo: "asc" }, include: { oem: { select: { name: true, ownBrand: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } }, product: { select: { listPrice: true, standardCost: true } } } },
       presalesRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true } } } },
       pricingRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true } } } },
       quotes: { orderBy: { version: "desc" } },
@@ -48,6 +49,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     }),
   ]);
   const showCost = can.viewCost(user);
+  const now = new Date();
   const lines = o.lineItems.map((l) => ({
     id: l.id,
     lineNo: l.lineNo,
@@ -72,8 +74,13 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     oemQuoteRef: showCost ? l.oemQuoteRef : null,
     leadTimeDays: l.leadTimeDays,
     pricingStatus: l.pricingStatus,
-    /** Costed once, but the specification changed since: purchase must re-confirm */
+    ownBrand: l.oem.ownBrand,
+    costSource: l.costSource,
+    costValidTill: l.costValidTill,
+    costNote: showCost ? l.costNote : null,
+    /** Costed once, but the specification changed since: the cost must be re-confirmed */
     costStale: !l.isEstimate && l.pricingStatus === "PENDING" && l.unitCost !== null,
+    costExpired: costExpired(l, now),
     unitPrice: l.unitPrice !== null ? toNumber(l.unitPrice) : null,
     listPrice: l.product?.listPrice ? toNumber(l.product.listPrice) : null,
     standardCost: l.product?.standardCost ? toNumber(l.product.standardCost) : null,
@@ -82,12 +89,14 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     notes: l.notes,
   }));
   const totals = boqTotals(o.lineItems);
-  const now = new Date();
   const ps = o.presalesRequests[0] ?? null;
   const pq = o.pricingRequests[0] ?? null;
   const workflow = deriveWorkflow({
     stage: o.stage,
-    lines: o.lineItems.map((l) => ({ pricingStatus: l.pricingStatus, unitCost: l.unitCost === null ? null : toNumber(l.unitCost), unitPrice: l.unitPrice === null ? null : toNumber(l.unitPrice), isEstimate: l.isEstimate })),
+    lines: o.lineItems.map((l) => ({
+      lineNo: l.lineNo, pricingStatus: l.pricingStatus, costSource: l.costSource, costValidTill: l.costValidTill, isEstimate: l.isEstimate,
+      unitCost: l.unitCost === null ? null : toNumber(l.unitCost), unitPrice: l.unitPrice === null ? null : toNumber(l.unitPrice),
+    })),
     presales: ps && { ...ps, assignee: ps.assignedTo.name },
     pricing: pq && { ...pq, assignee: pq.assignedTo.name },
     quote: o.quotes[0] ?? null,
@@ -130,6 +139,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
       requestPresales: can.requestPresales(user, o),
       spec: can.editBoqSpec(user, o) && !["WON", "LOST", "DROPPED"].includes(o.stage),
       cost: can.editBoqCost(user) && !["WON", "LOST", "DROPPED"].includes(o.stage),
+      internalCost: can.editInternalCost(user, o) && !["WON", "LOST", "DROPPED"].includes(o.stage),
       price: can.editBoqPrice(user, o) && !["WON", "LOST", "DROPPED"].includes(o.stage),
       viewCost: showCost,
       quote: can.createQuote(user, o),

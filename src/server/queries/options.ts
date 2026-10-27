@@ -16,7 +16,7 @@ export const getOptions = cache(async () => {
     db.product.findMany({
       where: { active: true },
       orderBy: [{ oem: { sortOrder: "asc" } }, { code: "asc" }],
-      include: { oem: { select: { name: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } } },
+      include: { oem: { select: { name: true, ownBrand: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } } },
     }),
   ]);
   const pl = (type: string) => picklists.filter((p) => p.type === type).map((p) => p.value);
@@ -24,7 +24,7 @@ export const getOptions = cache(async () => {
     bus: bus.map((b) => ({ id: b.id, name: b.name, code: b.code })),
     categories: bus.flatMap((b) => b.categories.map((c) => ({ id: c.id, name: c.name, buId: b.id, buName: b.name, needsPresales: c.needsPresales }))),
     // "To be decided" is kept apart: only quick estimates may use it, never catalogue products or BOQ lines
-    oems: oems.filter((o) => !o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems, dealRegistration: o.dealRegistration })),
+    oems: oems.filter((o) => !o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems, dealRegistration: o.dealRegistration, ownBrand: o.ownBrand })),
     oemTbd: oems.filter((o) => o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems }))[0] ?? null,
     sales: users.filter((u) => u.role === "SALES" || u.role === "SALES_HEAD").map(({ id, name }) => ({ id, name })),
     presales: users.filter((u) => u.role === "PRESALES").map(({ id, name }) => ({ id, name })),
@@ -35,7 +35,7 @@ export const getOptions = cache(async () => {
     competitors: pl("COMPETITOR"),
     distributors: pl("DISTRIBUTOR"),
     products: products.map((p) => ({
-      id: p.id, code: p.code, name: p.name, oemId: p.oemId, oemName: p.oem.name, businessUnitId: p.businessUnitId,
+      id: p.id, code: p.code, name: p.name, oemId: p.oemId, oemName: p.oem.name, ownBrand: p.oem.ownBrand, businessUnitId: p.businessUnitId,
       buName: p.businessUnit.name, categoryId: p.categoryId, categoryName: p.category.name, productType: p.productType,
       unit: p.unit, billingFrequency: p.billingFrequency, defaultTermMonths: p.defaultTermMonths,
       listPrice: p.listPrice === null ? null : Number(p.listPrice), standardCost: p.standardCost === null ? null : Number(p.standardCost),

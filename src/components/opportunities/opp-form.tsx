@@ -307,7 +307,7 @@ export function OppForm({
         <div role="radiogroup" aria-label="Presales" className="grid gap-2 sm:col-span-3 sm:grid-cols-2">
           {[
             { on: true, icon: <Wrench className="size-4" />, title: "Needs presales", body: "Solution deal: presales designs it and prepares the BOQ, then purchase prices it." },
-            { on: false, icon: <ShoppingCart className="size-4" />, title: "No presales", body: "Resale deal: you pick catalogue products and send them to purchase for pricing." },
+            { on: false, icon: <ShoppingCart className="size-4" />, title: "No presales", body: "Resale deal: you pick catalogue products. Purchase prices the third-party ones; own brands use the rate card." },
           ].map((o) => {
             const locked = mode === "edit" && openPresales && !o.on;
             return (

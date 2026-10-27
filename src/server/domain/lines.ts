@@ -6,6 +6,7 @@ import type { Tx } from "@/lib/db";
 import { recordChanges } from "@/lib/audit";
 import { boqTotals, lineMultiplier } from "@/lib/boq";
 import { toNumber } from "@/lib/format";
+import { resolveCostSource, type SourceFacts } from "@/lib/costing";
 
 export const HSN_SAC = /^\d{4,8}$/;
 
@@ -29,6 +30,9 @@ export const lineInputSchema = z
     distributor: z.string().max(80).nullish(),
     oemQuoteRef: z.string().max(80).nullish(),
     leadTimeDays: z.coerce.number().int().min(0).max(365).nullish(),
+    costSource: z.enum(["PURCHASE", "RATE_CARD", "PRESALES"]).nullish(),
+    costValidTill: z.preprocess((v) => (v === "" ? null : v), z.coerce.date().nullish()),
+    costNote: z.string().trim().max(500).nullish(),
     unitPrice: z.coerce.number().min(0).nullish(),
     notes: z.string().max(500).nullish(),
   })
@@ -64,6 +68,27 @@ export async function resolveSpec(tx: Tx, l: LineInput, fallbackTerm: number | n
     gstRatePct: product ? product.gstRatePct : l.gstRatePct === null || l.gstRatePct === undefined ? null : new Prisma.Decimal(l.gstRatePct),
     notes: l.notes || null,
   };
+}
+
+/** What decides a line's cost source (own brand, catalogue standard cost), loaded once per save. */
+export async function costFactsLoader(tx: Tx) {
+  const own = new Set((await tx.oem.findMany({ where: { ownBrand: true }, select: { id: true } })).map((o) => o.id));
+  const std = new Map<string, number | null>();
+  return async (spec: { productId: string | null; oemId: string }): Promise<SourceFacts> => {
+    if (spec.productId && !std.has(spec.productId)) {
+      const p = await tx.product.findUnique({ where: { id: spec.productId }, select: { standardCost: true } });
+      std.set(spec.productId, p?.standardCost === null || p?.standardCost === undefined ? null : toNumber(p.standardCost));
+    }
+    return { ownBrand: own.has(spec.oemId), isProduct: !!spec.productId, standardCost: spec.productId ? std.get(spec.productId) ?? null : null };
+  };
+}
+
+/** Cost fields for a new line: its cost source, and the rate card cost when that applies. */
+export function initialCost(f: SourceFacts, requested?: string | null) {
+  const costSource = resolveCostSource(requested, f);
+  return costSource === "RATE_CARD"
+    ? { costSource, unitCost: new Prisma.Decimal(f.standardCost!), pricingStatus: "QUOTED" as const }
+    : { costSource };
 }
 
 export const BILLING_FREQUENCIES = ["ONE_TIME", "MONTHLY", "QUARTERLY", "ANNUAL"] as const;

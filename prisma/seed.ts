@@ -4,7 +4,7 @@
 import { PrismaClient, Prisma, type Stage, type ForecastCategory } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import {
-  ACCOUNTS, ADMIN_NAME, BUSINESS_UNITS, CATEGORY_OEMS, PRESALES_CATEGORIES, DEAL_REG_OEMS, CATEGORY_PROFILE, CONTACT_TEMPLATES, FIRST_NAMES,
+  ACCOUNTS, ADMIN_NAME, BUSINESS_UNITS, CATEGORY_OEMS, PRESALES_CATEGORIES, DEAL_REG_OEMS, OWN_BRAND_OEMS, CATEGORY_PROFILE, CONTACT_TEMPLATES, FIRST_NAMES,
   LAST_NAMES, OEMS, PICKLISTS, PRESALES_PEOPLE, PURCHASE_PEOPLE, SALES_HEAD, SALES_PEOPLE, PRODUCT_TEMPLATES, COMPLEMENTS,
   OEM_CODE,
 } from "./seed-data";
@@ -121,7 +121,7 @@ async function main() {
     }
   }
   const oems: Record<string, string> = {};
-  for (const [i, name] of OEMS.entries()) oems[name] = (await db.oem.create({ data: { name, sortOrder: i, dealRegistration: DEAL_REG_OEMS.has(name) } })).id;
+  for (const [i, name] of OEMS.entries()) oems[name] = (await db.oem.create({ data: { name, sortOrder: i, dealRegistration: DEAL_REG_OEMS.has(name), ownBrand: OWN_BRAND_OEMS.has(name) } })).id;
   // Early estimates may not know the OEM yet; it must be replaced before quoting.
   // The migration creates this row on a fresh database; a forced re-seed truncates it, so upsert either way.
   const tbdRow = { name: "To be decided", sortOrder: -1, isPlaceholder: true, active: true };
@@ -839,6 +839,49 @@ async function main() {
     await db.opportunityLineItem.update({ where: { id: l.id }, data: { oemId: oemTbd, description: "Estimate · OEM to be decided" } });
     const lines = await db.opportunityLineItem.count({ where: { opportunityId: l.opportunityId } });
     if (lines === 1) await db.opportunity.update({ where: { id: l.opportunityId }, data: { oemId: oemTbd } });
+  }
+
+  // Cost sources. Own-brand lines take the rate card's standard cost; about one in four was re-costed by presales
+  // for the deal. Purchase lines carry their own supplier's validity: each distributor quotes a different period,
+  // starting from the deal's pricing response.
+  const ownLines = await db.opportunityLineItem.findMany({
+    where: { isEstimate: false, oem: { ownBrand: true } },
+    select: { id: true, unitCost: true, pricingStatus: true, product: { select: { standardCost: true } } },
+  });
+  for (const l of ownLines) {
+    const std = l.product?.standardCost ?? null;
+    if (std !== null && !chance(0.25)) {
+      await db.opportunityLineItem.update({ where: { id: l.id }, data: { costSource: "RATE_CARD", unitCost: std, pricingStatus: "QUOTED" } });
+    } else {
+      const unitCost = l.unitCost ?? (std !== null ? Math.round(Number(std) * 1.08) : null);
+      await db.opportunityLineItem.update({
+        where: { id: l.id },
+        data: {
+          costSource: "PRESALES", unitCost, pricingStatus: unitCost !== null ? "QUOTED" : "PENDING",
+          costNote: pick(["Sized on device count with L1 and L2 staffing", "Rate card plus 10% for 24x7 coverage", "Custom scope: effort estimate from the solution design"]),
+        },
+      });
+    }
+  }
+  const responded = await db.pricingRequest.findMany({ where: { status: "QUOTED", quoteValidTill: { not: null } }, orderBy: { quotedAt: "asc" }, select: { opportunityId: true, quoteValidTill: true } });
+  const validFrom = new Map(responded.map((r) => [r.opportunityId, r.quoteValidTill!]));
+  // Deals with a quote out had their prices re-confirmed along the way; about one in six has a supplier price
+  // that has since lapsed, so purchase has something to re-validate.
+  const quoted = await db.opportunity.findMany({ where: { stage: { in: ["PROPOSAL", "NEGOTIATION"] } }, select: { id: true } });
+  for (const o of quoted) if (validFrom.has(o.id)) validFrom.set(o.id, chance(1 / 6) ? daysAgo(int(2, 9)) : daysAhead(int(4, 35)));
+  const supplierLines = await db.opportunityLineItem.findMany({
+    where: { isEstimate: false, costSource: "PURCHASE", unitCost: { not: null }, opportunityId: { in: [...validFrom.keys()] } },
+    select: { id: true, opportunityId: true, distributor: true },
+  });
+  const distributors = PICKLISTS.DISTRIBUTOR!;
+  for (const l of supplierLines) {
+    const extra = l.distributor ? (distributors.indexOf(l.distributor) % 4) * 5 : 0;
+    await db.opportunityLineItem.update({ where: { id: l.id }, data: { costValidTill: new Date(validFrom.get(l.opportunityId)!.getTime() + extra * DAY) } });
+  }
+  // The pricing response records the earliest of its lines' validity
+  for (const [oppId, from] of validFrom) {
+    const last = await db.pricingRequest.findFirst({ where: { opportunityId: oppId, status: "QUOTED" }, orderBy: { quotedAt: "desc" }, select: { id: true } });
+    if (last) await db.pricingRequest.update({ where: { id: last.id }, data: { quoteValidTill: from } });
   }
 
   const n = await recomputeAll(db as unknown as Parameters<typeof recomputeAll>[0], NOW);

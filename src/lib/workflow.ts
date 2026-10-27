@@ -1,12 +1,14 @@
 // Sales → Presales → Purchase → Quote workflow rules (pure, unit-tested).
 // One derived state per deal tells everyone who the deal is waiting on and what is blocking it.
 import { fmtDate } from "./format";
+import { costExpired, linesText, needsInternalCost, needsPurchaseCost } from "./costing";
 
 export type WorkflowState =
   | "ESTIMATE" // only quick estimates or nothing yet: presales not engaged
   | "WITH_PRESALES" // BOQ (or a revision of it) being prepared
   | "WAITING_ON_SALES" // presales asked sales a question
-  | "NEEDS_PRICING" // BOQ lines without a current cost and no pricing request open
+  | "NEEDS_PRICING" // purchase lines without a current cost and no pricing request open
+  | "NEEDS_COSTING" // own-brand lines waiting on a cost from presales
   | "WITH_PURCHASE" // purchase is pricing
   | "READY_TO_QUOTE" // every line costed; sales sets prices and quotes
   | "QUOTE_SENT"
@@ -19,6 +21,7 @@ export const WORKFLOW_META: Record<WorkflowState, { label: string; tone: "slate"
   WITH_PRESALES: { label: "With presales", tone: "violet", waitingOn: "PRESALES" },
   WAITING_ON_SALES: { label: "Waiting on sales", tone: "amber", waitingOn: "SALES" },
   NEEDS_PRICING: { label: "Needs pricing", tone: "amber", waitingOn: "SALES" },
+  NEEDS_COSTING: { label: "Needs costing", tone: "violet", waitingOn: "PRESALES" },
   WITH_PURCHASE: { label: "With purchase", tone: "aqua", waitingOn: "PURCHASE" },
   READY_TO_QUOTE: { label: "Ready to quote", tone: "blue", waitingOn: "SALES" },
   QUOTE_SENT: { label: "Quote with customer", tone: "blue", waitingOn: "CUSTOMER" },
@@ -34,7 +37,7 @@ type Req = { status: string; dueDate: Date; createdAt: Date; assignee: string } 
 
 export type WorkflowInput = {
   stage: string;
-  lines: { pricingStatus: string; unitCost: number | null; unitPrice: number | null; isEstimate: boolean }[];
+  lines: { lineNo?: number; pricingStatus: string; unitCost: number | null; unitPrice: number | null; isEstimate: boolean; costSource?: string; costValidTill?: Date | null }[];
   presales: Req | null; // latest presales request
   pricing: Req | null; // latest pricing request
   quote: { status: string; version: number; validTill: Date; createdAt: Date } | null; // latest quote
@@ -51,8 +54,12 @@ export type WorkflowView = {
   overdue: boolean;
   /** Plain reasons why the next step cannot happen yet */
   blockers: string[];
-  /** Lines with no current cost (new, or changed since they were costed) */
+  /** Purchase lines with no current cost (new, or changed since they were costed) */
   needsCost: number;
+  /** Own-brand lines waiting on a cost from presales */
+  needsInternalCost: number;
+  /** Purchase lines whose supplier price has lapsed */
+  expiredCost: number;
   needsPrice: number;
 };
 
@@ -61,7 +68,10 @@ const isOpen = (r: Req | null, open: readonly string[]) => !!r && open.includes(
 /** The single source of truth for "where is this deal in the workflow, and who is it waiting on". */
 export function deriveWorkflow(i: WorkflowInput): WorkflowView {
   const real = i.lines.filter((l) => !l.isEstimate);
-  const needsCost = real.filter((l) => l.pricingStatus !== "QUOTED" || l.unitCost === null).length;
+  const lines = i.lines.map((l) => ({ ...l, costSource: l.costSource ?? "PURCHASE" }));
+  const needsCost = lines.filter(needsPurchaseCost).length;
+  const internal = lines.filter(needsInternalCost);
+  const expired = lines.filter((l) => costExpired(l, i.now));
   const needsPrice = real.filter((l) => l.unitPrice === null).length;
   const estimates = i.lines.filter((l) => l.isEstimate).length;
   const blockers: string[] = [];
@@ -95,20 +105,28 @@ export function deriveWorkflow(i: WorkflowInput): WorkflowView {
     else if (quoteCurrent && i.quote!.status === "ACCEPTED") state = "ACCEPTED";
     else if (!real.length) state = "ESTIMATE";
     else if (needsCost > 0) state = "NEEDS_PRICING";
+    else if (internal.length) state = "NEEDS_COSTING";
     else state = "READY_TO_QUOTE";
   }
 
   if (state === "READY_TO_QUOTE" || state === "CHANGES_REQUESTED") {
     if (estimates) blockers.push(`Replace ${estimates} estimate line${estimates > 1 ? "s" : ""} with catalogue products.`);
-    const validTill = i.pricing?.status === "QUOTED" ? i.pricing.quoteValidTill : null;
-    if (validTill && validTill < i.now) blockers.push(`Supplier pricing expired on ${fmtDate(validTill)}. Ask purchase to re-validate it.`);
+    if (expired.length) {
+      const first = new Date(Math.min(...expired.map((l) => l.costValidTill!.getTime())));
+      const which = expired.every((l) => l.lineNo) ? ` on ${linesText(expired.map((l) => l.lineNo!))}` : "";
+      blockers.push(`Supplier pricing${which} expired on ${fmtDate(first)}. Ask purchase to re-validate it.`);
+    }
   }
   if (state === "NEEDS_PRICING" && i.pricing?.status === "RETURNED")
     blockers.push(`Purchase sent the BOQ back: ${i.pricing.returnReason ?? "see the request"}`);
   if (state === "NEEDS_PRICING") blockers.push(`${needsCost} line${needsCost > 1 ? "s need" : " needs"} a current cost from purchase.`);
+  if ((state === "NEEDS_PRICING" || state === "NEEDS_COSTING") && internal.length) {
+    const which = internal.every((l) => l.lineNo) ? linesText(internal.map((l) => l.lineNo!)) : `${internal.length} own-brand line${internal.length > 1 ? "s" : ""}`;
+    blockers.push(`${which[0].toUpperCase()}${which.slice(1)} need${internal.length > 1 ? "" : "s"} a cost from presales.`);
+  }
 
   const meta = WORKFLOW_META[state];
-  return { state, label: meta.label, tone: meta.tone, waitingOn: meta.waitingOn, owner, due, overdue: !!due && due < i.now, blockers, needsCost, needsPrice };
+  return { state, label: meta.label, tone: meta.tone, waitingOn: meta.waitingOn, owner, due, overdue: !!due && due < i.now, blockers, needsCost, needsInternalCost: internal.length, expiredCost: expired.length, needsPrice };
 }
 
 // ───────────── BOQ line changes ─────────────

@@ -54,52 +54,68 @@ export function UserDialog({ id, initial }: { id?: string; initial?: { name: str
 }
 
 /**
- * Picklist values: click to activate or deactivate. Categories and OEMs also carry a flag (needs presales / runs deal
- * registration) that is switched in the second mode; flagged values are marked with a dot.
+ * Picklist values: click to activate or deactivate. Categories and OEMs also carry flags (needs presales; runs deal
+ * registration, own brand) that are switched by picking the flag first; flagged values are marked with its dot.
  */
+export type PicklistFlag = { key: string; label: string };
+const FLAG_COLORS = ["var(--primary)", "var(--s3)"];
+
 export function PicklistEditor({
-  title, type, kind, values, flagLabel,
-}: { title: string; type: string; kind: "OEM" | "CATEGORY" | "VALUE"; values: { id: string; label: string; active: boolean; flag?: boolean }[]; flagLabel?: string }) {
+  title, type, kind, values, flags = [],
+}: {
+  title: string; type: string; kind: "OEM" | "CATEGORY" | "VALUE";
+  values: { id: string; label: string; active: boolean; flags?: Record<string, boolean> }[];
+  flags?: PicklistFlag[];
+}) {
   const [v, setV] = useState("");
-  const [mode, setMode] = useState<"active" | "flag">("active");
+  const [mode, setMode] = useState("active");
   const { pending, run } = useAction();
+  const flag = flags.find((f) => f.key === mode);
+  const color = (key: string) => FLAG_COLORS[flags.findIndex((f) => f.key === key)] ?? FLAG_COLORS[0];
   const click = (x: (typeof values)[number]) =>
-    mode === "flag" && kind !== "VALUE"
-      ? run(() => togglePicklistFlag(kind, x.id), { success: `${x.label}: ${flagLabel?.toLowerCase()} ${x.flag ? "off" : "on"}` })
+    flag && kind !== "VALUE"
+      ? run(() => togglePicklistFlag(kind, x.id, flag.key), { success: `${x.label}: ${flag.label.toLowerCase()} ${x.flags?.[flag.key] ? "off" : "on"}` })
       : run(() => togglePicklistValue(kind, x.id), { success: x.active ? `${x.label} deactivated` : `${x.label} activated` });
   return (
     <div className="rounded-xl border border-border bg-surface">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <p className="text-[13px] font-semibold">{title} <span className="font-normal text-ink-3">{values.filter((x) => x.active).length}</span></p>
-        {flagLabel && (
+        {flags.length > 0 && (
           <div role="radiogroup" aria-label={`${title} click action`} className="ml-auto inline-flex rounded-md bg-surface-2 p-0.5 text-[11px]">
-            {(["active", "flag"] as const).map((m) => (
-              <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)} className={cn("rounded px-1.5 py-0.5 cursor-pointer", mode === m ? "bg-surface font-medium shadow-sm" : "text-ink-3")}>
-                {m === "active" ? "Active" : flagLabel}
+            {[{ key: "active", label: "Active" }, ...flags].map((m) => (
+              <button key={m.key} type="button" role="radio" aria-checked={mode === m.key} onClick={() => setMode(m.key)} className={cn("rounded px-1.5 py-0.5 cursor-pointer", mode === m.key ? "bg-surface font-medium shadow-sm" : "text-ink-3")}>
+                {m.label}
               </button>
             ))}
           </div>
         )}
       </div>
       <div className="flex flex-wrap gap-1.5 p-3">
-        {values.map((x) => (
-          <button
-            key={x.id}
-            disabled={pending}
-            onClick={() => click(x)}
-            title={mode === "flag" ? `Click to turn "${flagLabel}" ${x.flag ? "off" : "on"}` : x.active ? "Click to deactivate" : "Click to reactivate"}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs cursor-pointer",
-              x.active ? "border-border bg-surface-2 text-ink" : "border-dashed border-border text-ink-3 line-through",
-              x.flag && "border-[color-mix(in_srgb,var(--primary)_40%,transparent)]",
-            )}
-          >
-            {x.flag && <span className="size-1.5 rounded-full bg-primary" aria-label={flagLabel} />}
-            {x.label}
-          </button>
-        ))}
+        {values.map((x) => {
+          const on = flags.filter((f) => x.flags?.[f.key]);
+          return (
+            <button
+              key={x.id}
+              disabled={pending}
+              onClick={() => click(x)}
+              title={flag ? `Click to turn "${flag.label}" ${x.flags?.[flag.key] ? "off" : "on"}` : x.active ? "Click to deactivate" : "Click to reactivate"}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs cursor-pointer",
+                x.active ? "border-border bg-surface-2 text-ink" : "border-dashed border-border text-ink-3 line-through",
+                flag && x.flags?.[flag.key] && "border-[color-mix(in_srgb,var(--primary)_40%,transparent)]",
+              )}
+            >
+              {on.map((f) => <span key={f.key} className="size-1.5 rounded-full" style={{ background: color(f.key) }} aria-label={f.label} />)}
+              {x.label}
+            </button>
+          );
+        })}
       </div>
-      {flagLabel && <p className="px-3 pb-2 text-[11px] text-ink-3"><span className="mr-1 inline-block size-1.5 rounded-full bg-primary align-middle" />{flagLabel}</p>}
+      {flags.length > 0 && (
+        <p className="flex flex-wrap gap-x-3 px-3 pb-2 text-[11px] text-ink-3">
+          {flags.map((f) => <span key={f.key}><span className="mr-1 inline-block size-1.5 rounded-full align-middle" style={{ background: color(f.key) }} />{f.label}</span>)}
+        </p>
+      )}
       <form
         className="flex gap-2 border-t border-border p-2"
         onSubmit={(e) => { e.preventDefault(); run(() => addPicklistValue(type, v), { success: "Added", onOk: () => setV("") }); }}

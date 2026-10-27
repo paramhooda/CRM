@@ -43,8 +43,10 @@ export const can = {
   /** BOQ specification: part numbers, descriptions, quantities */
   editBoqSpec: (u: U, o: OppRef) =>
     isManager(u) || (u.role === "PRESALES" && o.presalesOwnerId === u.id) || (u.role === "SALES" && o.salesOwnerId === u.id),
-  /** Cost side: unit cost, distributor, OEM quote ref, lead time */
+  /** Cost side of purchase lines: unit cost, supplier validity, distributor, OEM quote ref, lead time */
   editBoqCost: (u: U) => u.role === "ADMIN" || u.role === "PURCHASE",
+  /** Internal cost of own-brand lines (presales costing, or reworking the rate card for this deal) */
+  editInternalCost: (u: U, o: OppRef) => u.role === "ADMIN" || (u.role === "PRESALES" && (!o.presalesOwnerId || o.presalesOwnerId === u.id)),
   /** Sell side: unit price */
   editBoqPrice: (u: U, o: OppRef) => isManager(u) || (u.role === "SALES" && o.salesOwnerId === u.id),
   /** Everyone involved in a deal may see buy prices and margin; only Purchase/Admin may change cost. */

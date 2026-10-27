@@ -146,6 +146,13 @@ enum LinePricingStatus {
   QUOTED
 }
 
+/// Where a line's cost comes from: purchase (supplier quote), the own-brand rate card, or presales' costing
+enum CostSource {
+  PURCHASE
+  RATE_CARD
+  PRESALES
+}
+
 enum QuoteStatus {
   DRAFT
   SUBMITTED
@@ -274,6 +281,8 @@ model Oem {
   isPlaceholder Boolean               @default(false)
   /// The OEM runs a deal registration programme, so deals with its products track registration status
   dealRegistration Boolean            @default(false)
+  /// Own brand (Progression, Neon Cloud): costed from the rate card or by presales, not by purchase
+  ownBrand         Boolean            @default(false)
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   opportunities Opportunity[]
@@ -588,6 +597,11 @@ model OpportunityLineItem {
   oemQuoteRef      String?
   leadTimeDays     Int?
   pricingStatus    LinePricingStatus @default(PENDING)
+  costSource       CostSource        @default(PURCHASE)
+  /// Until when the supplier's price holds (purchase lines; each vendor quotes its own validity)
+  costValidTill    DateTime?
+  /// How presales built an internal cost, or why a line was sent to purchase
+  costNote         String?
   // Sales (price per billing period for recurring lines)
   unitPrice        Decimal?          @db.Decimal(16, 2)
   notes            String?

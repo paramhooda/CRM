@@ -53,6 +53,9 @@ export const PRESALES_CATEGORIES = new Set([
   "Cybersecurity|SOC", "Cybersecurity|Compliance",
 ]);
 
+/** Own brands: costed from the rate card (catalogue standard cost) or by presales, not by purchase. */
+export const OWN_BRAND_OEMS = new Set(["Progression", "Neon Cloud"]);
+
 /** OEMs that run a deal registration programme. */
 export const DEAL_REG_OEMS = new Set([
   "HPE", "HPI", "Lenovo", "Dell", "Acer", "VMware", "Nutanix", "Cisco", "Fortinet", "Zscaler", "Crowdstrike", "Forcepoint",

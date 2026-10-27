@@ -103,26 +103,31 @@ export async function getPresalesWork(user: CurrentUser) {
   };
 }
 
+const expiringLine = (now: Date) => ({
+  isEstimate: false,
+  costSource: "PURCHASE" as const,
+  costValidTill: { gte: new Date(now.getTime() - 30 * DAY), lte: new Date(now.getTime() + 10 * DAY) },
+});
+
 export async function getPurchaseWork(user: CurrentUser) {
   const now = new Date();
   const [open, expiring, priced, base] = await Promise.all([
     db.pricingRequest.findMany({
       where: { assignedToId: user.id, status: { in: [...OPEN] } },
       include: {
-        opportunity: { select: { ...oppSelect, lineItems: { where: { isEstimate: false }, select: { unitCost: true, pricingStatus: true, oem: { select: { name: true } } } } } },
+        opportunity: { select: { ...oppSelect, lineItems: { where: { isEstimate: false, costSource: "PURCHASE" }, select: { unitCost: true, pricingStatus: true, oem: { select: { name: true } } } } } },
         requestedBy: { select: { name: true } },
       },
     }),
-    db.pricingRequest.findMany({
+    // Supplier prices lapsing on open deals I price: each line carries its own supplier's validity
+    db.opportunity.findMany({
       where: {
-        assignedToId: user.id,
-        status: "QUOTED",
-        quoteValidTill: { gte: new Date(now.getTime() - 30 * DAY), lte: new Date(now.getTime() + 10 * DAY) },
-        opportunity: { stage: { in: ["BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"] }, deletedAt: null },
+        purchaseOwnerId: user.id,
+        stage: { in: ["BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"] },
+        deletedAt: null,
+        lineItems: { some: expiringLine(now) },
       },
-      orderBy: { quoteValidTill: "asc" },
-      take: 6,
-      include: { opportunity: { select: oppSelect } },
+      select: { ...oppSelect, lineItems: { where: expiringLine(now), orderBy: { costValidTill: "asc" }, select: { costValidTill: true } } },
     }),
     db.pricingRequest.findMany({
       where: { assignedToId: user.id, status: "QUOTED", quotedAt: { gte: new Date(now.getTime() - 14 * DAY) } },
@@ -159,7 +164,11 @@ export async function getPurchaseWork(user: CurrentUser) {
   return {
     queue,
     rfqByOem: [...byOem.values()].map((x) => ({ oem: x.oem, lines: x.lines, deals: x.deals.size })).sort((a, b) => b.lines - a.lines),
-    expiring: expiring.map((e) => ({ id: e.id, opp: { id: e.opportunity.id, name: e.opportunity.name, account: e.opportunity.account.name }, validTill: e.quoteValidTill!, expired: e.quoteValidTill! < now })),
+    expiring: expiring
+      .map((o) => ({ id: o.id, opp: { id: o.id, name: o.name, account: o.account.name }, validTill: o.lineItems[0].costValidTill!, lines: o.lineItems.length }))
+      .map((e) => ({ ...e, expired: e.validTill < now }))
+      .sort((a, b) => a.validTill.getTime() - b.validTill.getTime())
+      .slice(0, 6),
     priced: priced.map((p) => ({ id: p.id, opp: { id: p.opportunity.id, name: p.opportunity.name, account: p.opportunity.account.name }, at: p.quotedAt! })),
     ...base,
   };

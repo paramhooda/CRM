@@ -122,11 +122,11 @@ export function PurchaseHome({ name, data }: { name: string; data: Purchase }) {
             <Section title="Quotes to request, by OEM" description="Uncosted lines across your queue. Batch one RFQ per OEM; click one to filter your queue." icon={<PackageSearch />} tone="blue">
               <RfqByOem rows={data.rfqByOem} />
             </Section>
-            <Section title="Supplier quotes expiring" description="Open deals whose supplier pricing lapses within 10 days, or lapsed in the last 30" icon={<CalendarX2 />} tone="red" flush>
+            <Section title="Supplier quotes expiring" description="Open deals with a supplier price that lapses within 10 days, or lapsed in the last 30. The earliest is shown." icon={<CalendarX2 />} tone="red" flush>
               {data.expiring.length === 0 ? <Empty text="No supplier quotes expiring soon." /> : (
                 <ul>
                   {data.expiring.map((e) => (
-                    <Row key={e.id} href={`/opportunities/${e.opp.id}?tab=boq`} title={e.opp.name} sub={e.opp.account} right={e.expired ? `expired ${fmtDate(e.validTill, "short")}` : `valid till ${fmtDate(e.validTill, "short")}`} tone={e.expired ? "red" : undefined} />
+                    <Row key={e.id} href={`/opportunities/${e.opp.id}?tab=boq`} title={e.opp.name} sub={`${e.opp.account} · ${e.lines} line${e.lines > 1 ? "s" : ""}`} right={e.expired ? `expired ${fmtDate(e.validTill, "short")}` : `valid till ${fmtDate(e.validTill, "short")}`} tone={e.expired ? "red" : undefined} />
                   ))}
                 </ul>
               )}

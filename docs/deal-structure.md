@@ -26,7 +26,7 @@ BU and category are **your** taxonomy for how you organise practices, targets an
 |---|---|---|
 | **Deal header** | Account, owner, stage, forecast, close date, procurement mode, deal registration. Value, ARR, margin and the *primary* BU, category and OEM are **derived** from the lines (the largest line), never typed. | Sales |
 | **Estimate line** (qualification onward) | BU, category, OEM (may be **To be decided**), estimated value, one-time or recurring. One per practice or vendor in the deal is enough. | Sales |
-| **BOQ line** (BOQ stage onward) | Catalogue product (which fixes BU, category, OEM, HSN/SAC, GST) or a classified custom line, quantity, term, cost from purchase, sell price. These replace the estimates. | Presales, purchase (cost), sales (price) |
+| **BOQ line** (BOQ stage onward) | Catalogue product (which fixes BU, category, OEM, HSN/SAC, GST) or a classified custom line, quantity, term, cost and where it came from, sell price. These replace the estimates. | Presales, purchase or the rate card (cost), sales (price) |
 | **Quote** | An immutable snapshot of the priced BOQ lines, versioned. | Sales |
 | **Won lines** | The same BOQ lines, locked and marked ready to bill. | Automatic |
 
@@ -44,6 +44,8 @@ Waiting until the BOQ to add lines leaves the early pipeline (often 60–70% of 
 - **Filter by OEM, BU or category** to include a deal if any line matches, counting **only the matching lines' value**. A ₹1 Cr deal with ₹40 L of Dell counts as ₹40 L under Dell, and the remaining ₹60 L shows under its own vendors.
 - **Deal counts** stay per deal. Win rates and stage conversion are measured on deals, not lines.
 - **Quota credit** goes to the deal owner on the deal value. Practice or BU targets use the line split.
+
+The **cost source** is also a line attribute. Third-party lines are costed by purchase, each with its own supplier validity. Own-brand lines (an OEM marked **Own brand**, today Progression and Neon Cloud) take the rate card's standard cost or a cost from presales. See "Where each line's cost comes from" in `sales-workflow.md`.
 
 ## Possible later refinements (not needed now)
 
