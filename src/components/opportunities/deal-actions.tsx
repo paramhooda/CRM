@@ -25,7 +25,11 @@ type Base = { id: string; label: string; primary?: boolean; disabledReason?: str
 
 export type DealAction = Base &
   (
-    | { kind: "pullPresales"; oppId: string; presales: U[]; revision?: { number: number; assigneeId: string | null; scope: string; note: string | null } }
+    | {
+        kind: "pullPresales"; oppId: string; presales: U[]; revision?: { number: number; assigneeId: string | null; scope: string; note: string | null };
+        /** Bringing presales into a resale deal: what that changes, shown before sending */
+        involve?: string[];
+      }
     | { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number; asked?: string[] }
     | { kind: "askSales"; requestId: string }
     | { kind: "answer"; requestId: string; question: string; askedBy: string }
@@ -52,7 +56,7 @@ export function DealActions({ actions }: { actions: DealAction[] }) {
     <div className="flex flex-wrap items-center gap-1.5">
       {primary.map((a) => (
         <Button key={a.id} variant="primary" size="sm" disabled={!!a.disabledReason} title={a.disabledReason} onClick={() => setActive(a)}>
-          {a.kind === "pullPresales" && a.revision ? <GitBranch /> : ICON[a.kind]} {a.label}
+          {a.kind === "pullPresales" && a.revision && !a.involve ? <GitBranch /> : ICON[a.kind]} {a.label}
         </Button>
       ))}
       {more.length > 0 && (
@@ -63,7 +67,7 @@ export function DealActions({ actions }: { actions: DealAction[] }) {
           <DropdownContent>
             {more.map((a) => (
               <DropdownItem key={a.id} disabled={!!a.disabledReason} onSelect={() => setActive(a)} className={cn(a.kind === "cancel" && "text-[var(--t-red)]")}>
-                {a.kind === "pullPresales" && a.revision ? <GitBranch /> : ICON[a.kind]} {a.label}
+                {a.kind === "pullPresales" && a.revision && !a.involve ? <GitBranch /> : ICON[a.kind]} {a.label}
               </DropdownItem>
             ))}
           </DropdownContent>
@@ -376,10 +380,16 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
   const [asked, setAsked] = useState<string[]>(["BOQ"]);
   const { pending, run } = useAction();
   const toggle = (k: string) => setAsked((xs) => (xs.includes(k) ? xs.filter((x) => x !== k) : [...xs, k]));
+  // Involving presales in a resale deal is a fresh request (deliverables and all), with a reason on record
+  const revision = a.involve ? null : a.revision;
   return (
     <DialogContent
-      title={a.revision ? `Request BOQ change (revision ${a.revision.number})` : "Request BOQ from presales"}
-      description={a.revision ? "Presales updates the BOQ. Only the lines they change go back to purchase for pricing." : "Presales designs the solution and prepares the BOQ. The deal moves to the BOQ stage."}
+      title={a.involve ? "Involve presales" : revision ? `Request BOQ change (revision ${revision.number})` : "Request BOQ from presales"}
+      description={
+        a.involve ? "This deal started without presales. Bring them in to design the solution and own the BOQ."
+          : revision ? "Presales updates the BOQ. Only the lines they change go back to purchase for pricing."
+          : "Presales designs the solution and prepares the BOQ. The deal moves to the BOQ stage."
+      }
     >
       <form
         className="flex flex-col gap-3"
@@ -389,9 +399,19 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
           run(() => requestPresales(a.oppId, { ...f, deliverables: asked.join(",") }), { success: "Presales notified", onOk: close, onError: (r) => setErrors(r.fieldErrors ?? {}) });
         }}
       >
-        {a.revision && (
+        {a.involve && (
+          <>
+            <ul className="flex list-disc flex-col gap-1 rounded-md bg-surface-2 py-2 pl-7 pr-3 text-xs text-ink-2" aria-label="What happens">
+              {a.involve.map((x) => <li key={x}>{x}</li>)}
+            </ul>
+            <Field label="Why presales is needed" required error={errors.reason}>
+              <Textarea name="reason" className="min-h-14" placeholder="e.g. Customer now wants installation, migration and a site survey" />
+            </Field>
+          </>
+        )}
+        {revision && (
           <Field label="What needs to change" required error={errors.reason}>
-            <Textarea name="reason" defaultValue={a.revision.note ?? ""} placeholder="e.g. Customer wants 5 nodes instead of 3" />
+            <Textarea name="reason" defaultValue={revision.note ?? ""} placeholder="e.g. Customer wants 5 nodes instead of 3" />
           </Field>
         )}
         <div className="grid grid-cols-2 gap-3">
@@ -402,13 +422,13 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
             </Select>
           </Field>
           <Field label="Needed by" required error={errors.dueDate}>
-            <Input name="dueDate" type="date" defaultValue={plusDays(a.revision ? 3 : 7)} min={isoDate(new Date())} />
+            <Input name="dueDate" type="date" defaultValue={plusDays(revision ? 3 : 7)} min={isoDate(new Date())} />
           </Field>
         </div>
         <Field label="Customer requirement" required error={errors.scope}>
           <Textarea name="scope" defaultValue={a.revision?.scope} placeholder="e.g. 3-node HCI cluster for 120 VMs with 3-year support" />
         </Field>
-        {!a.revision && (
+        {!revision && (
           <Field label="What presales should deliver" error={errors.deliverables}>
             <div role="group" aria-label="Deliverables" className="flex flex-wrap gap-1.5">
               {PRESALES_DELIVERABLES.map((d) => (
@@ -422,7 +442,7 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
             </div>
           </Field>
         )}
-        {asked.includes("SITE_SURVEY") && !a.revision && (
+        {asked.includes("SITE_SURVEY") && !revision && (
           <Field label="Sites to survey" required error={errors.siteDetails}>
             <Textarea name="siteDetails" className="min-h-14" placeholder="e.g. Mumbai DC (Andheri) and Pune DR site" />
           </Field>

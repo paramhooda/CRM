@@ -30,7 +30,18 @@ Each person enters only what they know at their step. Everything else is derived
 The form suggests it from the categories, and sales can change it. An admin sets which categories need presales under Settings → Business units and categories.
 
 - **Needs presales (solution deal)**, for example servers, storage, networking, cloud, managed services, SOC and compliance. Presales designs the solution and prepares the BOQ, then purchase prices it. Pricing cannot be requested until presales has submitted a BOQ.
-- **No presales (resale deal)**, for example laptops, desktops and licences. Sales replaces the estimate with catalogue products on Line items and requests pricing directly; the BOQ stage is skipped. Sales can still pull in presales later, which makes it a solution deal.
+- **No presales (resale deal)**, for example laptops, desktops and licences. Sales replaces the estimate with catalogue products on Line items and requests pricing directly; the BOQ stage is skipped.
+
+### Bringing presales in later
+
+A deal that started without presales can bring them in at any stage until it closes, once it is qualified: **Involve presales** (in the status line's More menu). The dialog asks why, who and by when, and says what will change before anything is sent:
+- The deal becomes a solution deal. Presales owns the BOQ from then on, and BOQ is added to the stage path.
+- Presales starts from the lines sales already added. Only the lines they change go back to purchase.
+- If purchase is pricing, that request is stopped and purchase is told. Pricing is requested again when presales submits the BOQ.
+- From Qualified or Pricing the deal moves to BOQ. From Proposal Submitted or Negotiation it stays where it is: the quote stays with the customer, and sales sends a revised quote after presales submits.
+- The reason and the path change are recorded on the History tab.
+
+The edit form only switches the path while the deal is still Identified, before any work has started. After that, presales comes in through **Involve presales**, so there is always an engineer and a due date. Going the other way, **Skip BOQ** (from inside the BOQ stage) turns a solution deal into a resale deal.
 
 ### Fields that follow other fields
 
@@ -111,6 +122,7 @@ The full trail (every request, revision, question and send-back) is on the **His
 
 | Situation | Action | What happens |
 |---|---|---|
+| A resale deal turns out to need a solution design | **Involve presales** (More) | Presales gets the deal with the reason; see "Bringing presales in later". |
 | Customer or sales changes the scope | **Request BOQ change** (More) | Presales gets revision N+1 with the reason. Pricing in progress is stopped and the deal returns to BOQ. Only the lines presales change go back to purchase. |
 | Presales needs information | **Ask sales a question** (More) | Sales sees **Answer presales**. The presales due date pauses while waiting. |
 | Purchase cannot price a line (end-of-sale part, wrong SKU) | **Send back to presales** (More) | Presales gets a high-priority revision and the deal returns to BOQ. |

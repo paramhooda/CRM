@@ -362,6 +362,73 @@ test.describe("Cost sources", () => {
     await (await popup).close();
     await expect(page.getByLabel("Deal status")).toContainText("Quote v1 with customer");
     await expect(currentStage(page)).toHaveText("Proposal Submitted");
+    // Presales can still be brought in after the quote went out; the dialog says the quote stays where it is
+    await statusMenu(page, "Involve presales");
+    const inv = page.getByRole("dialog");
+    await expect(inv.getByText("Quote v1 stays with the customer. Send a revised quote once presales submits the BOQ.")).toBeVisible();
+    await expect(inv.getByText(/moves .*BOQ stage/)).toHaveCount(0);
+    await inv.getByRole("button", { name: "Cancel" }).click();
+  });
+});
+
+test.describe("Bringing presales into a resale deal", () => {
+  test("a resale deal already with purchase brings presales in: pricing stops and the deal goes back to BOQ", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    await page.fill("#name", `E2E Laptops ${Date.now().toString().slice(-6)}`);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByRole("button", { name: "Pick an exact product" }).click();
+    await page.getByRole("button", { name: "Remove line 1" }).click();
+    await pickProduct(page, 0, "LNV-NBK-01");
+    await page.getByLabel("Line 1 quantity").fill("40");
+    await expect(page.getByRole("radio", { name: /No presales/ })).toHaveAttribute("aria-checked", "true"); // laptops are resale
+    await page.fill("#nextStep", "Get pricing");
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    const url = new URL(page.url()).pathname;
+    await page.getByRole("button", { name: "Advance to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+    await expect(page.getByRole("list", { name: "Stage" })).not.toContainText("BOQ"); // resale path
+    await page.getByRole("button", { name: "Advance to Pricing" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Send to purchase" }).click();
+    await expect(page.getByText("Purchase notified")).toBeVisible();
+    await expect(currentStage(page)).toHaveText("Pricing");
+
+    // The path is not switched from the edit form once the deal is qualified
+    await page.goto(`${url}/edit`);
+    await expect(page.getByRole("radio", { name: /Needs presales/ })).toBeDisabled();
+    await expect(page.getByText(/To bring presales in, use/)).toBeVisible();
+
+    await page.goto(url);
+    await statusMenu(page, "Involve presales");
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByText(/pricing request is stopped/)).toBeVisible();
+    await expect(dlg.getByText("The deal moves back to the BOQ stage.")).toBeVisible();
+    await expect(dlg.getByText(/Presales starts from your 1 line item/)).toBeVisible();
+    await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
+    await dlg.locator("textarea[name=scope]").fill("40 laptops with imaging, asset tagging and on-site deployment.");
+    await dlg.getByRole("button", { name: "Send to presales" }).click();
+    await expect(dlg.getByText("Say why presales is needed")).toBeVisible(); // a reason is required
+    await dlg.locator("textarea[name=reason]").fill("Customer now wants imaging and on-site deployment.");
+    await dlg.getByRole("button", { name: "Send to presales" }).click();
+    await expect(page.getByText("Presales notified")).toBeVisible();
+    await expect(currentStage(page)).toHaveText("BOQ");
+    await expect(page.getByLabel("Deal status")).toContainText("BOQ with presales");
+
+    await page.goto(`${url}?tab=history`);
+    await expect(page.getByText("Solution · needs presales")).toBeVisible();
+    await expect(page.getByText(/resale deal now needs presales/).first()).toBeVisible();
+
+    // Presales starts from the lines sales built; only lines they change go back to purchase
+    await login(page, PRESALES.email);
+    await page.goto(`${url}?tab=boq`);
+    await page.getByRole("button", { name: "Advance to Pricing" }).click();
+    const sub = page.getByRole("dialog");
+    await expect(sub.getByText("1 of 1 lines go to purchase")).toBeVisible(); // pricing was stopped before a cost came back
+    await sub.locator("textarea[name=solutionSummary]").fill("Same laptops; imaging and deployment quoted as services later.");
+    await sub.getByRole("button", { name: "Submit" }).click();
+    await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("Pricing with purchase");
   });
 });
 

@@ -307,6 +307,10 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
       : (await db.account.findFirst({ where: { id: input.accountId, deletedAt: null }, select: { accountType: true } }))?.accountType;
   if (!accountType) return { ok: false, error: "Select an account.", fieldErrors: { accountId: "Select an account" } };
   const presalesRequired = input.presalesRequired ?? before.presalesRequired;
+  // Before qualification the path is just a choice. After that, presales comes in through "Involve presales" on the
+  // deal, which assigns an engineer and a due date
+  if (presalesRequired && !before.presalesRequired && before.stage !== "IDENTIFIED")
+    return { ok: false, error: "To bring presales in, use Involve presales on the deal page. It assigns an engineer and a due date.", fieldErrors: { presalesRequired: "Use Involve presales on the deal page" } };
   if (!presalesRequired && before.presalesRequired) {
     const open = await db.presalesRequest.count({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } } });
     if (open) return { ok: false, error: "Presales is working on this deal. Cancel the BOQ request before switching to a resale deal.", fieldErrors: { presalesRequired: "Presales is working on it" } };

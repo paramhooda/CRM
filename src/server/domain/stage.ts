@@ -69,10 +69,10 @@ export async function applyStageChange(
   let warning: string | undefined;
   const totals = boqTotals(o.lineItems);
   if ((to === "PROPOSAL" || to === "NEGOTIATION") && !totals.fullyPriced) {
-    warning = totals.lines === 0 ? "Moved without a BOQ. Pull in presales to prepare one." : "BOQ is not fully priced yet. Margin may be inaccurate.";
+    warning = totals.lines === 0 ? "Moved without a BOQ. Involve presales to prepare one." : "BOQ is not fully priced yet. Margin may be inaccurate.";
   }
   if (to === "BOQ" && !o.presalesOwnerId && o.presalesRequests.length === 0) {
-    warning = "Deal is at BOQ without presales. Use 'Pull in presales' to request a BOQ.";
+    warning = "Deal is at BOQ without presales. Request a BOQ from presales.";
   }
 
   const stageMeta = STAGE_META[to];

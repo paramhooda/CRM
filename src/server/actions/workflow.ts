@@ -120,6 +120,9 @@ const presalesSchema = z.object({
 /**
  * Ask presales for a BOQ, or for a revision of it. A revision supersedes any pricing in progress
  * (purchase would otherwise price the wrong thing) and records why it was needed.
+ * Involving presales in a resale deal, at any point before it closes, makes it a solution deal: presales starts from
+ * the lines sales built, and only the lines they change go back to purchase. A quote with the customer stays there
+ * until sales sends a revised one.
  */
 export async function requestPresales(oppId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
@@ -142,7 +145,10 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
   if (previous.some((p) => (OPEN_PRESALES as readonly string[]).includes(p.status)))
     return { ok: false, error: "A presales request is already open on this deal." };
   const revision = (previous[0]?.revision ?? 0) + 1;
+  const involving = !opp.presalesRequired;
+  if (involving && (!v.reason || v.reason.length < 5)) return { ok: false, error: "Say why presales is needed now.", fieldErrors: { reason: "Say why presales is needed" } };
   if (revision > 1 && (!v.reason || v.reason.length < 5)) return { ok: false, error: "Say what needs to change in this revision.", fieldErrors: { reason: "Say what needs to change" } };
+  const lineCount = await db.opportunityLineItem.count({ where: { opportunityId: oppId, isEstimate: false } });
   const latestQuote = await db.quote.findFirst({ where: { opportunityId: oppId }, orderBy: { version: "desc" } });
   const source = latestQuote?.status === "CHANGES_REQUESTED" ? "CUSTOMER" : "SALES";
 
@@ -150,11 +156,11 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
     db.$transaction(async (tx) => {
       const supersede = await tx.pricingRequest.findMany({ where: { opportunityId: oppId, status: openPricing } });
       for (const p of supersede) {
-        await tx.pricingRequest.update({ where: { id: p.id }, data: { status: "CANCELLED", cancelReason: `Superseded by BOQ revision ${revision}` } });
+        await tx.pricingRequest.update({ where: { id: p.id }, data: { status: "CANCELLED", cancelReason: involving ? "Presales brought in to prepare the BOQ" : `Superseded by BOQ revision ${revision}` } });
         await notify(tx, [p.assignedToId], {
           type: "WORKFLOW",
           title: `Pricing on hold: ${opp.name}`,
-          body: `${user.name} asked presales for BOQ revision ${revision}. Stop pricing; a new request will follow. Reason: ${v.reason}`,
+          body: `${user.name} ${involving ? "brought in presales to prepare the BOQ" : `asked presales for BOQ revision ${revision}`}. Stop pricing; a new request will follow. Reason: ${v.reason}`,
           link: boqLink(oppId),
           exclude: user.id,
         });
@@ -168,16 +174,20 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
       });
       // Pulling in presales makes it a solution deal
       await tx.opportunity.update({ where: { id: oppId }, data: { presalesOwnerId: v.assignedToId, presalesRequired: true, updatedById: user.id } });
-      await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: opp, after: { presalesOwnerId: v.assignedToId }, fields: ["presalesOwnerId"], userId: user.id });
+      await recordChanges(tx, {
+        entityType: "Opportunity", entityId: oppId, before: opp, after: { presalesOwnerId: v.assignedToId, presalesRequired: true },
+        fields: ["presalesOwnerId", "presalesRequired"], userId: user.id,
+      });
       await recordEvent(tx, {
         entityType: "Opportunity", entityId: oppId, userId: user.id,
-        action: revision > 1 ? "BOQ_REVISION_REQUESTED" : "PRESALES_REQUESTED",
-        newValue: revision > 1 ? `Revision ${revision} · ${assignee.name} · ${v.reason}` : assignee.name,
+        action: involving || revision === 1 ? "PRESALES_REQUESTED" : "BOQ_REVISION_REQUESTED",
+        newValue: involving ? `${assignee.name} · resale deal now needs presales · ${v.reason}` : revision > 1 ? `Revision ${revision} · ${assignee.name} · ${v.reason}` : assignee.name,
       });
+      const startFrom = involving && lineCount ? ` Start from the ${lineCount} line${lineCount > 1 ? "s" : ""} sales added.` : "";
       await notify(tx, [v.assignedToId], {
         type: "PRESALES_REQUEST",
-        title: revision > 1 ? `BOQ revision ${revision}: ${opp.name}` : `BOQ requested: ${opp.name}`,
-        body: `${user.name} ${revision > 1 ? `needs changes: ${v.reason}` : "pulled you in"}${v.priority !== "NORMAL" ? ` (${v.priority.toLowerCase()} priority)` : ""}. Due ${fmtDate(v.dueDate)}.`,
+        title: involving ? `Presales needed: ${opp.name}` : revision > 1 ? `BOQ revision ${revision}: ${opp.name}` : `BOQ requested: ${opp.name}`,
+        body: `${user.name} ${involving ? `brought you in: ${v.reason}` : revision > 1 ? `needs changes: ${v.reason}` : "pulled you in"}${v.priority !== "NORMAL" ? ` (${v.priority.toLowerCase()} priority)` : ""}. Due ${fmtDate(v.dueDate)}.${startFrom}`,
         link: boqLink(oppId),
       });
       await syncStage(tx, user, oppId, "BOQ");

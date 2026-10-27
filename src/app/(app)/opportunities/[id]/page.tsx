@@ -320,12 +320,14 @@ const FIELD_LABEL: Record<string, string> = {
   salesOwnerId: "Sales owner", presalesOwnerId: "Presales owner", nextStep: "Next step", nextStepDate: "Next step date",
   name: "Name", expectedMarginPct: "Expected margin", dealRegStatus: "Deal reg status", primaryContactId: "Primary contact",
   arrAmount: "ARR", contractTermMonths: "Contract term", lossReason: "Loss reason", poNumber: "PO number",
+  presalesRequired: "Path",
 };
 
 function fmtVal(field: string | null, v: string | null) {
   if (v === null || v === "") return "—";
   if (!field) return v;
   if (field === "stage") return STAGE_META[v as StageKey]?.label ?? v;
+  if (field === "presalesRequired") return v === "true" ? "Solution · needs presales" : "Resale · no presales";
   if (field === "forecastCategory") return FORECAST_LABEL[v as keyof typeof FORECAST_LABEL] ?? v;
   if (field === "amount" || field === "arrAmount") return inr(Number(v));
   if (field.endsWith("Date") || field.endsWith("Expiry")) return fmtDate(v);

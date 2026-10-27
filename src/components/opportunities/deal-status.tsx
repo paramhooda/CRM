@@ -68,7 +68,7 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       headline = "Own-brand lines need a cost";
       detail = o.presalesOwner
         ? `${o.presalesOwner.name} (presales) enters the cost on Line items, or changes it to Source via purchase.`
-        : "No presales on this deal. Pull in presales to cost them, or switch the lines to Source via purchase.";
+        : "No presales on this deal. Involve presales to cost them, or switch the lines to Source via purchase.";
       who = o.presalesOwner ? { name: o.presalesOwner.name, role: "Presales" } : { name: sales, role: "Sales" };
       break;
     case "READY_TO_QUOTE":
@@ -180,6 +180,20 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       }
     : undefined;
   const boqChange = (): DealAction => ({ id: "rev", kind: "pullPresales", label: "Request BOQ change", oppId: o.id, presales: options.presales, revision });
+  // A resale deal can bring presales in at any point before it closes; the dialog says what that changes
+  const qualified = o.stage !== "IDENTIFIED" && o.stage !== "HOLD";
+  const liveQuote = quote && ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"].includes(quote.status) ? quote : null;
+  const involve = (): DealAction => ({
+    id: "involve", kind: "pullPresales", label: "Involve presales", oppId: o.id, presales: options.presales,
+    revision: revision && { ...revision, note: null },
+    involve: [
+      "It becomes a solution deal: presales owns the BOQ from here, and BOQ is added to the stage path.",
+      ...(realLines.length ? [`Presales starts from your ${realLines.length} line item${realLines.length > 1 ? "s" : ""}. Only the lines they change go back to purchase.`] : []),
+      ...(openPq ? [`${openPq.assignedTo.name}'s pricing request is stopped. Pricing is requested again when presales submits the BOQ.`] : []),
+      ...(o.stage === "QUALIFIED" ? ["The deal moves to the BOQ stage."] : o.stage === "PRICING" ? ["The deal moves back to the BOQ stage."] : []),
+      ...(liveQuote ? [`Quote v${liveQuote.version} stays with the customer. Send a revised quote once presales submits the BOQ.`] : []),
+    ],
+  });
   const pricing = (label: string, toPrice: number, primary = false): DealAction => ({
     id: `price-${toPrice}`, kind: "requestPricing", label, primary, oppId: o.id, purchase: options.purchase, toPrice,
     first: !o.pricingRequests.some((r) => r.status !== "CANCELLED"), expired: w.expiredCost,
@@ -213,14 +227,14 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
         actions.push({ id: "done", kind: "completePricing", label: "Pricing complete", primary: true, requestId: openPq.id, disabledReason: missing ? `Enter a unit cost on ${missing} more line${missing > 1 ? "s" : ""} in Line items` : undefined });
         actions.push({ id: "back", kind: "sendBack", label: o.presalesOwner ? "Send back to presales" : "Send back to sales", requestId: openPq.id, presalesName: o.presalesOwner?.name ?? null });
       }
-      if (isSales && revision) actions.push(boqChange());
+      if (isSales && solution && revision) actions.push(boqChange());
+      if (isSales && !solution && qualified) actions.push(involve());
       if (isPurchase || isSales) actions.push({ id: "re-pq", kind: "reassign", label: "Reassign purchase", reqKind: "pricing", requestId: openPq.id, people: options.purchase, currentId: openPq.assignedTo.id });
       if (isSales) actions.push({ id: "x-pq", kind: "cancel", label: "Cancel pricing request", reqKind: "pricing", requestId: openPq.id });
     } else if (isSales || d.perms.spec) {
       const expired = w.expiredCost > 0;
-      const qualified = o.stage !== "IDENTIFIED" && o.stage !== "HOLD";
-      if ((w.state === "ESTIMATE" || w.state === "NEEDS_PRICING" || w.state === "NEEDS_COSTING") && !lastPs && qualified)
-        actions.push({ id: "pull", kind: "pullPresales", label: solution ? "Request BOQ from presales" : "Pull in presales instead", primary: solution, oppId: o.id, presales: options.presales });
+      if (solution && (w.state === "ESTIMATE" || w.state === "NEEDS_PRICING" || w.state === "NEEDS_COSTING") && !lastPs && qualified)
+        actions.push({ id: "pull", kind: "pullPresales", label: "Request BOQ from presales", primary: true, oppId: o.id, presales: options.presales });
       if (w.state === "NEEDS_PRICING" && !needsBoq && qualified) actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
       if (d.perms.quote && !needsBoq && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
       if (d.perms.quote && w.state === "QUOTE_SENT" && quote) {
@@ -229,7 +243,8 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       }
       if (purchaseLines.length && w.needsCost === 0 && ["READY_TO_QUOTE", "CHANGES_REQUESTED", "QUOTE_SENT"].includes(w.state))
         actions.push(pricing("Re-validate costs", 0, expired));
-      if (isSales && revision && w.state !== "ESTIMATE") actions.push(boqChange());
+      if (isSales && solution && revision && w.state !== "ESTIMATE") actions.push(boqChange());
+      if (isSales && !solution && qualified) actions.push(involve());
     }
   }
 

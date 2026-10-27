@@ -101,6 +101,8 @@ export function OppForm({
   const regOems = dealRegOems(mode === "create" ? draftOemIds : lineOemIds, options.oems);
   const stage = v.stage as StageKey;
   const commitAllowed = stage === "PROPOSAL" || stage === "NEGOTIATION";
+  // Once a resale deal is qualified, presales is brought in from the deal page (engineer and due date), not here
+  const involveOnly = mode === "edit" && initial.presalesRequired === "false" && initial.stage !== "IDENTIFIED";
   const today = new Date().toISOString().slice(0, 10);
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -309,7 +311,9 @@ export function OppForm({
             { on: true, icon: <Wrench className="size-4" />, title: "Needs presales", body: "Solution deal: presales designs it and prepares the BOQ, then purchase prices it." },
             { on: false, icon: <ShoppingCart className="size-4" />, title: "No presales", body: "Resale deal: you pick catalogue products. Purchase prices the third-party ones; own brands use the rate card." },
           ].map((o) => {
-            const locked = mode === "edit" && openPresales && !o.on;
+            // Switching to resale needs presales to have stopped; switching to presales goes through Involve presales,
+            // which assigns an engineer and a due date
+            const locked = mode === "edit" && ((openPresales && !o.on) || (o.on && involveOnly));
             return (
               <button
                 key={o.title}
@@ -317,7 +321,7 @@ export function OppForm({
                 role="radio"
                 aria-checked={presalesRequired === o.on}
                 disabled={locked}
-                title={locked ? "Presales is working on this deal" : undefined}
+                title={locked ? (o.on ? "Use Involve presales on the deal page" : "Presales is working on this deal") : undefined}
                 onClick={() => { setPresalesChosen(true); set("presalesRequired", String(o.on)); }}
                 className={cn(
                   "flex gap-3 rounded-lg border p-3 text-left transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
@@ -335,6 +339,11 @@ export function OppForm({
           {mode === "create" && !presalesChosen && draftCategoryIds.length > 0 && (
             <p className="text-xs text-ink-3 sm:col-span-2">
               Suggested from the categories: {suggested ? `${solutionCats.join(", ")} need${solutionCats.length === 1 ? "s" : ""} a solution design.` : "resale items can be quoted from the catalogue."} You can change it.
+            </p>
+          )}
+          {involveOnly && (
+            <p className="text-xs text-ink-3 sm:col-span-2">
+              To bring presales in, use <Link href={`/opportunities/${id}`} className="text-primary hover:underline">Involve presales</Link> on the deal. It assigns an engineer and a due date, at any stage until the deal closes.
             </p>
           )}
           {errors.presalesRequired && <p className="text-xs text-[var(--t-red)] sm:col-span-2">{errors.presalesRequired}</p>}
