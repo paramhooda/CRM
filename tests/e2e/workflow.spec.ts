@@ -491,6 +491,65 @@ test.describe("Deal setup", () => {
     await expect(page.getByRole("radiogroup", { name: "Deal type" }).getByRole("radio")).toHaveText(["Upsell", "Cross-sell", "Renewal"]);
   });
 
+  test("choosing No presales is respected everywhere, including a deal already in BOQ", async ({ page }) => {
+    await login(page, SALES);
+    // Created as resale even though servers would suggest presales
+    await page.goto("/opportunities/new");
+    await page.fill("#name", `E2E No Presales ${Date.now().toString().slice(-6)}`);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "IT Infrastructure" });
+    await page.getByLabel("Line 1 category").selectOption({ label: "Server" });
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "Dell" });
+    await page.getByLabel("Line 1 value").fill("2200000");
+    await page.getByRole("radio", { name: /No presales/ }).click();
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    const url = new URL(page.url()).pathname;
+    await expect(page.getByText("Resale · no presales")).toBeVisible();
+    await expect(page.getByRole("list", { name: "Stage" }).locator("li", { hasText: /^BOQ$/ })).toHaveCount(0);
+    await page.getByRole("button", { name: "Advance to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Advance to Pricing/ })).toBeVisible(); // straight to pricing, no BOQ
+    await expect(page.getByRole("button", { name: "Advance to BOQ" })).toHaveCount(0);
+
+    // A solution deal switched to No presales while it is in BOQ
+    await page.goto("/opportunities/new");
+    await page.fill("#name", `E2E Switch To Resale ${Date.now().toString().slice(-6)}`);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "IT Infrastructure" });
+    await page.getByLabel("Line 1 category").selectOption({ label: "Server" });
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "Dell" });
+    await page.getByLabel("Line 1 value").fill("2200000");
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    const url2 = new URL(page.url()).pathname;
+    await page.getByRole("button", { name: "Advance to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+    await page.getByRole("button", { name: "Advance to BOQ" }).click();
+    let dlg = page.getByRole("dialog");
+    await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
+    await dlg.locator("textarea[name=scope]").fill("Two rack servers for the branch file store.");
+    await dlg.getByRole("button", { name: "Send to presales" }).click();
+    await expect(currentStage(page)).toHaveText("BOQ");
+    await statusMenu(page, "Cancel BOQ request");
+    dlg = page.getByRole("dialog");
+    await dlg.locator("textarea[name=reason]").fill("Customer sent an exact bill of materials");
+    await dlg.getByRole("button", { name: "Cancel request" }).click();
+    await expect(page.getByText("Request cancelled")).toBeVisible();
+    await page.goto(`${url2}/edit`);
+    await page.getByRole("radio", { name: /No presales/ }).click();
+    await page.click("button:has-text('Save changes')");
+    await page.waitForURL((u) => u.pathname === url2);
+    await expect(currentStage(page)).toHaveText("BOQ");
+    await expect(page.getByLabel("Deal status")).toContainText("Estimate only · resale");
+    await expect(page.getByLabel("Deal status").getByRole("link", { name: "Add products" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Advance to Pricing/ })).toBeDisabled();
+    await page.getByRole("button", { name: /Advance to Pricing/ }).locator("xpath=..").hover();
+    await expect(page.getByRole("tooltip").first()).toContainText("No presales on this deal");
+    await expect(page.getByText(/Request a BOQ from presales/)).toHaveCount(0);
+    expect(url).not.toBe(url2);
+  });
+
   test("a resale deal skips presales: sales adds products and goes straight to pricing", async ({ page }) => {
     await login(page, SALES);
     await page.goto("/opportunities/new");

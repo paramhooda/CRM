@@ -205,7 +205,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       const expired = w.blockers.some((b) => b.startsWith("Supplier pricing expired"));
       const qualified = o.stage !== "IDENTIFIED" && o.stage !== "HOLD";
       if ((w.state === "ESTIMATE" || w.state === "NEEDS_PRICING") && !lastPs && qualified)
-        actions.push({ id: "pull", kind: "pullPresales", label: "Request BOQ from presales", primary: solution, oppId: o.id, presales: options.presales });
+        actions.push({ id: "pull", kind: "pullPresales", label: solution ? "Request BOQ from presales" : "Pull in presales instead", primary: solution, oppId: o.id, presales: options.presales });
       if (w.state === "NEEDS_PRICING" && !needsBoq && qualified) actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
       if (d.perms.quote && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
       if (d.perms.quote && w.state === "QUOTE_SENT" && quote) {
@@ -238,7 +238,9 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       const m = byTo.get(next);
       if (m) advance = m.allowed ? { kind: "move", to: next, label: to(next) } : { kind: "blocked", label: to(next), reason: m.reason ?? "" };
     } else {
-      const action = next === "BOQ" ? find("pull") : next === "PRICING" ? (stage === "BOQ" ? find("submit") : find("price")) : find("quote");
+      // Into Pricing: presales submits the BOQ on a solution deal; on a resale deal (even one sitting in BOQ) sales
+      // requests pricing for the catalogue lines
+      const action = next === "BOQ" ? find("pull") : next === "PRICING" ? (stage === "BOQ" && solution ? find("submit") : find("price")) : find("quote");
       if (action && !action.disabledReason) advance = { kind: "action", label: to(next), action };
       else {
         const reason =
@@ -247,8 +249,8 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
             : openPs ? `Waiting for ${openPs.assignedTo.name} (presales) to submit the BOQ.`
             : openPq ? `Waiting for ${openPq.assignedTo.name} (purchase) to finish pricing.`
             : next === "BOQ" ? "The deal owner requests the BOQ from presales."
-            : next === "PRICING" && stage === "BOQ" ? "Request a BOQ from presales first."
-            : next === "PRICING" && !realLines.length ? "Replace the estimate with catalogue products on Line items first."
+            : next === "PRICING" && stage === "BOQ" && solution ? "Request a BOQ from presales first."
+            : next === "PRICING" && !realLines.length ? "No presales on this deal: pick the catalogue products on Line items, then request pricing."
             : next === "PRICING" ? "The deal owner requests pricing from purchase."
             : w.needsCost ? "Lines need a current cost from purchase first."
             : "The deal owner sends the quote.");
