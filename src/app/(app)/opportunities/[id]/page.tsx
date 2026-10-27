@@ -13,7 +13,7 @@ import { StagePath } from "@/components/opportunities/stage-path";
 import { LineItemsEditor } from "@/components/opportunities/line-items-editor";
 import { ContactsEditor } from "@/components/opportunities/contacts-editor";
 import { ActivityComposer, ActivityTimeline } from "@/components/crm/activity";
-import { DealStatus, RequestHistory, QUOTE_STATUS_LABEL } from "@/components/opportunities/deal-status";
+import { DealStatus, RequestHistory, QUOTE_STATUS_LABEL, dealActions } from "@/components/opportunities/deal-status";
 import { inr, pct, fmtDate, fmtDateTime, relativeDays } from "@/lib/format";
 import {
   STAGE_META, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL, DEAL_REG_LABEL, FORECAST_LABEL, type StageKey,
@@ -33,10 +33,10 @@ const TABS = [
   { key: "history", label: "History" },
 ] as const;
 
-export default async function OpportunityPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
+export default async function OpportunityPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; edit?: string }> }) {
   const user = await requireUser();
   const { id } = await params;
-  const { tab: tabParam } = await searchParams;
+  const { tab: tabParam, edit } = await searchParams;
   const tab = TABS.some((t) => t.key === tabParam) ? tabParam! : "overview";
   const [d, options] = await Promise.all([getOpportunityDetail(user, id), getOptions()]);
   const o = d.opp;
@@ -74,7 +74,10 @@ export default async function OpportunityPage({ params, searchParams }: { params
         }
       >
         <div className="mt-5">
-          <StagePath id={o.id} stage={stage} moves={d.moves} lossReasons={options.lossReasons} poNumber={o.poNumber} holdReason={o.holdReason} />
+          <StagePath
+            id={o.id} stage={stage} path={d.path} moves={d.moves} advance={dealActions(d, options).advance} canSkip={d.canSkip}
+            lossReasons={options.lossReasons} poNumber={o.poNumber} holdReason={o.holdReason}
+          />
         </div>
         <div className="mt-3">
           <DealStatus d={d} options={options} />
@@ -112,6 +115,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
             version={o.boqVersion}
             lockReason={d.lockReason}
             oemTbd={options.oemTbd}
+            startEditing={edit === "1"}
           />
         )}
         {tab === "activity" && (

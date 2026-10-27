@@ -148,7 +148,7 @@ export function WorkQueue({ kind, items }: { kind: "presales" | "purchase"; item
               <div className="flex shrink-0 items-center gap-2">
                 {i.notStarted && (kind === "presales" ? <StartPresalesButton requestId={i.id} /> : <StartPricingButton requestId={i.id} />)}
                 <Link
-                  href={`/opportunities/${i.opp.id}?tab=boq`}
+                  href={`/opportunities/${i.opp.id}?tab=boq&edit=1`}
                   className="inline-flex h-8 items-center gap-1 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-ink hover:bg-primary-hover"
                 >
                   {kind === "presales" ? "Open BOQ" : "Price it"} <ArrowRight className="size-3.5" />

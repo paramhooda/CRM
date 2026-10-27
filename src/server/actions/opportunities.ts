@@ -4,7 +4,8 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/auth";
 import { can, isManager, opportunityScope } from "@/lib/authz";
-import { dealFieldErrors } from "@/lib/stage-rules";
+import { dealFieldErrors, checkSkip } from "@/lib/stage-rules";
+import { loadStageFacts } from "@/server/domain/stage-facts";
 import { dealTypeFor, needsBidDate, suggestPresales } from "@/lib/deal-setup";
 import type { AccountType, DealType, RevenueModel } from "@prisma/client";
 import { recordChanges, recordEvent } from "@/lib/audit";
@@ -400,6 +401,40 @@ export async function changeStage(id: string, input: Record<string, unknown>): P
     if (e instanceof UserError) return { ok: false, error: e.message };
     throw e;
   }
+}
+
+/**
+ * Skip the stage the deal is in (today only BOQ: presales turned out not to be needed). The deal becomes a resale
+ * deal, any open BOQ request is cancelled with the reason, and the deal moves to Pricing.
+ */
+export async function skipStage(id: string, input: Record<string, unknown>): Promise<ActionResult> {
+  const user = await requireUser();
+  const opp = await loadEditable(user, id).catch(() => null);
+  if (!opp) return { ok: false, error: "Opportunity not found." };
+  const note = String(input.note ?? "").trim();
+  if (note.length < 3) return { ok: false, error: "Give a reason for skipping this stage.", fieldErrors: { note: "Give a reason" } };
+  try {
+    await db.$transaction(async (tx) => {
+      const facts = (await loadStageFacts(tx, [id])).get(id)!;
+      const skip = checkSkip(facts, { canEdit: can.editOpportunity(user, opp), isManager: isManager(user) });
+      if (!skip.allowed || !skip.to) throw new UserError(skip.reason ?? "This stage cannot be skipped.");
+      const open = await tx.presalesRequest.findMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } } });
+      for (const r of open) {
+        await tx.presalesRequest.update({ where: { id: r.id }, data: { status: "CANCELLED", cancelReason: `BOQ skipped: ${note}` } });
+        await notify(tx, [r.assignedToId], { type: "WORKFLOW", title: `BOQ no longer needed: ${opp.name}`, body: `${user.name}: ${note}`, link: `/opportunities/${id}`, exclude: user.id });
+      }
+      await tx.opportunity.update({ where: { id }, data: { presalesRequired: false, updatedById: user.id } });
+      await recordChanges(tx, { entityType: "Opportunity", entityId: id, before: opp, after: { presalesRequired: false }, fields: ["presalesRequired"], userId: user.id });
+      await applyStageChange(tx, user, id, skip.to, { note: `Skipped ${STAGE_META[facts.stage].label}: ${note}` }, { keepForecast: true, source: "system" });
+      await recomputeOpportunity(tx, id);
+    });
+  } catch (e) {
+    if (e instanceof UserError) return { ok: false, error: e.message };
+    throw e;
+  }
+  revalidatePath(`/opportunities/${id}`);
+  revalidatePath("/pipeline");
+  return { ok: true };
 }
 
 export async function deleteOpportunity(id: string): Promise<ActionResult> {

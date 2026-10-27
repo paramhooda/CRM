@@ -12,7 +12,7 @@ export async function loadStageFacts(tx: Tx, ids: string[], now = new Date()): P
   const rows = await tx.opportunity.findMany({
     where: { id: { in: ids } },
     select: {
-      id: true, stage: true, heldFromStage: true, expectedCloseDate: true, primaryContactId: true,
+      id: true, stage: true, heldFromStage: true, presalesRequired: true, expectedCloseDate: true, primaryContactId: true,
       _count: {
         select: {
           contacts: true,
@@ -38,6 +38,7 @@ export async function loadStageFacts(tx: Tx, ids: string[], now = new Date()): P
         openPresales: o._count.presalesRequests > 0,
         openPricing: o._count.pricingRequests > 0,
         quoteStatus: o.quotes[0]?.status ?? null,
+        presalesRequired: o.presalesRequired,
       },
     ]),
   );

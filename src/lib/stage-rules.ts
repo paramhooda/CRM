@@ -2,7 +2,9 @@
 // every path (stage bar, pipeline board, edit form) and used by the UI to show only the moves that are allowed.
 //
 // Funnel: Identified → Qualified → BOQ → Pricing → Proposal Submitted → Negotiation → Won
-// - Deals move one stage at a time; nobody can skip ahead.
+// Resale deals (no presales) follow the same path without BOQ, the way Salesforce gives each sales process its own path.
+// - Deals move one stage at a time, with one "advance" action; nobody can jump ahead.
+// - A stage can be skipped only once the deal is in it (today: BOQ, when presales turns out not to be needed).
 // - BOQ, Pricing and Proposal Submitted are entered by the workflow, never by clicking: requesting a BOQ moves the deal
 //   to BOQ, submitting it (or requesting pricing) to Pricing, sending the quote to Proposal Submitted.
 // - Won needs a quote with the customer, nothing still with presales or purchase, and the customer PO.
@@ -28,7 +30,28 @@ export type StageFacts = {
   openPricing: boolean;
   /** Status of the latest quote, if any */
   quoteStatus: string | null;
+  /** Solution deal (path includes BOQ) or resale deal (path skips it) */
+  presalesRequired: boolean;
 };
+
+/** The stages this deal goes through. A deal already in BOQ keeps BOQ on its path. */
+export function pathFor(f: Pick<StageFacts, "presalesRequired" | "stage">): StageKey[] {
+  return f.presalesRequired || f.stage === "BOQ" ? FUNNEL : FUNNEL.filter((s) => s !== "BOQ");
+}
+
+/** The stage after the current one on this deal's path (null when on hold, closed or at the end). */
+export function nextStage(f: Pick<StageFacts, "presalesRequired" | "stage">): StageKey | null {
+  const path = pathFor(f);
+  const i = path.indexOf(f.stage);
+  return i >= 0 && i < path.length - 1 ? path[i + 1]! : null;
+}
+
+/** Skipping a stage happens from inside it, with a reason. Only BOQ can be skipped: presales was not needed after all. */
+export function checkSkip(f: StageFacts, a: Actor): { allowed: boolean; reason?: string; to: StageKey | null } {
+  if (f.stage !== "BOQ") return { allowed: false, reason: "Only the BOQ stage can be skipped, once the deal is in it.", to: null };
+  if (!a.canEdit) return { allowed: false, reason: "Only the deal owner or a sales manager can skip a stage.", to: "PRICING" };
+  return { allowed: true, to: "PRICING" };
+}
 
 export type Actor = { canEdit: boolean; isManager: boolean };
 
@@ -81,11 +104,12 @@ export function checkMove(f: StageFacts, a: Actor, to: StageKey): Move {
     return yes("close", "po");
   }
 
-  const from = FUNNEL.indexOf(f.stage);
-  const target = FUNNEL.indexOf(to);
-  if (target > from) {
+  const path = pathFor(f);
+  const from = path.indexOf(f.stage);
+  if (FUNNEL.indexOf(to) > FUNNEL.indexOf(f.stage)) {
+    const next = path[from + 1];
+    if (to !== next) return no("forward", next ? `Deals move one stage at a time. Next is ${label(next)}.` : "This deal is at the last stage before closing.");
     if (WORKFLOW_STAGES.includes(to)) return no("forward", AUTOMATIC[to]!);
-    if (target > from + 1) return no("forward", `Deals move one stage at a time. Next is ${label(FUNNEL[from + 1]!)}.`);
     if (to === "QUALIFIED") {
       if (!f.hasContact) return no("forward", "Add the customer contact before qualifying the deal.");
       if (f.closeDatePast) return no("forward", "The expected close date has passed. Update it before moving the deal on.");
@@ -99,9 +123,11 @@ export function checkMove(f: StageFacts, a: Actor, to: StageKey): Move {
     return no("forward", "This move is not part of the process.");
   }
 
-  // Moving back
+  // Moving back: one stage, as a manager's correction
   if (!a.isManager) return no("back", "Only a sales manager can move a deal back. To change the solution, use Request BOQ change.");
-  if (WORKFLOW_STAGES.includes(to)) return no("back", `${label(to)} is set by the workflow. Use Request BOQ change to send the deal back to presales.`);
+  if (to !== path[from - 1]) return no("back", `A deal moves back one stage at a time${from > 0 ? `, to ${label(path[from - 1]!)}` : ""}.`);
+  // BOQ and Pricing are worked stages: going back to them means new work, so it goes through Request BOQ change
+  if (to === "BOQ" || to === "PRICING") return no("back", `${label(to)} is set by the workflow. Use Request BOQ change to send the deal back to presales.`);
   if (f.openPresales || f.openPricing) return no("back", "Cancel the open BOQ or pricing request before moving the deal back.");
   return yes("back", "reason");
 }

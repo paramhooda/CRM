@@ -9,7 +9,8 @@ import type { Options } from "@/server/queries/options";
 import { DealActions, type DealAction } from "@/components/opportunities/deal-actions";
 import { Badge } from "@/components/ui/badge";
 import { OPEN_PRESALES, OPEN_PRICING } from "@/lib/workflow";
-import { PRESALES_STATUS_LABEL, PRICING_STATUS_LABEL, type Tone } from "@/lib/constants";
+import { PRESALES_STATUS_LABEL, PRICING_STATUS_LABEL, STAGE_META, type StageKey, type Tone } from "@/lib/constants";
+import { nextStage, type Needs } from "@/lib/stage-rules";
 import { fmtDate, relativeDays } from "@/lib/format";
 import { lineMultiplier } from "@/lib/boq";
 import { cn } from "@/lib/utils";
@@ -17,8 +18,6 @@ import { cn } from "@/lib/utils";
 export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   const o = d.opp;
   const w = d.workflow;
-  // Presales and purchase work belongs to the assignee (an admin can step in); managers get the sales-side actions
-  const admin = d.viewer.role === "ADMIN";
   const openPs = o.presalesRequests.find((r) => (OPEN_PRESALES as readonly string[]).includes(r.status));
   const openPq = o.pricingRequests.find((r) => (OPEN_PRICING as readonly string[]).includes(r.status));
   const lastPs = o.presalesRequests[0];
@@ -38,7 +37,8 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   switch (w.state) {
     case "ESTIMATE":
       headline = solution ? "Estimate only · needs presales" : "Estimate only · resale";
-      detail = solution ? "Next: request a BOQ from presales." : "Next: pick the catalogue products on Line items, then request pricing.";
+      detail = o.stage === "IDENTIFIED" ? "Next: qualify the deal (customer contact and a current close date), then advance it to Qualified."
+        : solution ? "Next: request a BOQ from presales." : "Next: pick the catalogue products on Line items, then request pricing.";
       who = { name: sales, role: "Sales" };
       break;
     case "WITH_PRESALES":
@@ -90,7 +90,71 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   const blocker = w.blockers.find((b) => !b.includes("asked:") && !b.startsWith("Purchase sent"));
   const closed = ["WON", "LOST", "DROPPED"].includes(o.stage);
 
-  // ── What this viewer can do ──
+  const { actions: all, advance } = dealActions(d, options);
+  // The step that moves the deal to its next stage sits on the stage bar; the rest stay here
+  const actions = all.filter((a) => advance?.kind !== "action" || a.id !== advance.action.id);
+
+  const tone: Tone = w.overdue ? "red" : w.tone;
+  const Icon = w.state === "ACCEPTED" ? CheckCircle2 : w.state === "CLOSED" ? XCircle : w.state === "WAITING_ON_SALES" ? PauseCircle : CircleDot;
+
+  return (
+    <section aria-label="Deal status" className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-3 sm:flex-row sm:items-center">
+      <Icon className="hidden size-5 shrink-0 sm:block" style={{ color: `var(--t-${tone})` }} />
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold">
+          {headline}
+          {who && (
+            <span className="text-[13px] font-normal text-ink-3">
+              <span className="hidden sm:inline">· </span>{who.role ? <>with <span className="text-ink-2">{who.name}</span> ({who.role})</> : "with the customer"}
+            </span>
+          )}
+          {w.due && (
+            <Badge tone={w.overdue ? "red" : "slate"}>{w.overdue ? "Overdue · " : "Due "}{fmtDate(w.due, "short")} ({relativeDays(w.due)})</Badge>
+          )}
+        </p>
+        {detail && <p className="mt-0.5 text-[13px] text-ink-2">{detail}</p>}
+        {blocker && (
+          <p className="mt-1 flex items-start gap-1.5 text-xs text-[var(--t-amber)]">
+            <AlertTriangle className="mt-px size-3.5 shrink-0" /> {blocker}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {!closed && w.state === "ESTIMATE" && !solution && d.perms.spec && (
+          <Button asChild size="sm" variant="primary"><Link href={`/opportunities/${o.id}?tab=boq&edit=1`}><Package /> Add products</Link></Button>
+        )}
+        <DealActions actions={actions} />
+      </div>
+    </section>
+  );
+}
+
+export type Advance =
+  | { kind: "move"; to: StageKey; label: string; needs?: Needs }
+  | { kind: "action"; label: string; action: DealAction }
+  | { kind: "blocked"; label: string; reason: string };
+
+const SHORT: Partial<Record<StageKey, string>> = { PROPOSAL: "Proposal" };
+
+/**
+ * Every action this viewer can take on the deal, and the one "advance" step that moves it to its next stage (the
+ * Salesforce Path button). Advancing into BOQ, Pricing or Proposal Submitted is the hand-over itself (request the BOQ,
+ * submit the BOQ, send the quote); the other stages advance directly. When the step belongs to someone else, the
+ * advance is shown disabled with the reason.
+ */
+export function dealActions(d: OppDetail, options: Options): { actions: DealAction[]; advance: Advance | null } {
+  const o = d.opp;
+  const w = d.workflow;
+  const admin = d.viewer.role === "ADMIN";
+  const openPs = o.presalesRequests.find((r) => (OPEN_PRESALES as readonly string[]).includes(r.status));
+  const openPq = o.pricingRequests.find((r) => (OPEN_PRICING as readonly string[]).includes(r.status));
+  const lastPs = o.presalesRequests[0];
+  const quote = o.quotes[0];
+  const realLines = d.lines.filter((l) => !l.isEstimate);
+  const solution = o.presalesRequired;
+  const needsBoq = solution && !o.presalesRequests.some((r) => r.status === "BOQ_SUBMITTED");
+  const closed = ["WON", "LOST", "DROPPED"].includes(o.stage);
+
   const actions: DealAction[] = [];
   const isSales = d.perms.requestPresales;
   const isPresales = !!openPs && (openPs.assignedTo.id === d.viewer.id || admin);
@@ -139,9 +203,10 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       if (isSales) actions.push({ id: "x-pq", kind: "cancel", label: "Cancel pricing request", reqKind: "pricing", requestId: openPq.id });
     } else if (isSales || d.perms.spec) {
       const expired = w.blockers.some((b) => b.startsWith("Supplier pricing expired"));
-      if ((w.state === "ESTIMATE" || w.state === "NEEDS_PRICING") && !lastPs)
+      const qualified = o.stage !== "IDENTIFIED" && o.stage !== "HOLD";
+      if ((w.state === "ESTIMATE" || w.state === "NEEDS_PRICING") && !lastPs && qualified)
         actions.push({ id: "pull", kind: "pullPresales", label: "Request BOQ from presales", primary: solution, oppId: o.id, presales: options.presales });
-      if (w.state === "NEEDS_PRICING" && !needsBoq) actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
+      if (w.state === "NEEDS_PRICING" && !needsBoq && qualified) actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
       if (d.perms.quote && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
       if (d.perms.quote && w.state === "QUOTE_SENT" && quote) {
         actions.push({ id: "resp", kind: "response", label: "Record customer response", primary: true, quoteId: quote.id, version: quote.version });
@@ -153,39 +218,45 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
     }
   }
 
-  const tone: Tone = w.overdue ? "red" : w.tone;
-  const Icon = w.state === "ACCEPTED" ? CheckCircle2 : w.state === "CLOSED" ? XCircle : w.state === "WAITING_ON_SALES" ? PauseCircle : CircleDot;
 
-  return (
-    <section aria-label="Deal status" className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-3 sm:flex-row sm:items-center">
-      <Icon className="hidden size-5 shrink-0 sm:block" style={{ color: `var(--t-${tone})` }} />
-      <div className="min-w-0 flex-1">
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold">
-          {headline}
-          {who && (
-            <span className="text-[13px] font-normal text-ink-3">
-              <span className="hidden sm:inline">· </span>{who.role ? <>with <span className="text-ink-2">{who.name}</span> ({who.role})</> : "with the customer"}
-            </span>
-          )}
-          {w.due && (
-            <Badge tone={w.overdue ? "red" : "slate"}>{w.overdue ? "Overdue · " : "Due "}{fmtDate(w.due, "short")} ({relativeDays(w.due)})</Badge>
-          )}
-        </p>
-        {detail && <p className="mt-0.5 text-[13px] text-ink-2">{detail}</p>}
-        {blocker && (
-          <p className="mt-1 flex items-start gap-1.5 text-xs text-[var(--t-amber)]">
-            <AlertTriangle className="mt-px size-3.5 shrink-0" /> {blocker}
-          </p>
-        )}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {!closed && w.state === "ESTIMATE" && !solution && d.perms.spec && (
-          <Button asChild size="sm" variant="primary"><Link href={`/opportunities/${o.id}?tab=boq`}><Package /> Add products</Link></Button>
-        )}
-        <DealActions actions={actions} />
-      </div>
-    </section>
-  );
+  // ── The advance step ──
+  const stage = o.stage as StageKey;
+  const byTo = new Map(d.moves.map((m) => [m.to, m]));
+  const find = (id: string) => actions.find((a) => a.id === id || (id === "price" && a.id.startsWith("price-") && a.kind === "requestPricing" && a.label !== "Re-validate costs"));
+  let advance: Advance | null = null;
+  const next = nextStage({ stage, presalesRequired: solution });
+  const to = (s: StageKey) => `Advance to ${SHORT[s] ?? STAGE_META[s].label}`;
+  if (stage === "HOLD") {
+    const m = d.moves.find((x) => x.kind === "resume");
+    if (m) advance = m.allowed ? { kind: "move", to: m.to, label: `Resume to ${STAGE_META[m.to].label}` } : { kind: "blocked", label: "Resume", reason: m.reason ?? "" };
+  } else if (!closed && !next) {
+    const m = byTo.get("WON");
+    if (m) advance = m.allowed ? { kind: "move", to: "WON", label: "Close as won", needs: "po" } : { kind: "blocked", label: "Close as won", reason: m.reason ?? "" };
+  } else if (!closed && next) {
+    const viaWorkflow = next === "BOQ" || next === "PRICING" || next === "PROPOSAL";
+    if (!viaWorkflow) {
+      const m = byTo.get(next);
+      if (m) advance = m.allowed ? { kind: "move", to: next, label: to(next) } : { kind: "blocked", label: to(next), reason: m.reason ?? "" };
+    } else {
+      const action = next === "BOQ" ? find("pull") : next === "PRICING" ? (stage === "BOQ" ? find("submit") : find("price")) : find("quote");
+      if (action && !action.disabledReason) advance = { kind: "action", label: to(next), action };
+      else {
+        const reason =
+          action?.disabledReason ??
+          (stage === "IDENTIFIED" ? "Qualify the deal first."
+            : openPs ? `Waiting for ${openPs.assignedTo.name} (presales) to submit the BOQ.`
+            : openPq ? `Waiting for ${openPq.assignedTo.name} (purchase) to finish pricing.`
+            : next === "BOQ" ? "The deal owner requests the BOQ from presales."
+            : next === "PRICING" && stage === "BOQ" ? "Request a BOQ from presales first."
+            : next === "PRICING" && !realLines.length ? "Replace the estimate with catalogue products on Line items first."
+            : next === "PRICING" ? "The deal owner requests pricing from purchase."
+            : w.needsCost ? "Lines need a current cost from purchase first."
+            : "The deal owner sends the quote.");
+        advance = { kind: "blocked", label: to(next), reason };
+      }
+    }
+  }
+  return { actions, advance };
 }
 
 // ───────────── Request history (History tab) ─────────────

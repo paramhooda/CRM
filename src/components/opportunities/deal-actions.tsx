@@ -86,7 +86,7 @@ function Footer({ onCancel, pending, label, icon, danger }: { onCancel: () => vo
 }
 
 /** One form per action. Each submits, toasts and closes; field errors show under their field. */
-function ActionDialog({ a, close }: { a: DealAction; close: () => void }) {
+export function ActionDialog({ a, close }: { a: DealAction; close: () => void }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { pending, run } = useAction();
   const submit = (fn: (f: Record<string, FormDataEntryValue>) => Parameters<typeof run>[0], success: string, onOk?: (data: unknown) => void) =>

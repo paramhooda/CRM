@@ -20,6 +20,19 @@ async function login(page: Page, email: string) {
   await page.waitForURL(/\/dashboard/);
 }
 
+/** The stage the deal is in, from the stage path */
+const currentStage = (page: Page) => page.getByRole("list", { name: "Stage" }).locator("[aria-current=step]");
+/** An item from the status line's More / Actions menu */
+async function statusMenu(page: Page, item: string) {
+  await page.getByLabel("Deal status").getByRole("button", { name: /^(More|Actions)$/ }).click();
+  await page.getByRole("menuitem", { name: item }).click();
+}
+/** An item from the stage bar's More menu */
+async function stageMenu(page: Page, item: string) {
+  await page.getByRole("list", { name: "Stage" }).locator("xpath=..").getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: item }).click();
+}
+
 async function pickProduct(page: Page, pickerIndex: number, sku: string) {
   await page.getByRole("button", { name: "Product", exact: true }).nth(pickerIndex).click();
   await page.getByPlaceholder("Search SKU, product, OEM or category").fill(sku);
@@ -57,15 +70,23 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("Cisco", { exact: false }).first()).toBeVisible();
     await expect(page.getByText("By OEM")).toBeVisible();
 
-    await page.getByRole("button", { name: "Request BOQ from presales" }).click();
+    // One click per stage: qualify, then advancing to BOQ is the BOQ request itself
+    await expect(currentStage(page)).toHaveText("Identified");
+    await expect(page.getByRole("list", { name: "Stage" }).getByRole("button")).toHaveCount(0); // stages are not clickable
+    await page.getByRole("button", { name: "Advance to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+    await page.getByRole("button", { name: "Advance to BOQ" }).click();
     const dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("Request BOQ from presales")).toBeVisible();
     await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
     await dlg.locator("textarea[name=scope]").fill("SD-WAN for 40 branches with dual ISP links and central orchestration.");
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
     // The deal moves to the BOQ stage and says who holds it
-    await expect(page.getByRole("button", { name: "BOQ", exact: true })).toBeDisabled();
+    await expect(currentStage(page)).toHaveText("BOQ");
     await expect(page.getByLabel("Deal status")).toContainText("BOQ with presales");
+    // The next step belongs to presales, so sales sees it disabled with the reason
+    await expect(page.getByRole("button", { name: /Advance to Pricing/ })).toBeDisabled();
     await expect(page.getByLabel("Deal status")).toContainText(PRESALES.name);
   });
 
@@ -100,13 +121,14 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
 
-    await page.getByRole("button", { name: "Submit BOQ" }).click();
+    await page.getByRole("button", { name: "Advance to Pricing" }).click();
     const dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("Submit BOQ")).toBeVisible();
     await dlg.locator("textarea[name=solutionSummary]").fill("Cisco SD-WAN edge with Fortinet NGFW at hub, sized for 40 branches.");
     await dlg.locator("select[name=purchaseUserId]").selectOption({ label: PURCHASE.name });
     await dlg.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pricing", exact: true })).toBeDisabled(); // now in the Pricing stage
+    await expect(currentStage(page)).toHaveText("Pricing");
     await expect(page.getByLabel("Deal status")).toContainText("Pricing with purchase");
   });
 
@@ -131,26 +153,28 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await login(page, SALES);
     await page.goto(`${oppUrl}?tab=boq`);
     await expect(page.getByLabel("Deal status")).toContainText("Priced · ready to quote");
-    await page.getByRole("button", { name: "More" }).click();
-    await page.getByRole("menuitem", { name: "Request BOQ change" }).click();
+    await statusMenu(page, "Request BOQ change");
     let dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Request BOQ change (revision 2)")).toBeVisible();
     await dlg.locator("textarea[name=reason]").fill("Customer wants 12 Cisco edge devices instead of 10.");
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
     await expect(page.getByLabel("Deal status")).toContainText("BOQ revision 2 with presales");
-    await expect(page.getByRole("button", { name: "BOQ", exact: true })).toBeDisabled(); // back from Pricing to BOQ
+    await expect(currentStage(page)).toHaveText("BOQ"); // back from Pricing to BOQ
     // Only the presales assignee edits the specification now
     await expect(page.getByText("Products and quantities locked")).toBeVisible();
 
     await login(page, PRESALES.email);
     await page.goto(`${oppUrl}?tab=boq`);
+    // The BOQ reads cleanly; editable fields appear in edit mode
+    await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0);
+    await page.getByRole("button", { name: "Edit line items" }).click();
     await page.getByLabel("Line 1 quantity").fill("12");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
-    await expect(page.getByText("Changed · needs re-pricing")).toBeVisible();
-    await page.getByRole("button", { name: "More" }).click();
-    await page.getByRole("menuitem", { name: "Ask sales a question" }).click();
+    await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0); // back to the read view
+    await expect(page.getByText("Needs re-pricing")).toBeVisible();
+    await statusMenu(page, "Ask sales a question");
     dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=question]").fill("Do the two extra devices need their own licence?");
     await dlg.getByRole("button", { name: "Send question" }).click();
@@ -167,7 +191,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
     await login(page, PRESALES.email);
     await page.goto(`${oppUrl}?tab=boq`);
-    await page.getByRole("button", { name: "Submit BOQ" }).click();
+    await page.getByRole("button", { name: "Advance to Pricing" }).click();
     dlg = page.getByRole("dialog");
     await expect(dlg.getByText("1 of 3 lines need a cost")).toBeVisible(); // unchanged lines keep their cost
     await dlg.locator("textarea[name=solutionSummary]").fill("Revision 2: 12 edge devices with licences.");
@@ -183,8 +207,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
     await login(page, PURCHASE.email);
     await page.goto(`${oppUrl}?tab=boq`);
-    await page.getByRole("button", { name: "More" }).click();
-    await page.getByRole("menuitem", { name: "Send back to presales" }).click();
+    await statusMenu(page, "Send back to presales");
     let dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=reason]").fill("Confirm the licence SKU for the two extra devices.");
     await dlg.getByRole("button", { name: "Send back" }).click();
@@ -193,7 +216,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await login(page, PRESALES.email);
     await page.goto(`${oppUrl}?tab=boq`);
     await expect(page.getByLabel("Deal status")).toContainText("BOQ revision 3 with presales");
-    await page.getByRole("button", { name: "Submit BOQ" }).click();
+    await page.getByRole("button", { name: "Advance to Pricing" }).click();
     dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=solutionSummary]").fill("Licence SKU confirmed with the OEM.");
     await dlg.getByRole("button", { name: "Submit" }).click();
@@ -202,10 +225,12 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await login(page, PURCHASE.email);
     await page.goto(`${oppUrl}?tab=boq`);
     await expect(page.getByLabel("Deal status")).toContainText("Re-pricing with purchase");
+    await page.getByRole("button", { name: "Enter costs" }).click(); // purchase edits only costs
+    await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0);
     await page.getByLabel("Line 1 unit cost").fill("240000");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
-    await expect(page.getByText("Changed · needs re-pricing")).toHaveCount(0);
+    await expect(page.getByText("Needs re-pricing")).toHaveCount(0);
     await page.getByRole("button", { name: "Pricing complete" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
@@ -216,7 +241,8 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.goto(`${oppUrl}?tab=boq`);
     // A second tab opened on the same BOQ cannot overwrite a newer save
     const other = await page.context().newPage();
-    await other.goto(`${oppUrl}?tab=boq`);
+    await other.goto(`${oppUrl}?tab=boq&edit=1`);
+    await page.getByRole("button", { name: "Edit line items" }).click();
     await page.getByLabel("Target margin %").fill("18");
     await page.getByRole("button", { name: "Price at margin" }).click();
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -227,7 +253,8 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(other.getByText(/Someone else saved this BOQ/)).toBeVisible();
     await other.close();
 
-    await page.getByLabel("Deal status").getByRole("button", { name: "Create & send quote" }).click();
+    // Advancing to Proposal is sending the quote
+    await page.getByRole("button", { name: "Advance to Proposal" }).click();
     let popup = page.waitForEvent("popup");
     await page.getByRole("dialog").getByRole("button", { name: "Create & send quote" }).click();
     const quote = await popup;
@@ -237,7 +264,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
     // Customer asks for changes: sales re-issues a new version
     await page.goto(`${oppUrl}?tab=boq`);
-    await expect(page.getByRole("button", { name: "Proposal Submitted", exact: true })).toBeDisabled();
+    await expect(currentStage(page)).toHaveText("Proposal Submitted");
     await page.getByRole("button", { name: "Record customer response" }).click();
     let dlg = page.getByRole("dialog");
     await dlg.getByRole("radio", { name: "Wants changes" }).click();
@@ -260,8 +287,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("With customer", { exact: true })).toBeVisible();
 
     await page.goto(oppUrl);
-    await expect(page.getByRole("button", { name: "Proposal Submitted" })).toBeDisabled();
-    await page.getByRole("button", { name: "Won" }).click();
+    await page.getByRole("button", { name: "Advance to Negotiation" }).click();
+    await expect(page.getByText("Moved to Negotiation")).toBeVisible();
+    await page.getByRole("button", { name: "Close as won" }).click();
     dlg = page.getByRole("dialog");
     await dlg.locator("input[name=poNumber]").fill("PO/E2E/0001");
     await dlg.getByRole("button", { name: "Mark as won" }).click();
@@ -314,14 +342,14 @@ test.describe("Roles and permissions", () => {
 
   test("closing as won requires a PO", async ({ page }) => {
     await login(page, HEAD);
-    await page.goto("/opportunities?stage=PROPOSAL");
+    await page.goto("/opportunities?stage=NEGOTIATION");
     const hrefs = await page.locator("table a[href^='/opportunities/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")!));
-    // First Proposal deal whose quote is with the customer and nothing is open with presales or purchase
+    // First Negotiation deal whose quote is with the customer and nothing is open with presales or purchase
     for (const href of hrefs) {
       await page.goto(href);
-      if (await page.getByRole("button", { name: "Won" }).isEnabled()) break;
+      if (await page.getByRole("button", { name: "Close as won" }).isEnabled()) break;
     }
-    await page.getByRole("button", { name: "Won" }).click();
+    await page.getByRole("button", { name: "Close as won" }).click();
     const dlg = page.getByRole("dialog");
     await dlg.locator("input[name=poNumber]").fill("");
     await dlg.getByRole("button", { name: "Mark as won" }).click();
@@ -358,21 +386,20 @@ test.describe("Process guardrails", () => {
     const url = new URL(page.url()).pathname;
 
     const stages = page.getByRole("list", { name: "Stage" });
-    // Won and the workflow stages are not clickable, and say why
-    await expect(page.getByRole("button", { name: "Won" })).toBeDisabled();
-    for (const s of ["BOQ", "Pricing", "Proposal Submitted", "Negotiation"]) await expect(stages.getByRole("button", { name: s, exact: true })).toBeDisabled();
-    await stages.getByRole("button", { name: "Proposal Submitted", exact: true }).hover({ force: true });
-    await expect(page.getByRole("tooltip").first()).toContainText("when the quote is sent");
-    // The next stage is the only one it can move to (the account's contact was picked on the form)
-    await expect(stages.getByRole("button", { name: "Qualified", exact: true })).toBeEnabled();
+    // Stages show progress only; the one button advances to the next stage. Won is not on offer this early.
+    await expect(stages.getByRole("button")).toHaveCount(0);
+    await expect(stages.locator("li", { hasText: "Proposal Submitted" })).toHaveAttribute("title", /when the quote is sent/);
+    await expect(page.getByRole("button", { name: "Advance to Qualified" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Close as won" })).toHaveCount(0);
 
     // Hold asks for a reason, then the only way back is to resume to the same stage
-    await page.getByRole("button", { name: "Hold" }).click();
+    await stageMenu(page, "Put on hold");
     await page.getByRole("dialog").locator("textarea[name=note]").fill("Customer budget frozen until April");
     await page.getByRole("dialog").getByRole("button", { name: "Put on hold" }).click();
     await expect(page.getByText("Moved to Hold")).toBeVisible();
     await expect(page.getByText("On hold: Customer budget frozen until April")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Won" })).toHaveCount(0);
+    await expect(currentStage(page)).toHaveText("Identified");
+    await expect(page.getByRole("button", { name: "Advance to Qualified" })).toHaveCount(0);
     await page.getByRole("button", { name: "Resume to Identified" }).click();
     await expect(page.getByText("Moved to Identified")).toBeVisible();
 
@@ -387,12 +414,44 @@ test.describe("Process guardrails", () => {
     await login(page, SALES);
     await page.goto("/opportunities?stage=BOQ,PRICING,PROPOSAL,NEGOTIATION");
     await page.locator("table a[href^='/opportunities/']").first().click();
-    const stages = page.getByRole("list", { name: "Stage" });
-    await expect(stages.getByRole("button", { name: "Identified", exact: true })).toBeDisabled();
+    await page.getByRole("list", { name: "Stage" }).locator("xpath=..").getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: /Move back/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await page.goto("/opportunities?stage=WON,LOST,DROPPED");
     await page.locator("table a[href^='/opportunities/']").first().click();
     await expect(page.getByRole("button", { name: "Reopen" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Edit" })).toHaveCount(0);
+  });
+
+  test("a stage is skipped only from inside it: BOQ is skipped once the deal is in BOQ", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    await page.fill("#name", `E2E Skip BOQ ${Date.now().toString().slice(-6)}`);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByRole("button", { name: "Pick an exact product" }).click();
+    await page.getByRole("button", { name: "Remove line 1" }).click();
+    await pickProduct(page, 0, "CSCO-NET-02");
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    await page.getByRole("button", { name: "Advance to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+    // Skipping is not offered before the deal reaches the stage
+    await page.getByRole("list", { name: "Stage" }).locator("xpath=..").getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: /Skip BOQ/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Advance to BOQ" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
+    await dlg.locator("textarea[name=scope]").fill("Ten access switches, same as the existing branch standard.");
+    await dlg.getByRole("button", { name: "Send to presales" }).click();
+    await expect(currentStage(page)).toHaveText("BOQ");
+    await stageMenu(page, "Skip BOQ (no presales needed)");
+    await page.getByRole("dialog").locator("textarea[name=note]").fill("Standard branch switches; exact SKUs already on the deal");
+    await page.getByRole("dialog").getByRole("button", { name: "Skip BOQ" }).click();
+    await expect(page.getByText("BOQ skipped. The deal is in Pricing.")).toBeVisible();
+    await expect(currentStage(page)).toHaveText("Pricing");
+    await expect(page.getByRole("list", { name: "Stage" }).locator("li", { hasText: /^BOQ$/ })).toHaveCount(0); // now a resale path
+    await expect(page.getByLabel("Deal status")).toContainText("Pricing not requested");
   });
 });
 

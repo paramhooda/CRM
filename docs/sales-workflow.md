@@ -45,18 +45,27 @@ The form suggests it from the categories, and sales can change it. An admin sets
 
 ## Stage rules (enforced for everyone)
 
-The rules apply to the stage bar, the pipeline board and the edit form, and the server checks them again on every change. A stage that can't be clicked explains why when you point at it.
+The stage bar works like Salesforce Path:
+- **The stages show progress only and cannot be clicked.**
+- **One button advances the deal to its next stage.**
+  - Into BOQ, Pricing and Proposal Submitted, the advance *is* the hand-over: **Advance to BOQ** opens the BOQ request, **Advance to Pricing** opens Submit BOQ (presales) or Request pricing (resale deals), and **Advance to Proposal** opens Create & send quote.
+  - Elsewhere it moves the deal directly: Advance to Qualified, Advance to Negotiation, and **Close as won** from Negotiation.
+  - When the next step belongs to someone else, the button is disabled and says who it is waiting on.
+- **Resale deals have their own path without BOQ**, the way Salesforce gives each sales process its own stages.
+- **More** holds the rest: Put on hold, Move back one stage (managers), Skip BOQ (only while in BOQ), Close as won (from Proposal Submitted), Close as lost, Drop, Reopen (managers).
+
+These rules apply to the stage bar, the pipeline board and the edit form, and the server checks them again on every change.
 
 | Move | Who | Rule |
 |---|---|---|
 | New deal | Sales | Starts at **Identified** or **Qualified**; Qualified needs a customer contact. |
-| Identified → Qualified | Owner or manager | Needs a customer contact and a close date that has not passed. |
+| Identified → Qualified | Owner or manager | Needs a customer contact and a close date that has not passed. BOQ and pricing can only be requested once the deal is qualified. |
 | → BOQ, → Pricing, → Proposal Submitted | Nobody by hand | Set by the workflow: request a BOQ, submit the BOQ (or request pricing), send the quote. |
 | Proposal Submitted → Negotiation | Owner or manager | Needs a quote with the customer and nothing open with presales or purchase. |
 | → Won | Owner or manager | Only from Proposal Submitted or Negotiation, with a quote with the customer, nothing open with presales or purchase, and the customer PO. Lines must be priced with HSN/SAC. |
 | → Lost / Dropped | Owner or manager | From any open stage, with a loss reason. |
-| Skipping stages | Nobody | Deals move one stage at a time. |
-| Moving back | Sales manager only | A correction, with a reason. Never into BOQ, Pricing or Proposal Submitted (use Request BOQ change), and not while a BOQ or pricing request is open. |
+| Skipping a stage | Owner or manager | Only from inside the stage, with a reason. Today that is BOQ: **Skip BOQ (no presales needed)** cancels any open BOQ request, makes it a resale deal and moves it to Pricing. Nobody can jump ahead from an earlier stage. |
+| Moving back | Sales manager only | One stage at a time, as a correction with a reason. Never into BOQ or Pricing (use Request BOQ change), and not while a BOQ or pricing request is open. |
 | Hold | Owner or manager | Needs a reason. While on hold, the only moves are **Resume** (back to the stage it was held from), Lost or Dropped. |
 | Reopen a closed deal | Sales manager only | Needs a reason. Returns to the stage it was closed from. |
 
@@ -111,3 +120,14 @@ The full trail (every request, revision, question and send-back) is on the **His
 | A quote expires within 3 days | The sales owner |
 
 The rules are in `src/lib/workflow.ts` (unit-tested), the actions in `src/server/actions/workflow.ts`, and the status line in `src/components/opportunities/deal-status.tsx`.
+
+## Line items
+
+The Line items tab shows the BOQ as a clean read-only table, grouped by business unit with subtotals. Each row shows the item, quantity, billing, unit price and amount; cost and margin columns appear for people who can see cost. Estimates and lines that need re-pricing are marked.
+
+Each person's button opens edit mode with only the fields they may change:
+- **Edit line items** for presales and the deal owner (products and quantities, and the owner's prices);
+- **Enter costs** for purchase;
+- **Set prices** when only prices can be changed.
+
+**Save** or **Cancel** returns to the read view. Links from the presales and purchase work queues open straight into edit mode.

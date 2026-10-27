@@ -124,6 +124,9 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
   if (!opp) return { ok: false, error: "Opportunity not found." };
   if (!can.requestPresales(user, opp)) return { ok: false, error: "Only the deal owner or a manager can pull in presales." };
   if (isClosed(opp.stage)) return { ok: false, error: "This deal is closed." };
+  // One stage at a time: a deal is qualified before work starts on it; a held deal resumes first
+  if (opp.stage === "IDENTIFIED") return { ok: false, error: "Qualify the deal first: advance it to Qualified, then request the BOQ." };
+  if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it first." };
   const parsed = presalesSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
@@ -348,6 +351,8 @@ export async function requestPricing(oppId: string, input: Record<string, unknow
   if (!opp) return { ok: false, error: "Opportunity not found." };
   if (!can.editBoqSpec(user, opp)) return { ok: false, error: "Only the deal owner, presales owner or a manager can request pricing." };
   if (isClosed(opp.stage)) return { ok: false, error: "This deal is closed." };
+  if (opp.stage === "IDENTIFIED") return { ok: false, error: "Qualify the deal first: advance it to Qualified, then request pricing." };
+  if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it first." };
   const parsed = pricingSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const res = await run(() =>

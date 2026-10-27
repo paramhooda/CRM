@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { checkMove, stageMoves, forecastError, dealFieldErrors, type StageFacts } from "@/lib/stage-rules";
+import { checkMove, stageMoves, forecastError, dealFieldErrors, nextStage, pathFor, checkSkip, type StageFacts } from "@/lib/stage-rules";
 import type { StageKey } from "@/lib/constants";
 
 const facts = (p: Partial<StageFacts> = {}): StageFacts => ({
   stage: "QUALIFIED", heldFromStage: null, lastOpenStage: null, hasContact: true, closeDatePast: false, realLines: 2,
-  openPresales: false, openPricing: false, quoteStatus: null, ...p,
+  openPresales: false, openPricing: false, quoteStatus: null, presalesRequired: true, ...p,
 });
 const owner = { canEdit: true, isManager: false };
 const manager = { canEdit: true, isManager: true };
@@ -44,10 +44,11 @@ describe("stage moves", () => {
 
   it("moving back is a manager's correction with a reason, never into a workflow stage", () => {
     const f = facts({ stage: "NEGOTIATION", quoteStatus: "SUBMITTED" });
-    expect(checkMove(f, owner, "QUALIFIED").reason).toMatch(/Only a sales manager/);
-    expect(checkMove(f, manager, "QUALIFIED")).toMatchObject({ allowed: true, needs: "reason", kind: "back" });
-    expect(allowed(f, "PRICING", manager)).toBe(false);
-    expect(allowed(facts({ stage: "PROPOSAL", openPricing: true }), "QUALIFIED", manager)).toBe(false);
+    expect(checkMove(f, owner, "PROPOSAL").reason).toMatch(/Only a sales manager/);
+    expect(checkMove(f, manager, "PROPOSAL")).toMatchObject({ allowed: true, needs: "reason", kind: "back" });
+    expect(checkMove(f, manager, "QUALIFIED").reason).toMatch(/one stage at a time, to Proposal Submitted/);
+    expect(allowed(facts({ stage: "PROPOSAL" }), "PRICING", manager)).toBe(false); // workflow stage
+    expect(allowed(facts({ stage: "QUALIFIED", openPricing: true }), "IDENTIFIED", manager)).toBe(false);
   });
 
   it("hold needs a reason and resumes only to the stage it was held from", () => {
@@ -64,6 +65,23 @@ describe("stage moves", () => {
     expect(allowed(lost, "PROPOSAL")).toBe(false);
     expect(checkMove(lost, manager, "PROPOSAL")).toMatchObject({ allowed: true, kind: "reopen", needs: "reason" });
     expect(allowed(lost, "NEGOTIATION", manager)).toBe(false);
+  });
+});
+
+describe("paths and skipping", () => {
+  it("resale deals have no BOQ stage; solution deals do", () => {
+    expect(pathFor(facts({ presalesRequired: false }))).not.toContain("BOQ");
+    expect(nextStage(facts({ stage: "QUALIFIED", presalesRequired: false }))).toBe("PRICING");
+    expect(nextStage(facts({ stage: "QUALIFIED", presalesRequired: true }))).toBe("BOQ");
+    expect(nextStage(facts({ stage: "NEGOTIATION" }))).toBeNull();
+    expect(checkMove(facts({ stage: "QUALIFIED", presalesRequired: false }), owner, "BOQ").allowed).toBe(false);
+  });
+
+  it("a stage is skipped only from inside it: BOQ can be skipped once the deal is in BOQ", () => {
+    expect(checkSkip(facts({ stage: "QUALIFIED" }), owner).allowed).toBe(false);
+    expect(checkSkip(facts({ stage: "BOQ" }), owner)).toMatchObject({ allowed: true, to: "PRICING" });
+    expect(checkSkip(facts({ stage: "BOQ" }), { canEdit: false, isManager: false }).allowed).toBe(false);
+    expect(checkSkip(facts({ stage: "PRICING" }), manager).allowed).toBe(false);
   });
 });
 

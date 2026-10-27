@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Save, Percent, Undo2, Lock, Tag, Wand2, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Save, Percent, Lock, Tag, Wand2, RefreshCw, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,7 @@ const mult = (l: Pick<Line, "quantity" | "billingFrequency" | "termMonths">) =>
   (Number(l.quantity) || 0) * billingPeriods({ billingFrequency: l.billingFrequency as BillingFrequencyKey, termMonths: l.termMonths });
 
 export function LineItemsEditor({
-  oppId, initial, perms, products, bus, categories, oems, distributors, defaultTerm, locked, version: initialVersion, lockReason, oemTbd,
+  oppId, initial, perms, products, bus, categories, oems, distributors, defaultTerm, locked, version: initialVersion, lockReason, oemTbd, startEditing = false,
 }: {
   oppId: string;
   initial: OppDetail["lines"];
@@ -45,6 +45,8 @@ export function LineItemsEditor({
   /** Why the specification cannot be edited right now (open presales or pricing request) */
   lockReason: string | null;
   oemTbd: Opt | null;
+  /** Open straight into edit mode (e.g. from "Add products") */
+  startEditing?: boolean;
 }) {
   const [version, setVersion] = useState(initialVersion);
   const start = () => initial.map((l) => ({ ...l, _key: l.id, _custom: !l.productId }));
@@ -61,8 +63,13 @@ export function LineItemsEditor({
     setVersion(initialVersion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial, initialVersion]);
-  const can = { spec: perms.spec && !locked && !lockReason, cost: perms.cost && !locked, price: perms.price && !locked };
-  const editable = can.spec || can.cost || can.price;
+  // What this person may change; fields are only editable in edit mode, which they open with the Edit button
+  const allowed = { spec: perms.spec && !locked && !lockReason, cost: perms.cost && !locked, price: perms.price && !locked };
+  const editable = allowed.spec || allowed.cost || allowed.price;
+  const [editing, setEditing] = useState(startEditing && editable);
+  const can = editing ? allowed : { spec: false, cost: false, price: false };
+  const editLabel = allowed.spec ? "Edit line items" : allowed.cost && !allowed.price ? "Enter costs" : allowed.price && !allowed.cost ? "Set prices" : "Edit";
+  const stopEditing = () => { setLines(start()); setDirty(false); setErrors({}); setEditing(false); };
 
   const set = (key: string, patch: Partial<Line>) => {
     setLines((ls) => ls.map((l) => (l._key === key ? { ...l, ...patch } : l)));
@@ -143,7 +150,7 @@ export function LineItemsEditor({
         ),
       {
         success: "Line items saved",
-        onOk: (r) => { setDirty(false); setErrors({}); if (r.data) setVersion(r.data.version); },
+        onOk: (r) => { setDirty(false); setErrors({}); setEditing(false); if (r.data) setVersion(r.data.version); },
         onError: (r) => setErrors(r.fieldErrors ?? {}),
       },
     );
@@ -178,6 +185,7 @@ export function LineItemsEditor({
           {!locked && !editable && <Badge tone="slate"><Lock className="size-3" /> Read only</Badge>}
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {!editing && editable && <Button size="sm" variant="primary" onClick={() => setEditing(true)}><Pencil /> {editLabel}</Button>}
           {can.cost && <Button size="sm" variant="ghost" onClick={() => fill("unitCost", "standardCost")} title="Fill empty costs with catalogue standard cost"><Wand2 /> Standard costs</Button>}
           {can.price && <Button size="sm" variant="ghost" onClick={() => fill("unitPrice", "listPrice")} title="Fill empty sell prices with catalogue list price"><Tag /> List prices</Button>}
           {can.price && perms.viewCost && (
@@ -188,8 +196,8 @@ export function LineItemsEditor({
             </div>
           )}
           {can.spec && <Button size="sm" onClick={add}><Plus /> Add line</Button>}
-          {dirty && <Button size="sm" variant="ghost" onClick={() => { setLines(start()); setDirty(false); setErrors({}); }}><Undo2 /> Discard</Button>}
-          {editable && <Button size="sm" variant="primary" disabled={!dirty || pending} onClick={save}><Save /> Save</Button>}
+          {editing && <Button size="sm" variant="ghost" onClick={stopEditing}><X /> Cancel</Button>}
+          {editing && <Button size="sm" variant="primary" disabled={!dirty || pending} onClick={save}><Save /> Save</Button>}
         </div>
       </div>
       {!locked && perms.spec && lockReason && (
@@ -202,6 +210,9 @@ export function LineItemsEditor({
           {Object.entries(errors).map(([path, msg]) => `Line ${Number(path.split(".")[0]) + 1}: ${msg}`).join(" · ")}
         </p>
       )}
+      {!editing ? (
+        <BoqView lines={lines} viewCost={perms.viewCost} locked={locked} />
+      ) : (
       <div className="overflow-x-auto scrollbar-thin">
         <table className="w-full min-w-[1120px] table-fixed text-[13px]">
           <thead>
@@ -349,6 +360,7 @@ export function LineItemsEditor({
           </tbody>
         </table>
       </div>
+      )}
       <div className="grid gap-6 border-t border-border px-5 py-4 md:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,2fr)]">
         <Total label="Sell value" value={inr(totals.sell)} sub={`${totals.priced}/${lines.length} lines priced`} />
         {perms.viewCost && <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${lines.length} lines costed`} />}
@@ -392,6 +404,85 @@ function MixBar({ label, mix }: { label: string; mix: [string, number][] }) {
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Read-only BOQ: what is being sold, grouped by business unit with subtotals. Cost and margin columns appear for
+ * people who can see cost. Edit mode (the Edit button) shows the editable grid.
+ */
+function BoqView({ lines, viewCost, locked }: { lines: Line[]; viewCost: boolean; locked: boolean }) {
+  if (!lines.length) return <p className="px-5 py-12 text-center text-sm text-ink-3">No line items yet.</p>;
+  const groups = new Map<string, Line[]>();
+  for (const l of lines) groups.set(l.buName || "Unclassified", [...(groups.get(l.buName || "Unclassified") ?? []), l]);
+  const value = (l: Line) => { const unit = l.unitPrice ?? l.listPrice; return unit === null ? null : mult(l) * unit; };
+  const cols = viewCost ? 7 : 5;
+  let n = 0;
+  return (
+    <div className="overflow-x-auto scrollbar-thin">
+      <table className="w-full min-w-[760px] text-[13px]" aria-label="Line items">
+        <thead>
+          <tr className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wide text-ink-3">
+            <th scope="col" className="px-5 py-2.5 font-medium">Item</th>
+            <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Quantity</th>
+            <th scope="col" className="w-36 px-3 py-2.5 font-medium">Billing</th>
+            {viewCost && <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Unit cost</th>}
+            <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Unit price</th>
+            <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Amount</th>
+            {viewCost && <th scope="col" className="w-20 px-5 py-2.5 text-right font-medium">GM %</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {[...groups.entries()].map(([bu, ls]) => {
+            const subtotal = ls.reduce((a, l) => a + (value(l) ?? 0), 0);
+            return [
+              groups.size > 1 && (
+                <tr key={`g-${bu}`} className="bg-surface-2/60">
+                  <td colSpan={cols - 1} className="px-5 py-1.5 text-xs font-medium text-ink-2">{bu} <span className="font-normal text-ink-3">· {ls.length} line{ls.length > 1 ? "s" : ""}</span></td>
+                  <td className="px-5 py-1.5 text-right text-xs font-medium tabular text-ink-2">{inr(subtotal)}</td>
+                </tr>
+              ),
+              ...ls.map((l) => {
+                n++;
+                const v = value(l);
+                const gm = l.unitPrice && l.unitCost !== null ? ((l.unitPrice - l.unitCost) / l.unitPrice) * 100 : null;
+                const recurring = l.billingFrequency !== "ONE_TIME";
+                return (
+                  <tr key={l._key} className="border-t border-border align-top">
+                    <td className="px-5 py-3">
+                      <div className="flex items-start gap-2">
+                        <span className="w-5 shrink-0 pt-px text-xs tabular text-ink-3">{n}</span>
+                        <div className="min-w-0">
+                          <p className="font-medium">{l.description}</p>
+                          <p className="mt-0.5 text-xs text-ink-3">
+                            {[l.partNumber && <span key="p" className="font-mono">{l.partNumber}</span>, l.oemName, l.categoryName, l.hsnSac && `HSN/SAC ${l.hsnSac}`]
+                              .filter(Boolean)
+                              .flatMap((x, i) => (i ? [" · ", x] : [x]))}
+                          </p>
+                          <div className="mt-1 flex flex-wrap gap-1 empty:hidden">
+                            {l.isEstimate && <Badge tone="amber">Estimate</Badge>}
+                            {l.costStale && viewCost && <Badge tone="amber"><RefreshCw className="size-3" /> Needs re-pricing</Badge>}
+                            {locked && <Badge tone="green">{LINE_BILLING_STATUS_LABEL[l.billingStatus]}</Badge>}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-right tabular">{l.quantity.toLocaleString("en-IN")} <span className="text-xs text-ink-3">{l.unit}</span></td>
+                    <td className="px-3 py-3 text-xs text-ink-2">{recurring ? `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo` : "One-time"}</td>
+                    {viewCost && <td className="px-3 py-3 text-right tabular text-ink-2">{l.unitCost === null ? <span className="text-ink-3">—</span> : l.unitCost.toLocaleString("en-IN")}</td>}
+                    <td className="px-3 py-3 text-right tabular">{l.unitPrice === null ? <span className="text-ink-3" title="Not priced yet">—</span> : l.unitPrice.toLocaleString("en-IN")}</td>
+                    <td className="px-3 py-3 text-right font-medium tabular">
+                      {v === null ? <span className="text-ink-3">—</span> : <span className={cn(l.unitPrice === null && "text-ink-3")} title={l.unitPrice === null ? "At list price until priced" : undefined}>{inr(v)}</span>}
+                    </td>
+                    {viewCost && <td className="px-5 py-3 text-right tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>{gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}</td>}
+                  </tr>
+                );
+              }),
+            ];
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
