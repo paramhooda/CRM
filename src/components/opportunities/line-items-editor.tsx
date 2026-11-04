@@ -17,7 +17,8 @@ import { BILLING_FREQUENCY_LABEL, LINE_BILLING_STATUS_LABEL } from "@/lib/consta
 import { cn } from "@/lib/utils";
 
 type Line = OppDetail["lines"][number] & { _key: string; _custom?: boolean };
-type Perms = { spec: boolean; cost: boolean; internalCost: boolean; price: boolean; viewCost: boolean };
+/** `sales`: sees the sell side (unit price, value, margin). Presales and purchase see specification and cost only. */
+type Perms = { spec: boolean; cost: boolean; internalCost: boolean; price: boolean; viewCost: boolean; sales: boolean };
 type Opt = { id: string; name: string };
 
 const UNITS = ["Nos", "Lot", "Users", "Cores", "Devices", "VMs", "TB", "Racks", "Resources", "Days", "Month", "Year", "Pool", "Drill"];
@@ -223,7 +224,7 @@ export function LineItemsEditor({
         </p>
       )}
       {!editing ? (
-        <BoqView lines={lines} viewCost={perms.viewCost} locked={locked} />
+        <BoqView lines={lines} viewCost={perms.viewCost} sales={perms.sales} locked={locked} />
       ) : (
       <div className="overflow-x-auto scrollbar-thin">
         <table className="w-full min-w-[1140px] table-fixed text-[13px]">
@@ -236,9 +237,10 @@ export function LineItemsEditor({
               <th scope="col" className="w-[80px] px-2 py-2.5 font-medium">HSN/SAC</th>
               {perms.viewCost && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-amber)" }}>Unit cost</th>}
               {perms.viewCost && <th scope="col" className="w-[164px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>Cost from</th>}
-              <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-green)" }}>Unit price</th>
-              <th scope="col" className="w-[100px] px-2 py-2.5 text-right font-medium">Value</th>
-              {perms.viewCost && <th scope="col" className="w-[56px] px-2 py-2.5 text-right font-medium">GM %</th>}
+              {perms.sales && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-green)" }}>Unit price</th>}
+              {perms.sales && <th scope="col" className="w-[100px] px-2 py-2.5 text-right font-medium">Value</th>}
+              {perms.sales && perms.viewCost && <th scope="col" className="w-[56px] px-2 py-2.5 text-right font-medium">GM %</th>}
+              {!perms.sales && <th scope="col" className="w-[110px] px-2 py-2.5 text-right font-medium">Cost total</th>}
               {can.spec && <th scope="col" className="w-9" />}
             </tr>
           </thead>
@@ -354,13 +356,18 @@ export function LineItemsEditor({
                       />
                     </td>
                   )}
-                  <td className="px-2 py-2">{numIn(l.unitPrice, (n) => set(l._key, { unitPrice: n }), !can.price, `Line ${i + 1} unit price`, l.listPrice)}</td>
-                  <td className="px-2 py-2.5 text-right tabular">
-                    {value === null ? <span className="text-ink-3">—</span> : (
-                      <span className={cn("font-medium", l.unitPrice === null && "text-ink-3")} title={l.unitPrice === null ? "Estimated at list price" : undefined}>{inr(value)}</span>
-                    )}
-                  </td>
-                  {perms.viewCost && (
+                  {perms.sales && <td className="px-2 py-2">{numIn(l.unitPrice, (n) => set(l._key, { unitPrice: n }), !can.price, `Line ${i + 1} unit price`, l.listPrice)}</td>}
+                  {perms.sales && (
+                    <td className="px-2 py-2.5 text-right tabular">
+                      {value === null ? <span className="text-ink-3">—</span> : (
+                        <span className={cn("font-medium", l.unitPrice === null && "text-ink-3")} title={l.unitPrice === null ? "Estimated at list price" : undefined}>{inr(value)}</span>
+                      )}
+                    </td>
+                  )}
+                  {!perms.sales && (
+                    <td className="px-2 py-2.5 text-right font-medium tabular">{l.unitCost === null ? <span className="text-ink-3">—</span> : inr(mult(l) * l.unitCost)}</td>
+                  )}
+                  {perms.sales && perms.viewCost && (
                     <td className="px-2 py-2.5 text-right tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>
                       {gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}
                     </td>
@@ -386,6 +393,11 @@ export function LineItemsEditor({
         </table>
       </div>
       )}
+      {!perms.sales ? (
+        <div className="grid gap-6 border-t border-border px-5 py-4 sm:grid-cols-4">
+          <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${lines.length} lines costed`} />
+        </div>
+      ) : (
       <div className="grid gap-6 border-t border-border px-5 py-4 md:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,2fr)]">
         <Total label="Sell value" value={inr(totals.sell)} sub={`${totals.priced}/${lines.length} lines priced`} />
         {perms.viewCost && <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${lines.length} lines costed`} />}
@@ -396,6 +408,7 @@ export function LineItemsEditor({
           <MixBar label="By business unit" mix={totals.buMix} />
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -501,12 +514,16 @@ function MixBar({ label, mix }: { label: string; mix: [string, number][] }) {
  * Read-only BOQ: what is being sold, grouped by business unit with subtotals. Cost and margin columns appear for
  * people who can see cost. Edit mode (the Edit button) shows the editable grid.
  */
-function BoqView({ lines, viewCost, locked }: { lines: Line[]; viewCost: boolean; locked: boolean }) {
+function BoqView({ lines, viewCost, sales, locked }: { lines: Line[]; viewCost: boolean; sales: boolean; locked: boolean }) {
   if (!lines.length) return <p className="px-5 py-12 text-center text-sm text-ink-3">No line items yet.</p>;
   const groups = new Map<string, Line[]>();
   for (const l of lines) groups.set(l.buName || "Unclassified", [...(groups.get(l.buName || "Unclassified") ?? []), l]);
-  const value = (l: Line) => { const unit = l.unitPrice ?? l.listPrice; return unit === null ? null : mult(l) * unit; };
-  const cols = viewCost ? 7 : 5;
+  // Sales reads sell value; presales and purchase read cost
+  const value = (l: Line) => {
+    const unit = sales ? l.unitPrice ?? l.listPrice : l.unitCost;
+    return unit === null ? null : mult(l) * unit;
+  };
+  const cols = !sales ? 5 : viewCost ? 7 : 5;
   let n = 0;
   return (
     <div className="overflow-x-auto scrollbar-thin">
@@ -517,9 +534,9 @@ function BoqView({ lines, viewCost, locked }: { lines: Line[]; viewCost: boolean
             <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Quantity</th>
             <th scope="col" className="w-36 px-3 py-2.5 font-medium">Billing</th>
             {viewCost && <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Unit cost</th>}
-            <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Unit price</th>
-            <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Amount</th>
-            {viewCost && <th scope="col" className="w-20 px-5 py-2.5 text-right font-medium">GM %</th>}
+            {sales && <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Unit price</th>}
+            <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">{sales ? "Amount" : "Cost total"}</th>
+            {sales && viewCost && <th scope="col" className="w-20 px-5 py-2.5 text-right font-medium">GM %</th>}
           </tr>
         </thead>
         <tbody>
@@ -561,11 +578,11 @@ function BoqView({ lines, viewCost, locked }: { lines: Line[]; viewCost: boolean
                     <td className="px-3 py-3 text-right tabular">{l.quantity.toLocaleString("en-IN")} <span className="text-xs text-ink-3">{l.unit}</span></td>
                     <td className="px-3 py-3 text-xs text-ink-2">{recurring ? `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo` : "One-time"}</td>
                     {viewCost && <td className="px-3 py-3 text-right tabular text-ink-2">{l.unitCost === null ? <span className="text-ink-3">—</span> : l.unitCost.toLocaleString("en-IN")}</td>}
-                    <td className="px-3 py-3 text-right tabular">{l.unitPrice === null ? <span className="text-ink-3" title="Not priced yet">—</span> : l.unitPrice.toLocaleString("en-IN")}</td>
+                    {sales && <td className="px-3 py-3 text-right tabular">{l.unitPrice === null ? <span className="text-ink-3" title="Not priced yet">—</span> : l.unitPrice.toLocaleString("en-IN")}</td>}
                     <td className="px-3 py-3 text-right font-medium tabular">
-                      {v === null ? <span className="text-ink-3">—</span> : <span className={cn(l.unitPrice === null && "text-ink-3")} title={l.unitPrice === null ? "At list price until priced" : undefined}>{inr(v)}</span>}
+                      {v === null ? <span className="text-ink-3">—</span> : <span className={cn(sales && l.unitPrice === null && "text-ink-3")} title={sales && l.unitPrice === null ? "At list price until priced" : undefined}>{inr(v)}</span>}
                     </td>
-                    {viewCost && <td className="px-5 py-3 text-right tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>{gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}</td>}
+                    {sales && viewCost && <td className="px-5 py-3 text-right tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>{gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}</td>}
                   </tr>
                 );
               }),

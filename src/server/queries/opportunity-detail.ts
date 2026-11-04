@@ -10,6 +10,8 @@ import { toNumber } from "@/lib/format";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { boqTotals } from "@/lib/boq";
 import { costExpired } from "@/lib/costing";
+import { uploadKinds, visibleKinds } from "@/lib/documents";
+import { CLOSED_STAGES, type StageKey } from "@/lib/constants";
 
 export async function getOpportunityDetail(user: CurrentUser, id: string) {
   const exists = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] }, select: { id: true } });
@@ -35,7 +37,9 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
       stageHistory: { orderBy: { changedAt: "asc" }, include: { changedBy: { select: { name: true } } } },
     },
   });
-  const [audit, accountContacts] = await Promise.all([
+  // Presales and purchase see their part of the deal only: no sell prices, margin, quotes' money, activity or audit
+  const sales = can.viewSales(user);
+  const [audit, accountContacts] = !sales ? [[], []] : await Promise.all([
     db.auditLog.findMany({
       where: { entityType: "Opportunity", entityId: id },
       orderBy: { changedAt: "desc" },
@@ -81,8 +85,8 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     /** Costed once, but the specification changed since: the cost must be re-confirmed */
     costStale: !l.isEstimate && l.pricingStatus === "PENDING" && l.unitCost !== null,
     costExpired: costExpired(l, now),
-    unitPrice: l.unitPrice !== null ? toNumber(l.unitPrice) : null,
-    listPrice: l.product?.listPrice ? toNumber(l.product.listPrice) : null,
+    unitPrice: sales && l.unitPrice !== null ? toNumber(l.unitPrice) : null,
+    listPrice: sales && l.product?.listPrice ? toNumber(l.product.listPrice) : null,
     standardCost: l.product?.standardCost ? toNumber(l.product.standardCost) : null,
     billingStatus: l.billingStatus,
     lockedAt: l.lockedAt,
@@ -106,6 +110,16 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
   const openPq = o.pricingRequests.find((r) => (OPEN_PRICING as readonly string[]).includes(r.status));
   const lockReason = specLock({ presalesOpen: openPs ? { assigneeId: openPs.assignedToId } : null, pricingOpen: !!openPq, userId: user.id, isManager: isManager(user) });
   const facts = (await loadStageFacts(db, [id], now)).get(id)!;
+  // Documents this viewer may see (never the file contents here)
+  const kinds = visibleKinds(user.role);
+  const documents = await db.opportunityDocument.findMany({
+    where: { opportunityId: id, ...(kinds ? { OR: [{ uploadedById: user.id }, { kind: { in: kinds } }] } : {}) },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true, kind: true, fileName: true, mimeType: true, sizeBytes: true, note: true, createdAt: true,
+      uploadedBy: { select: { id: true, name: true } }, presalesRequest: { select: { id: true, revision: true } }, pricingRequest: { select: { id: true, kind: true } },
+    },
+  });
   const actor = { canEdit: can.editOpportunity(user, o), isManager: isManager(user) };
   const moves = stageMoves(facts, actor);
   return {
@@ -114,26 +128,35 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     canSkip: checkSkip(facts, actor).allowed,
     workflow,
     lockReason,
+    documents,
+    documentKinds: uploadKinds(user.role),
     opp: {
       ...o,
-      amount: toNumber(o.amount),
-      arrAmount: o.arrAmount === null ? null : toNumber(o.arrAmount),
-      expectedMarginPct: o.expectedMarginPct === null ? null : toNumber(o.expectedMarginPct),
+      amount: sales ? toNumber(o.amount) : 0,
+      arrAmount: sales && o.arrAmount !== null ? toNumber(o.arrAmount) : null,
+      expectedMarginPct: sales && o.expectedMarginPct !== null ? toNumber(o.expectedMarginPct) : null,
       lineItems: undefined,
+      activities: sales ? o.activities : [],
       quotes: o.quotes.map((q) => ({
         ...q,
-        totalPrice: toNumber(q.totalPrice),
-        totalCost: showCost ? toNumber(q.totalCost) : null,
-        marginPct: showCost ? toNumber(q.marginPct) : null,
+        totalPrice: sales ? toNumber(q.totalPrice) : 0,
+        totalCost: sales && showCost ? toNumber(q.totalCost) : null,
+        marginPct: sales && showCost ? toNumber(q.marginPct) : null,
+        snapshot: sales ? q.snapshot : [],
+        terms: sales ? q.terms : null,
       })),
-      stageHistory: o.stageHistory.map((s) => ({ ...s, amount: toNumber(s.amount) })),
+      stageHistory: o.stageHistory.map((s) => ({ ...s, amount: sales ? toNumber(s.amount) : 0 })),
     },
     lines,
-    totals: { ...totals, totalCost: showCost ? totals.totalCost : null, marginPct: showCost ? totals.marginPct : null },
-    evaluation,
+    totals: {
+      ...totals,
+      totalPrice: sales ? totals.totalPrice : 0, recurringValue: sales ? totals.recurringValue : 0,
+      totalCost: showCost ? totals.totalCost : null, marginPct: sales && showCost ? totals.marginPct : null,
+    },
+    evaluation: sales ? evaluation : null,
     audit,
     accountContacts,
-    viewer: { id: user.id, role: user.role },
+    viewer: { id: user.id, role: user.role, isManager: isManager(user) },
     perms: {
       edit: can.editOpportunity(user, o),
       requestPresales: can.requestPresales(user, o),
@@ -142,8 +165,10 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
       internalCost: can.editInternalCost(user, o) && !["WON", "LOST", "DROPPED"].includes(o.stage),
       price: can.editBoqPrice(user, o) && !["WON", "LOST", "DROPPED"].includes(o.stage),
       viewCost: showCost,
+      sales,
       quote: can.createQuote(user, o),
       delete: can.deleteRecords(user),
+      addDocument: can.addDocument(user, { ...o, closed: CLOSED_STAGES.includes(o.stage as StageKey) }),
     },
   };
 }

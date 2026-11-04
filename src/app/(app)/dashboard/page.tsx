@@ -30,10 +30,12 @@ function greeting() {
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const user = await requireUser();
-  // Presales and Purchase get a work-focused home instead of sales analytics
-  if (user.role === "PRESALES") return <PresalesHome name={user.name} data={await getPresalesWork(user)} />;
-  if (user.role === "PURCHASE") return <PurchaseHome name={user.name} data={await getPurchaseWork(user)} />;
   const sp = await searchParams;
+  // Sent here from a page that is not for this role (requireRole)
+  const notice = sp.denied === "1" ? "That page is for the sales team, so you are back on your work." : undefined;
+  // Presales and Purchase get a work-focused home instead of sales analytics
+  if (user.role === "PRESALES") return <PresalesHome name={user.name} data={await getPresalesWork(user)} notice={notice} />;
+  if (user.role === "PURCHASE") return <PurchaseHome name={user.name} data={await getPurchaseWork(user)} notice={notice} />;
   const [d, options] = await Promise.all([getDashboard(user, sp), getOptions()]);
   const link = (extra: Record<string, string | null>, path = "/opportunities") => withParams(sp, extra, path);
   // Pipeline-by rows link to open deals with that line BU / category / OEM, optionally one forecast category

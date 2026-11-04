@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { Plus, List } from "lucide-react";
-import { requireUser } from "@/lib/auth";
-import { can, isManager, opportunityScope } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { can, isManager, opportunityScope, SALES_ROLES } from "@/lib/authz";
 import { checkMove } from "@/lib/stage-rules";
 import { loadStageFacts } from "@/server/domain/stage-facts";
 import type { StageKey } from "@/lib/constants";
@@ -22,7 +22,7 @@ import { attributeDeal, attributionLineSelect } from "@/server/queries/attribute
 export const metadata = { title: "Pipeline" };
 
 export default async function PipelinePage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   const sp = await searchParams;
   await ensureRulesFresh(db);
   const f = parseOppFilters(sp);

@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
 import {
   Workflow, Filter, Repeat2, HeartPulse, Flame, Skull, AlertTriangle, Boxes, Factory, Package, Layers, Hourglass,
   Percent, RefreshCcw, Sparkles, CalendarClock, ClipboardList, Calculator,
 } from "lucide-react";
-import { requireUser } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
+import { SALES_ROLES } from "@/lib/authz";
 import { getDashboard } from "@/server/queries/dashboard";
 import { getReports } from "@/server/queries/reports";
 import { getOptions } from "@/server/queries/options";
@@ -25,8 +25,7 @@ import { HEALTH_LABEL } from "@/lib/constants";
 export const metadata = { title: "Insights" };
 
 export default async function InsightsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const user = await requireUser();
-  if (user.role === "PRESALES" || user.role === "PURCHASE") redirect("/reports");
+  const user = await requireRole(...SALES_ROLES);
   const sp = await searchParams;
   const [d, r, options] = await Promise.all([getDashboard(user, sp), getReports(user, sp), getOptions()]);
   const link = (extra: Record<string, string | null>, path = "/opportunities") => withParams(sp, extra, path);

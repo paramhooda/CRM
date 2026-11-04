@@ -107,6 +107,36 @@ Other rules:
 - **The edit form never changes the stage.**
 - Every stage change is recorded with who made it and why (hold reason, correction reason, PO or loss reason). The reason shows in the stage journey on the History tab.
 
+## Presales and purchase see their work only
+
+Presales and purchase do not see the funnel. Their menu is **My work**, their **requests** and the **product catalogue**; pipeline, pipeline review, reports, accounts, contacts, leads, the deal list and exports are for the sales team, and opening one takes them back to My work.
+
+They can open only the deals they are, or were, assigned to (as presales or purchase owner, or on a BOQ or pricing request). On those deals they see:
+- the stage path and status line, with only the steps that are theirs (for example **Submit BOQ**);
+- their request and its due date, the sales owner, the other team's owner, and the bid or close date;
+- **Line items** with specification and cost, never sell prices, deal value or margin;
+- **Documents**, **Requests** (what was asked, revisions, questions, send-backs), and for presales the customer's **Contacts**.
+
+Quotes, forecast, health, activity and the audit trail stay with sales. The server leaves the sell side out of what it sends them, so it is not just hidden on screen.
+
+## Documents
+
+Each deal has a **Documents** tab. Files are stored with the deal, up to 15 MB each: PDF, Word, Excel, PowerPoint, CSV, text, images, email (.msg, .eml) or zip.
+
+| Kind | Added by | Seen by |
+|---|---|---|
+| Customer RFP / requirement | Sales | Sales, presales |
+| Customer PO | Sales | Sales |
+| Statement of work | Sales, presales | Everyone on the deal |
+| Solution document, presentation, site survey | Presales | Sales, presales |
+| BOQ sheet | Presales | Everyone on the deal |
+| Supplier quote, OEM quote | Purchase | Everyone on the deal |
+| Other | Anyone | Sales, and whoever added it |
+
+- A document added while someone works on a request is linked to it ("BOQ revision 2", "Pricing request").
+- **Submit BOQ** points out a solution document, presentation or site survey that sales asked for but that is not attached. **Pricing complete** says how many supplier quotes are attached. Neither blocks the hand-over.
+- Whoever added a document can remove it while the deal is open; a sales manager can at any time. Adding and removing are on the History tab.
+
 ## What everyone sees on a deal
 
 Under the stage path, one line says:

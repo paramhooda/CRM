@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { opportunityScope } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { opportunityScope, SALES_ROLES } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { inr, fmtDate, toNumber } from "@/lib/format";
 import { Logo } from "@/components/crm/logo";
@@ -13,7 +13,7 @@ const PER: Record<string, string> = { MONTHLY: "/mo", QUARTERLY: "/qtr", ANNUAL:
 const freqOf = (l: SnapLine) => l.billingFrequency ?? (l.recurring ? "MONTHLY" : "ONE_TIME");
 
 export default async function QuotePage({ params }: { params: Promise<{ id: string; qid: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   const { id, qid } = await params;
   const opp = await db.opportunity.findFirst({
     where: { AND: [{ id }, opportunityScope(user)] },

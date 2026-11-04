@@ -4,8 +4,8 @@ import { redirect } from "next/navigation";
 import {
   AlertTriangle, CheckCircle2, CircleDashed, AlertOctagon, ListChecks, Gauge, Wallet, Target, Trophy, CalendarClock, Users, ThumbsUp,
 } from "lucide-react";
-import { requireUser } from "@/lib/auth";
-import { can } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { can, SALES_ROLES } from "@/lib/authz";
 import { getPipelineReview } from "@/server/queries/pipeline-review";
 import { PageHeader, PageBody, StatTile, EmptyState } from "@/components/crm/page";
 import { Section } from "@/components/ui/card";
@@ -21,7 +21,7 @@ import type { SearchParams } from "@/lib/filters";
 export const metadata = { title: "Pipeline review" };
 
 export default async function ReviewsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   if (!can.reviewPipeline(user)) redirect("/dashboard");
   const sp = await searchParams;
   const r = await getPipelineReview(user, sp);

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/crm/badges";
 import { StartPresalesButton, StartPricingButton } from "@/components/opportunities/deal-actions";
 import type { QueueItem } from "@/server/queries/work";
-import { inr, fmtDate, relativeDays } from "@/lib/format";
+import { fmtDate, relativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | "overdue" | "week" | "new" | "partial";
@@ -21,7 +21,7 @@ export function WorkQueue({ kind, items }: { kind: "presales" | "purchase"; item
   const [filter, setFilter] = useState<Filter>("all");
   // Local filters: search, sort, sales person and OEM. Nothing here touches the URL.
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<"due" | "value" | "priority">("due");
+  const [sort, setSort] = useState<"due" | "priority">("due");
   const [owner, setOwner] = useState("all");
   const [oem, setOem] = useState("all");
   useEffect(() => {
@@ -54,7 +54,7 @@ export function WorkQueue({ kind, items }: { kind: "presales" | "purchase"; item
     .filter((i) => oem === "all" || (i.oems ?? []).includes(oem))
     .filter((i) => !term || `${i.opp.name} ${i.opp.code} ${i.opp.account} ${i.requestedBy} ${(i.oems ?? []).join(" ")}`.toLowerCase().includes(term))
     .sort((a, b) =>
-      sort === "value" ? b.opp.amount - a.opp.amount : sort === "priority" ? (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2) || a.dueDate.getTime() - b.dueDate.getTime() : 0,
+      sort === "priority" ? (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2) || a.dueDate.getTime() - b.dueDate.getTime() : 0,
     );
   const narrowed = owner !== "all" || oem !== "all" || !!term;
 
@@ -91,7 +91,7 @@ export function WorkQueue({ kind, items }: { kind: "presales" | "purchase"; item
             className="h-7 w-full rounded-md border border-border bg-surface pl-7 pr-2 text-xs outline-none placeholder:text-ink-3 hover:border-border-strong focus:border-ring"
           />
         </div>
-        <MiniSelect label="Sort queue" value={sort} onChange={setSort} options={[{ value: "due", label: "Due date" }, { value: "value", label: "Deal value" }, { value: "priority", label: "Priority" }]} />
+        <MiniSelect label="Sort queue" value={sort} onChange={setSort} options={[{ value: "due", label: "Due date" }, { value: "priority", label: "Priority" }]} />
         {owners.length > 1 && (
           <MiniSelect label="Sales person" value={owner} onChange={setOwner} options={[{ value: "all", label: "All sales people" }, ...owners.map((o) => ({ value: o, label: o }))]} />
         )}
@@ -130,8 +130,7 @@ export function WorkQueue({ kind, items }: { kind: "presales" | "purchase"; item
                       <span>{i.requestedBy}</span><span>·</span>
                     </>
                   )}
-                  <span>{kind === "purchase" ? `${i.costed}/${i.lines} lines costed` : `${i.lines} line${i.lines === 1 ? "" : "s"} so far`}</span><span>·</span>
-                  <span className="tabular">{inr(i.opp.amount)}</span>
+                  <span>{kind === "purchase" ? `${i.costed}/${i.lines} lines costed` : `${i.lines} line${i.lines === 1 ? "" : "s"} so far`}</span>
                 </p>
                 {kind === "purchase" && i.lines > 0 && (
                   <div className="mt-2 flex items-center gap-3">

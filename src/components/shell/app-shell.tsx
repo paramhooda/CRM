@@ -24,7 +24,7 @@ type NavSection = { title?: string; items: NavItem[] };
 
 function navFor(role: Role, requests: number): NavSection[] {
   if (role === "PRESALES" || role === "PURCHASE") {
-    // Their job is BOQs and pricing: work first, everything else readable below
+    // Their job is BOQs and pricing: their work and the catalogue, not the sales funnel
     return [
       {
         items: [
@@ -37,27 +37,7 @@ function navFor(role: Role, requests: number): NavSection[] {
           },
         ],
       },
-      {
-        title: "Deals",
-        items: [
-          { href: "/opportunities", label: "Opportunities", icon: Briefcase },
-          { href: "/pipeline", label: "Pipeline", icon: KanbanSquare },
-        ],
-      },
-      {
-        title: "Customers",
-        items: [
-          { href: "/accounts", label: "Accounts", icon: Building2 },
-          { href: "/contacts", label: "Contacts", icon: Users },
-        ],
-      },
-      {
-        title: "Catalogue",
-        items: [
-          { href: "/products", label: "Products", icon: Package },
-          { href: "/reports", label: "Reports", icon: BarChart3 },
-        ],
-      },
+      { title: "Catalogue", items: [{ href: "/products", label: "Products", icon: Package }] },
     ];
   }
   const sections: NavSection[] = [

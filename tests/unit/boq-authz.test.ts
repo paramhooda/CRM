@@ -45,11 +45,8 @@ describe("authorization", () => {
     expect(can.manageProducts({ id: "a", role: "ADMIN" })).toBe(true);
     expect(can.manageProducts({ id: "b1", role: "PURCHASE" })).toBe(false);
   });
-  it("scopes sales users to their own deals, others read all", () => {
+  it("scopes sales users to their own deals and managers to all (presales and purchase: tests/unit/documents.test.ts)", () => {
     expect(opportunityScope({ id: "s1", role: "SALES" })).toMatchObject({ salesOwnerId: "s1", deletedAt: null });
     expect(opportunityScope({ id: "a", role: "ADMIN" })).toEqual({ deletedAt: null });
-    // Presales and purchase can read every deal
-    expect(opportunityScope({ id: "p1", role: "PRESALES" })).toEqual({ deletedAt: null });
-    expect(opportunityScope({ id: "b1", role: "PURCHASE" })).toEqual({ deletedAt: null });
   });
 });

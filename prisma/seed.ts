@@ -884,6 +884,44 @@ async function main() {
     if (last) await db.pricingRequest.update({ where: { id: last.id }, data: { quoteValidTill: from } });
   }
 
+  // Documents: presales' solution design on submitted BOQs, purchase's supplier quotes on priced requests, and the
+  // customer's RFP on tenders. Small generated PDFs, linked to the request they came with.
+  const submitted = await db.presalesRequest.findMany({
+    where: { status: "BOQ_SUBMITTED" }, orderBy: { revision: "desc" }, distinct: ["opportunityId"],
+    select: { id: true, opportunityId: true, assignedToId: true, submittedAt: true, opportunity: { select: { name: true, code: true } } },
+  });
+  for (const r of submitted.filter(() => chance(0.6))) {
+    const content = demoPdf([`Solution design: ${r.opportunity.name}`, r.opportunity.code, "Architecture, sizing and assumptions."]);
+    await db.opportunityDocument.create({
+      data: {
+        opportunityId: r.opportunityId, kind: "SOLUTION_DOC", fileName: `Solution design - ${r.opportunity.code}.pdf`, mimeType: "application/pdf",
+        sizeBytes: content.byteLength, content, presalesRequestId: r.id, uploadedById: r.assignedToId, createdAt: r.submittedAt ?? undefined,
+      },
+    });
+  }
+  const priced = await db.pricingRequest.findMany({
+    where: { status: "QUOTED" }, orderBy: { quotedAt: "desc" }, distinct: ["opportunityId"],
+    select: { id: true, opportunityId: true, assignedToId: true, quotedAt: true, opportunity: { select: { code: true, lineItems: { where: { costSource: "PURCHASE", distributor: { not: null } }, select: { distributor: true } } } } },
+  });
+  for (const r of priced) {
+    for (const dist of [...new Set(r.opportunity.lineItems.map((l) => l.distributor!))].slice(0, 2)) {
+      const content = demoPdf([`${dist} quotation`, `Reference ${r.opportunity.code}`, "Prices in INR, ex-works, GST extra."]);
+      await db.opportunityDocument.create({
+        data: {
+          opportunityId: r.opportunityId, kind: "SUPPLIER_QUOTE", fileName: `${dist} quote - ${r.opportunity.code}.pdf`, mimeType: "application/pdf",
+          sizeBytes: content.byteLength, content, note: `${dist}, valid 30 days`, pricingRequestId: r.id, uploadedById: r.assignedToId, createdAt: r.quotedAt ?? undefined,
+        },
+      });
+    }
+  }
+  const tenders = await db.opportunity.findMany({ where: { procurementMode: { in: ["RFP", "TENDER"] } }, select: { id: true, code: true, salesOwnerId: true, createdAt: true } });
+  for (const o of tenders) {
+    const content = demoPdf([`Request for proposal`, `Reference ${o.code}`, "Scope, eligibility and submission terms."]);
+    await db.opportunityDocument.create({
+      data: { opportunityId: o.id, kind: "CUSTOMER_RFP", fileName: `RFP - ${o.code}.pdf`, mimeType: "application/pdf", sizeBytes: content.byteLength, content, uploadedById: o.salesOwnerId, createdAt: o.createdAt },
+    });
+  }
+
   const n = await recomputeAll(db as unknown as Parameters<typeof recomputeAll>[0], NOW);
 
   // Health history: deals that are dying, at risk or hot today got there over the last few weeks. These
@@ -909,6 +947,26 @@ async function main() {
   console.log(`Catalogue: ${productCount} products.`);
   console.log(`Seeded ${ACCOUNTS.length} accounts, ${n} opportunities. Health:`, counts.map((c) => `${c.healthLabel}=${c._count}`).join(" "));
   console.log(`Demo password for all users: ${DEMO_PASSWORD}`);
+}
+
+/** A one-page PDF with a few lines of text, for demo documents */
+function demoPdf(lines: string[]) {
+  const esc = (t: string) => t.replace(/[\\()]/g, (c) => `\\${c}`);
+  const text = lines.map((l, i) => `BT /F1 ${i ? 11 : 16} Tf 60 ${780 - i * 24} Td (${esc(l)}) Tj ET`).join("\n");
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objs.forEach((o, i) => { offsets.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new Uint8Array(Buffer.from(pdf, "latin1"));
 }
 
 main()

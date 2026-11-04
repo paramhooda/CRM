@@ -146,6 +146,8 @@ export type Advance =
   | { kind: "blocked"; label: string; reason: string };
 
 const SHORT: Partial<Record<StageKey, string>> = { PROPOSAL: "Proposal" };
+/** Presales deliverables that arrive as a document of the same kind */
+const DOC_DELIVERABLES: string[] = ["SOLUTION_DOC", "PRESENTATION", "SITE_SURVEY"];
 
 /**
  * Every action this viewer can take on the deal, and the one "advance" step that moves it to its next stage (the
@@ -213,6 +215,10 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
         actions.push({
           id: "submit", kind: "submitBoq", label: "Submit BOQ", primary: openPs.status !== "NEEDS_INFO" || !isSales, requestId: openPs.id, purchase: options.purchase,
           lineCount: d.lines.length, toPrice: w.needsCost, asked: openPs.deliverables.map((k) => DELIVERABLE_LABEL[k] ?? k),
+          // Deliverables that are documents, asked for on this request but not attached to it
+          missingDocs: openPs.deliverables
+            .filter((k) => DOC_DELIVERABLES.includes(k) && !d.documents.some((doc) => doc.kind === k && doc.presalesRequest?.id === openPs.id))
+            .map((k) => DELIVERABLE_LABEL[k] ?? k),
           disabledReason: w.needsInternalCost
             ? `Enter the cost of ${w.needsInternalCost} own-brand line${w.needsInternalCost > 1 ? "s" : ""} in Line items, or mark ${w.needsInternalCost > 1 ? "them" : "it"} Source via purchase`
             : undefined,
@@ -224,7 +230,8 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
     } else if (openPq) {
       if (isPurchase) {
         const missing = purchaseLines.filter((l) => l.unitCost === null).length;
-        actions.push({ id: "done", kind: "completePricing", label: "Pricing complete", primary: true, requestId: openPq.id, disabledReason: missing ? `Enter a unit cost on ${missing} more line${missing > 1 ? "s" : ""} in Line items` : undefined });
+        const quotesAttached = d.documents.filter((doc) => (doc.kind === "SUPPLIER_QUOTE" || doc.kind === "OEM_QUOTE") && doc.pricingRequest?.id === openPq.id).length;
+        actions.push({ id: "done", kind: "completePricing", label: "Pricing complete", primary: true, requestId: openPq.id, quotesAttached, disabledReason: missing ? `Enter a unit cost on ${missing} more line${missing > 1 ? "s" : ""} in Line items` : undefined });
         actions.push({ id: "back", kind: "sendBack", label: o.presalesOwner ? "Send back to presales" : "Send back to sales", requestId: openPq.id, presalesName: o.presalesOwner?.name ?? null });
       }
       if (isSales && solution && revision) actions.push(boqChange());

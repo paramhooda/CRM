@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { ClipboardList, Calculator, ArrowRight, AlertOctagon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { isManager, opportunityScope } from "@/lib/authz";
+import { isManager, opportunityScope, can } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { PageHeader, PageBody, StatTile, EmptyState } from "@/components/crm/page";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -29,7 +29,9 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
     user.role === "PRESALES" ? { assignedToId: user.id } : user.role === "PURCHASE" ? { id: "none" } : isManager(user) ? {} : { opportunity: opportunityScope(user) };
   const pricingWhere: Prisma.PricingRequestWhereInput =
     user.role === "PURCHASE" ? { assignedToId: user.id } : user.role === "PRESALES" ? { requestedById: user.id } : isManager(user) ? {} : { opportunity: opportunityScope(user) };
-  const oppSel = { select: { id: true, name: true, code: true, amount: true, stage: true, account: { select: { name: true } }, salesOwner: { select: { name: true } } } } as const;
+  // Deal value is sell-side: presales and purchase work from due dates and priority instead
+  const showValue = can.viewSales(user);
+  const oppSel = { select: { id: true, name: true, code: true, amount: showValue, stage: true, account: { select: { name: true } }, salesOwner: { select: { name: true } } } } as const;
   const [presales, pricing, presalesAll, pricingAll] = await Promise.all([
     db.presalesRequest.findMany({
       where: { ...presalesWhere, status: presalesStatus },
@@ -109,6 +111,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
                     closedAt: r.submittedAt, closedNote: r.cancelReason,
                   }))}
                   now={now}
+                  showValue={showValue}
                 />
               )}
             </CardContent>
@@ -127,6 +130,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
                     closedAt: r.quotedAt ?? r.returnedAt, closedNote: r.returnReason ?? r.cancelReason,
                   }))}
                   now={now}
+                  showValue={showValue}
                 />
               )}
             </CardContent>
@@ -142,14 +146,14 @@ type Row = {
   requestedBy: string; assignedTo: string; status: string; statusLabel: string; dueDate: Date; createdAt: Date; note: string; priority?: string; closedAt: Date | null; closedNote?: string | null;
 };
 
-function RequestTable({ rows, now }: { rows: Row[]; now: Date }) {
+function RequestTable({ rows, now, showValue }: { rows: Row[]; now: Date; showValue: boolean }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-[13px]">
         <thead>
           <tr className="border-y border-border bg-surface-2 text-left text-[11px] uppercase tracking-wide text-ink-3">
             <th className="px-4 py-2 font-medium">Opportunity</th><th className="px-4 py-2 font-medium">Requested by</th><th className="px-4 py-2 font-medium">Assigned to</th>
-            <th className="px-4 py-2 font-medium">Status</th><th className="px-4 py-2 font-medium">Due</th><th className="px-4 py-2 text-right font-medium">Deal value</th><th />
+            <th className="px-4 py-2 font-medium">Status</th><th className="px-4 py-2 font-medium">Due</th>{showValue && <th className="px-4 py-2 text-right font-medium">Deal value</th>}<th />
           </tr>
         </thead>
         <tbody>
@@ -183,7 +187,7 @@ function RequestTable({ rows, now }: { rows: Row[]; now: Date }) {
                     </span>
                   )}
                 </td>
-                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular">{inr(toNumber(r.opp.amount))}</td>
+                {showValue && <td className="whitespace-nowrap px-4 py-2.5 text-right tabular">{inr(toNumber(r.opp.amount))}</td>}
                 <td className="px-4 py-2.5 text-right">
                   <Link href={`/opportunities/${r.opp.id}?tab=boq`} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">Open BOQ <ArrowRight className="size-3" /></Link>
                 </td>

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import type { Prisma } from "@prisma/client";
-import { requireUser } from "@/lib/auth";
-import { accountScope, can, isManager } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { accountScope, can, isManager, SALES_ROLES } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { getOptions } from "@/server/queries/options";
 import { PageHeader, PageBody } from "@/components/crm/page";
@@ -19,7 +19,7 @@ import { fiscalPeriod, fiscalYearRange } from "@/lib/fiscal";
 export const metadata = { title: "Accounts" };
 
 export default async function AccountsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const type = typeof sp.type === "string" ? sp.type : "";

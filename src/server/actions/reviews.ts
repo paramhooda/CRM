@@ -135,6 +135,7 @@ const FIELD_LABEL: Record<string, string> = {
 /** Change history and recent activity for the review side panel (Salesforce "opportunity history"). */
 export async function getDealTimeline(id: string) {
   const user = await requireUser();
+  if (!can.viewSales(user)) return null;
   const opp = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] }, select: { id: true } });
   if (!opp) return null;
   const [audits, activities] = await Promise.all([

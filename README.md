@@ -87,7 +87,9 @@ Every deal page shows one status line under the stage path: where the deal is, w
 - The BOQ locks while purchase prices it, and simultaneous saves are detected.
 - Reminders and overdue escalations are sent automatically.
 
-Everyone can read all deals, costs and margins. Edit rights stay role-based: presales edit the specification, purchase edits only cost fields, and sales edit only sell prices.
+Presales and purchase see only the deals they are (or were) assigned to, and on those only their part: line items with costs (no sell prices or margin), documents and their requests. Edit rights stay role-based: presales edit the specification and own-brand costs, purchase edits only cost fields, and sales edit only sell prices.
+
+**Documents.** Every deal has a Documents tab. Presales add the SoW, solution document, BOQ sheet, presentation or site survey; purchase adds supplier and OEM quotes; sales adds the customer's RFP and PO. Each role sees what its job needs (purchase does not see the customer's PO or presentations), files up to 15 MB are stored in the database, and Submit BOQ and Pricing complete point out deliverables or supplier quotes that are not attached yet.
 
 **Role homes**
 - **Presales** and **Purchase** land on a **My work** page rather than sales numbers: their queue sorted overdue first, quick filters (Overdue, Due this week, Not started, and Partly costed for purchase), and one-click **Start work** / **Open BOQ**.
@@ -138,15 +140,17 @@ No finance integration is built yet, but the data is shaped so one is a thin add
 | | Admin | Sales Head | Sales | Presales | Purchase |
 |---|---|---|---|---|---|
 | Home page | Dashboard | Dashboard | Dashboard | My work | My work |
-| Sees deals | All | All | Own | All | All |
+| Sees deals | All | All | Own | Assigned | Assigned |
 | Create and edit deals | ✓ | ✓ | Own | – | – |
 | Reassign deals, set targets | ✓ | ✓ | – | – | – |
 | BOQ specification | ✓ | ✓ | Own | Assigned | – |
 | BOQ cost, distributor | ✓ | – | – | – | ✓ |
 | BOQ sell price, quotes | ✓ | ✓ | Own | – | – |
-| See cost and margin | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Reports | ✓ | ✓ | ✓ | ✓ | ✓ |
+| See cost | ✓ | ✓ | ✓ | ✓ | ✓ |
+| See sell prices, margin, quotes, forecast, health | ✓ | ✓ | ✓ | – | – |
+| Pipeline, reports, accounts, contacts, leads, exports | ✓ | ✓ | ✓ | – | – |
 | Pipeline review | ✓ | ✓ | ✓ | – | – |
+| Add deal documents | ✓ | ✓ | Own | Assigned, open deals | Assigned, open deals |
 | Product catalogue | Edit | View | View | View | View |
 | Settings, users, audit log | ✓ | – | – | – | – |
 

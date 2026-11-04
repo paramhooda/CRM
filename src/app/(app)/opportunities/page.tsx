@@ -1,6 +1,7 @@
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
-import { can } from "@/lib/authz";
+import { can, isSupportRole } from "@/lib/authz";
 import { listOpportunities } from "@/server/queries/opportunities";
 import { getOptions } from "@/server/queries/options";
 import { PageHeader, PageBody } from "@/components/crm/page";
@@ -15,6 +16,7 @@ export const metadata = { title: "Opportunities" };
 
 export default async function OpportunitiesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const user = await requireUser();
+  if (isSupportRole(user)) redirect("/requests");
   const sp = await searchParams;
   const [data, options] = await Promise.all([listOpportunities(user, sp), getOptions()]);
   const scopeLabel = data.lineScoped ? lineScopeLabel(parseOppFilters(sp), options) : null;

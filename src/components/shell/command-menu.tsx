@@ -38,7 +38,11 @@ export function CommandMenu({ open, setOpen, role }: { open: boolean; setOpen: (
     router.push(href);
   };
   const canSell = role === "ADMIN" || role === "SALES_HEAD" || role === "SALES";
-  const nav = [
+  // Presales and purchase get their work only, not the funnel
+  const nav = !canSell ? [
+    { label: "My work", href: "/dashboard", icon: LayoutDashboard },
+    { label: role === "PRESALES" ? "BOQ requests" : "Pricing requests", href: "/requests", icon: Inbox },
+  ] : [
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { label: "Pipeline board", href: "/pipeline", icon: KanbanSquare },
     { label: "Opportunities", href: "/opportunities", icon: Briefcase },

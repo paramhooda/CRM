@@ -30,11 +30,11 @@ export type DealAction = Base &
         /** Bringing presales into a resale deal: what that changes, shown before sending */
         involve?: string[];
       }
-    | { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number; asked?: string[] }
+    | { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number; asked?: string[]; missingDocs?: string[] }
     | { kind: "askSales"; requestId: string }
     | { kind: "answer"; requestId: string; question: string; askedBy: string }
     | { kind: "requestPricing"; oppId: string; purchase: U[]; toPrice: number; first: boolean; expired?: number }
-    | { kind: "completePricing"; requestId: string }
+    | { kind: "completePricing"; requestId: string; quotesAttached?: number }
     | { kind: "sendBack"; requestId: string; presalesName: string | null }
     | { kind: "reassign"; reqKind: "presales" | "pricing"; requestId: string; people: U[]; currentId: string }
     | { kind: "cancel"; reqKind: "presales" | "pricing"; requestId: string }
@@ -112,6 +112,11 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
         >
           <form className={form} onSubmit={submit((f) => () => submitBoq(a.requestId, f), a.toPrice ? "BOQ submitted. Purchase notified." : "BOQ submitted. Sales notified.")}>
             {a.asked && a.asked.length > 0 && <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">Sales asked for: {a.asked.join(", ")}</p>}
+            {a.missingDocs && a.missingDocs.length > 0 && (
+              <p className="rounded-md px-3 py-2 text-xs" style={{ background: "var(--t-amber-bg)", color: "var(--t-amber)" }}>
+                Not attached yet: {a.missingDocs.join(", ")}. Add {a.missingDocs.length > 1 ? "them" : "it"} on the <a href="?tab=documents" className="font-medium underline">Documents</a> tab, or submit without.
+              </p>
+            )}
             <Field label="Solution summary" required error={errors.solutionSummary}>
               <Textarea name="solutionSummary" placeholder="What was designed and how it was sized" />
             </Field>
@@ -197,6 +202,15 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
       return (
         <DialogContent title="Pricing complete" description="Sales is notified to add margin and send the quote. Set each supplier's validity on its lines; this date applies to lines without one.">
           <form className={form} onSubmit={submit((f) => () => completePricing(a.requestId, f), "Pricing sent to sales")}>
+            {a.quotesAttached !== undefined && (
+              a.quotesAttached > 0 ? (
+                <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">{a.quotesAttached} supplier or OEM quote{a.quotesAttached > 1 ? "s" : ""} attached to this request.</p>
+              ) : (
+                <p className="rounded-md px-3 py-2 text-xs" style={{ background: "var(--t-amber-bg)", color: "var(--t-amber)" }}>
+                  No supplier quote attached. Add the quotes behind these costs on the <a href="?tab=documents" className="font-medium underline">Documents</a> tab, or send without.
+                </p>
+              )
+            )}
             <Field label="Valid till, for lines without their own date" required error={errors.quoteValidTill}>
               <Input name="quoteValidTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} />
             </Field>

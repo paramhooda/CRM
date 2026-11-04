@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { Star } from "lucide-react";
-import { requireUser } from "@/lib/auth";
-import { accountScope, can } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { accountScope, can, SALES_ROLES } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { PageHeader, PageBody } from "@/components/crm/page";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
@@ -16,7 +16,7 @@ import { CONTACT_ROLE_LABEL } from "@/lib/constants";
 export const metadata = { title: "Contacts" };
 
 export default async function ContactsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const role = typeof sp.role === "string" ? sp.role : "";

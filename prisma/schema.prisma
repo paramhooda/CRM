@@ -235,6 +235,7 @@ model User {
   leads                 Lead[]
   stageChanges          StageHistory[]
   savedViews            SavedView[]
+  documents             OpportunityDocument[]
 
   @@index([role, active])
 }
@@ -544,6 +545,7 @@ model Opportunity {
   presalesRequests PresalesRequest[]
   pricingRequests  PricingRequest[]
   quotes           Quote[]
+  documents        OpportunityDocument[]
   activities       Activity[]
   stageHistory     StageHistory[]
 
@@ -664,6 +666,7 @@ model PresalesRequest {
   updatedAt       DateTime         @updatedAt
   pricingRequests PricingRequest[]
 
+  documents        OpportunityDocument[]
   @@index([assignedToId, status])
 }
 
@@ -695,6 +698,7 @@ model PricingRequest {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
+  documents        OpportunityDocument[]
   @@index([assignedToId, status])
 }
 
@@ -845,4 +849,42 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+/// What a deal document is: sets who adds it and who sees it (src/lib/documents.ts)
+enum DocumentKind {
+  CUSTOMER_RFP
+  CUSTOMER_PO
+  SOW
+  SOLUTION_DOC
+  BOQ_SHEET
+  PRESENTATION
+  SITE_SURVEY
+  SUPPLIER_QUOTE
+  OEM_QUOTE
+  OTHER
+}
+
+/// A file on a deal: SoW and solution documents from presales, supplier and OEM quotes from purchase, the customer's
+/// RFP and PO from sales. Stored in the database (bytes) so backups carry them; lists never select the content.
+model OpportunityDocument {
+  id                String           @id @default(cuid())
+  opportunityId     String
+  opportunity       Opportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  kind              DocumentKind
+  fileName          String
+  mimeType          String
+  sizeBytes         Int
+  content           Bytes
+  note              String?
+  /// The request it was added for, when one was open (BOQ revision, pricing request)
+  presalesRequestId String?
+  presalesRequest   PresalesRequest? @relation(fields: [presalesRequestId], references: [id], onDelete: SetNull)
+  pricingRequestId  String?
+  pricingRequest    PricingRequest?  @relation(fields: [pricingRequestId], references: [id], onDelete: SetNull)
+  uploadedById      String
+  uploadedBy        User             @relation(fields: [uploadedById], references: [id])
+  createdAt         DateTime         @default(now())
+
+  @@index([opportunityId, createdAt])
 }

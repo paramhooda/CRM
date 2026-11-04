@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
+  experimental: {
+    // Document uploads (up to 15 MB, src/lib/documents.ts) pass through the auth middleware, which caps bodies at 10 MB
+    middlewareClientMaxBodySize: "20mb",
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

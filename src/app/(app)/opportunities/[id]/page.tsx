@@ -14,6 +14,7 @@ import { LineItemsEditor } from "@/components/opportunities/line-items-editor";
 import { ContactsEditor } from "@/components/opportunities/contacts-editor";
 import { ActivityComposer, ActivityTimeline } from "@/components/crm/activity";
 import { DealStatus, RequestHistory, QUOTE_STATUS_LABEL, dealActions } from "@/components/opportunities/deal-status";
+import { DocumentsPanel } from "@/components/opportunities/documents-panel";
 import { inr, pct, fmtDate, fmtDateTime, relativeDays } from "@/lib/format";
 import {
   STAGE_META, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL, DEAL_REG_LABEL, FORECAST_LABEL, type StageKey,
@@ -27,39 +28,60 @@ export async function generateMetadata() {
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "boq", label: "Line items" },
+  { key: "documents", label: "Documents" },
   { key: "quotes", label: "Quotes" },
   { key: "activity", label: "Activity" },
   { key: "contacts", label: "Contacts" },
   { key: "history", label: "History" },
-] as const;
+];
+/** Presales and purchase see their part of the deal: the BOQ, documents and their requests (presales: the customer's contacts too) */
+const SUPPORT_TABS = (role: string) => [
+  { key: "boq", label: "Line items" },
+  { key: "documents", label: "Documents" },
+  { key: "requests", label: "Requests" },
+  ...(role === "PRESALES" ? [{ key: "contacts", label: "Contacts" }] : []),
+];
 
 export default async function OpportunityPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; edit?: string }> }) {
   const user = await requireUser();
   const { id } = await params;
   const { tab: tabParam, edit } = await searchParams;
-  const tab = TABS.some((t) => t.key === tabParam) ? tabParam! : "overview";
   const [d, options] = await Promise.all([getOpportunityDetail(user, id), getOptions()]);
+  const sales = d.perms.sales;
+  const tabs = sales ? TABS : SUPPORT_TABS(user.role);
+  const tab = tabs.some((t) => t.key === tabParam) ? tabParam! : sales ? "overview" : "boq";
   const o = d.opp;
   const stage = o.stage as StageKey;
   const closed = ["WON", "LOST", "DROPPED"].includes(stage);
   const counts: Record<string, number> = {
     boq: d.lines.length,
+    documents: d.documents.length,
+    requests: o.presalesRequests.length + o.pricingRequests.length,
     activity: o.activities.filter((a) => a.type !== "TASK" || a.completedAt).length,
     contacts: o.contacts.length,
     quotes: o.quotes.length,
   };
+  const { advance } = dealActions(d, options);
 
   return (
     <>
       <PageHeader
-        crumbs={[{ href: "/opportunities", label: "Opportunities" }, { href: `/accounts/${o.account.id}`, label: o.account.name }]}
-        tabs={TABS.map((t) => ({ href: `/opportunities/${o.id}${t.key === "overview" ? "" : `?tab=${t.key}`}`, label: t.label, active: tab === t.key, count: counts[t.key] }))}
+        crumbs={
+          sales
+            ? [{ href: "/opportunities", label: "Opportunities" }, { href: `/accounts/${o.account.id}`, label: o.account.name }]
+            : [{ href: "/requests", label: user.role === "PRESALES" ? "BOQ requests" : "Pricing requests" }]
+        }
+        tabs={tabs.map((t) => ({ href: `/opportunities/${o.id}${t.key === (sales ? "overview" : "boq") ? "" : `?tab=${t.key}`}`, label: t.label, active: tab === t.key, count: counts[t.key] }))}
         title={o.name}
         description={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-mono text-xs text-ink-3">{o.code}</span>
             <span className="text-ink-3">·</span>
-            <Link href={`/accounts/${o.account.id}`} className="inline-flex items-center gap-1 hover:text-primary"><Building2 className="size-3.5" />{o.account.name}</Link>
+            {sales ? (
+              <Link href={`/accounts/${o.account.id}`} className="inline-flex items-center gap-1 hover:text-primary"><Building2 className="size-3.5" />{o.account.name}</Link>
+            ) : (
+              <span className="inline-flex items-center gap-1"><Building2 className="size-3.5" />{o.account.name}</span>
+            )}
             <span className="text-ink-3">·</span>
             <span>{o.businessUnit.name} / {o.category.name}</span>
             {o.oem && <><span className="text-ink-3">·</span><span>{o.oem.name}</span></>}
@@ -75,14 +97,17 @@ export default async function OpportunityPage({ params, searchParams }: { params
       >
         <div className="mt-5">
           <StagePath
-            id={o.id} stage={stage} path={d.path} moves={d.moves} advance={dealActions(d, options).advance} canSkip={d.canSkip}
+            id={o.id} stage={stage} path={d.path} moves={sales ? d.moves : []}
+            // Presales and purchase only see an advance that is theirs to take (e.g. Submit BOQ)
+            advance={sales || advance?.kind === "action" ? advance : null} canSkip={sales && d.canSkip}
             lossReasons={options.lossReasons} poNumber={o.poNumber} holdReason={o.holdReason}
           />
         </div>
         <div className="mt-3">
           <DealStatus d={d} options={options} />
         </div>
-        <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+        {!sales && <SupportFacts d={d} role={user.role} />}
+        {sales && <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
           <Metric
             label="Deal value"
             value={<span className="text-lg font-semibold">{inr(o.amount)}</span>}
@@ -96,10 +121,10 @@ export default async function OpportunityPage({ params, searchParams }: { params
           <Metric label="Forecast" value={<ForecastBadge value={o.forecastCategory} />} sub={`${STAGE_META[stage].label} for ${Math.max(0, Math.round((Date.now() - o.stageEnteredAt.getTime()) / 86_400_000))}d`} />
           <Metric label="Health" value={<HealthBadge label={o.healthLabel} score={o.healthScore} />} sub={`Last activity ${relativeDays(o.lastActivityAt)}`} />
           <Metric label="Margin" value={d.perms.viewCost ? (d.totals.marginPct !== null ? pct(d.totals.marginPct, 1) : o.expectedMarginPct !== null ? `${pct(o.expectedMarginPct, 1)} est.` : "—") : "Restricted"} sub={d.totals.marginPct !== null ? "From priced lines" : "Expected"} />
-        </div>
+        </div>}
       </PageHeader>
       <PageBody>
-        {tab === "overview" && <Overview d={d} />}
+        {tab === "overview" && sales && <Overview d={d} />}
         {tab === "boq" && (
           <LineItemsEditor
             oppId={o.id}
@@ -118,7 +143,14 @@ export default async function OpportunityPage({ params, searchParams }: { params
             startEditing={edit === "1"}
           />
         )}
-        {tab === "activity" && (
+        {tab === "documents" && <DocumentsPanel oppId={o.id} documents={d.documents} kinds={d.documentKinds} canAdd={d.perms.addDocument} viewerId={user.id} isManager={d.viewer.isManager} closed={closed} />}
+        {tab === "requests" && (
+          <Card className="max-w-4xl">
+            <CardHeader title="BOQ and pricing requests" description="What was asked, revisions, questions and send-backs" />
+            <CardContent className="px-0 pb-0"><RequestHistory d={d} /></CardContent>
+          </Card>
+        )}
+        {tab === "activity" && sales && (
           <div className="grid gap-6 lg:grid-cols-5">
             <div className="lg:col-span-2"><ActivityComposer opportunityId={o.id} contacts={o.contacts.map((c) => c.contact)} /></div>
             <div className="lg:col-span-3"><ActivityTimeline items={o.activities} /></div>
@@ -129,10 +161,33 @@ export default async function OpportunityPage({ params, searchParams }: { params
             <ContactsEditor oppId={o.id} current={o.contacts} accountContacts={d.accountContacts} primaryId={o.primaryContact?.id ?? null} canEdit={d.perms.edit} />
           </div>
         )}
-        {tab === "quotes" && <Quotes d={d} />}
-        {tab === "history" && <HistoryTab d={d} />}
+        {tab === "quotes" && sales && <Quotes d={d} />}
+        {tab === "history" && sales && <HistoryTab d={d} />}
       </PageBody>
     </>
+  );
+}
+
+/** The facts presales and purchase need: their request and its due date, who to ask, and the deal's deadlines */
+function SupportFacts({ d, role }: { d: OppDetail; role: string }) {
+  const o = d.opp;
+  const mine = role === "PRESALES" ? o.presalesRequests.find((r) => r.assignedTo.id === d.viewer.id) : o.pricingRequests.find((r) => r.assignedTo.id === d.viewer.id);
+  const open = mine && ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"].includes(mine.status);
+  return (
+    <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-4">
+      <Metric
+        label="Your request"
+        value={mine ? (open ? <span style={{ color: mine.dueDate < new Date() ? "var(--t-red)" : undefined }}>Due {fmtDate(mine.dueDate)}</span> : "Done") : "—"}
+        sub={mine ? `Requested by ${mine.requestedBy.name} · ${relativeDays(mine.createdAt)}` : undefined}
+      />
+      <Metric label="Sales owner" value={o.salesOwner.name} sub={o.salesOwner.email} />
+      <Metric label={role === "PRESALES" ? "Purchase" : "Presales"} value={(role === "PRESALES" ? o.purchaseOwner?.name : o.presalesOwner?.name) ?? "—"} />
+      <Metric
+        label={o.submissionDueDate ? "Bid due" : "Expected close"}
+        value={fmtDate(o.submissionDueDate ?? o.expectedCloseDate)}
+        sub={relativeDays(o.submissionDueDate ?? o.expectedCloseDate)}
+      />
+    </div>
   );
 }
 
@@ -342,7 +397,7 @@ function HistoryTab({ d }: { d: OppDetail }) {
     BOQ_UPDATED: "Updated the BOQ", CONTACTS: "Updated the buying group", DELETE: "Deleted",
     BOQ_REVISION_REQUESTED: "Requested a BOQ revision", PRESALES_QUESTION: "Asked sales a question", PRESALES_ANSWERED: "Answered presales",
     PRICING_RETURNED: "Sent the BOQ back", REQUEST_REASSIGNED: "Reassigned a request", REQUEST_CANCELLED: "Cancelled a request",
-    QUOTE_RESPONSE: "Recorded the customer response",
+    QUOTE_RESPONSE: "Recorded the customer response", DOCUMENT_ADDED: "Added a document", DOCUMENT_REMOVED: "Removed a document",
   };
   return (
     <div className="grid gap-6 lg:grid-cols-5">

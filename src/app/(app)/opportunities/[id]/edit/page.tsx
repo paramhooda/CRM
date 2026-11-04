@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { can, isManager, opportunityScope } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { can, isManager, opportunityScope, SALES_ROLES } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { getOptions } from "@/server/queries/options";
 import { accountOptions } from "@/server/queries/accounts-lite";
@@ -11,7 +11,7 @@ import { isoDate, toNumber } from "@/lib/format";
 export const metadata = { title: "Edit opportunity" };
 
 export default async function EditOpportunityPage({ params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   const { id } = await params;
   const o = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] } });
   if (!o) notFound();

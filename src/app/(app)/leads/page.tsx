@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { accountScope, can, isManager, leadScope } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { accountScope, can, isManager, leadScope, SALES_ROLES } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { getOptions } from "@/server/queries/options";
 import { PageHeader, PageBody, StatTile } from "@/components/crm/page";
@@ -19,7 +19,7 @@ export const metadata = { title: "Leads" };
 const TONE: Record<string, Tone> = { NEW: "blue", CONTACTED: "violet", QUALIFIED: "green", UNQUALIFIED: "slate", CONVERTED: "aqua" };
 
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   if (!can.manageLeads(user)) redirect("/dashboard");
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";

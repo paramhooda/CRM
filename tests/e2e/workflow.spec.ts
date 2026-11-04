@@ -109,6 +109,12 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText(/Fortinet's share of each deal/)).toBeVisible();
   });
 
+  test("purchase cannot open the deal before pricing is assigned to them", async ({ page }) => {
+    await login(page, PURCHASE.email);
+    await page.goto(oppUrl);
+    await expect(page.getByRole("heading", { name: "Not found or no access" })).toBeVisible();
+  });
+
   test("presales sees it on the My work home, adds a line and submits to purchase", async ({ page }) => {
     await login(page, PRESALES.email);
     await expect(page.getByRole("heading", { name: "My BOQ queue" })).toBeVisible();
@@ -128,7 +134,22 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await expect(page.getByLabel("Line items").getByText("Rate card", { exact: true })).toBeVisible();
+    // Presales sees specification and cost, never the sell side
+    await expect(page.getByRole("columnheader", { name: "Unit price" })).toHaveCount(0);
+    await expect(page.getByText("Deal value")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^(Quotes|Overview|History)/ })).toHaveCount(0);
 
+    // Presales adds the statement of work
+    await page.goto(`${oppUrl}?tab=documents`);
+    await page.getByLabel("Document kind").selectOption({ label: "Statement of work" });
+    await page.getByLabel("File", { exact: true }).setInputFiles({ name: "SoW - SD-WAN.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 SoW") });
+    await page.getByLabel("Note", { exact: true }).fill("Draft for customer review");
+    await page.getByRole("button", { name: "Upload" }).click();
+    await expect(page.getByText("Document added")).toBeVisible();
+    await expect(page.getByRole("link", { name: "SoW - SD-WAN.pdf", exact: true })).toBeVisible();
+    await expect(page.getByText(/BOQ revision 1/)).toBeVisible(); // linked to the request it came with
+
+    await page.goto(`${oppUrl}?tab=boq`);
     await page.getByRole("button", { name: "Advance to Pricing" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Submit BOQ")).toBeVisible();
@@ -157,7 +178,27 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByLabel("Line 2 supplier validity").fill(inDays(12));
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Unit price" })).toHaveCount(0); // no sell side
+
+    // Purchase sees presales' SoW and attaches the supplier's quote; files a browser could run are refused
+    await page.goto(`${oppUrl}?tab=documents`);
+    await expect(page.getByRole("link", { name: "SoW - SD-WAN.pdf", exact: true })).toBeVisible();
+    await page.getByLabel("Document kind").selectOption({ label: "Supplier quote" });
+    await page.getByLabel("File", { exact: true }).setInputFiles({ name: "notes.html", mimeType: "text/html", buffer: Buffer.from("<b>x</b>") });
+    await page.getByRole("button", { name: "Upload" }).click();
+    await expect(page.getByText(/\.html files are not accepted/)).toBeVisible();
+    await page.getByLabel("File", { exact: true }).setInputFiles({ name: "Ingram quote Q-7781.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 quote") });
+    await page.getByRole("button", { name: "Upload" }).click();
+    await expect(page.getByText("Document added")).toBeVisible();
+    const href = await page.getByRole("link", { name: "Download Ingram quote Q-7781.pdf" }).getAttribute("href");
+    const file = await page.request.get(href!);
+    expect(file.status()).toBe(200);
+    expect(file.headers()["content-type"]).toBe("application/pdf");
+    expect(file.headers()["content-disposition"]).toMatch(/^attachment;/);
+
+    await page.goto(`${oppUrl}?tab=boq`);
     await page.getByRole("button", { name: "Pricing complete" }).click();
+    await expect(page.getByRole("dialog").getByText("1 supplier or OEM quote attached to this request.")).toBeVisible();
     await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
     // Line 1 took the dialog's date (30 days), line 2 kept the supplier's own
@@ -167,6 +208,10 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
 
   test("sales asks for a BOQ revision; presales asks a question and sales answers", async ({ page }) => {
     await login(page, SALES);
+    // Sales sees every document on its deal
+    await page.goto(`${oppUrl}?tab=documents`);
+    await expect(page.getByRole("link", { name: "SoW - SD-WAN.pdf", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Ingram quote Q-7781.pdf", exact: true })).toBeVisible();
     await page.goto(`${oppUrl}?tab=boq`);
     await expect(page.getByLabel("Deal status")).toContainText("Priced · ready to quote");
     await statusMenu(page, "Request BOQ change");
@@ -429,6 +474,22 @@ test.describe("Bringing presales into a resale deal", () => {
     await sub.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
     await expect(page.getByLabel("Deal status")).toContainText("Pricing with purchase");
+  });
+});
+
+test.describe("Presales and purchase see their work only", () => {
+  test("purchase has no funnel: sales pages, the deal list and exports are closed", async ({ page }) => {
+    await login(page, PURCHASE.email);
+    for (const name of ["Pipeline", "Opportunities", "Accounts", "Reports"]) await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
+    for (const path of ["/pipeline", "/reviews", "/reports", "/accounts", "/contacts", "/leads", "/opportunities/new"]) {
+      await page.goto(path);
+      await expect(page).toHaveURL(/\/dashboard\?denied=1/);
+    }
+    await expect(page.getByText("That page is for the sales team")).toBeVisible();
+    await page.goto("/opportunities");
+    await expect(page).toHaveURL(/\/requests/);
+    await expect(page.getByRole("columnheader", { name: "Deal value" })).toHaveCount(0);
+    expect((await page.request.get("/api/export/opportunities")).status()).toBe(403);
   });
 });
 

@@ -1,7 +1,7 @@
 "use server";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { accountScope, opportunityScope } from "@/lib/authz";
+import { accountScope, can, opportunityScope } from "@/lib/authz";
 import { inr } from "@/lib/format";
 import { STAGE_META, type StageKey } from "@/lib/constants";
 
@@ -12,6 +12,8 @@ export async function globalSearch(q: string): Promise<SearchHit[]> {
   const term = q.trim().slice(0, 80);
   if (term.length < 2) return [];
   const ci = { contains: term, mode: "insensitive" as const };
+  // Presales and purchase find their own deals and the catalogue: no accounts, contacts or deal values
+  const sales = can.viewSales(user);
   const [opps, accounts, contacts, products] = await Promise.all([
     db.opportunity.findMany({
       where: { AND: [opportunityScope(user), { OR: [{ name: ci }, { code: ci }, { account: { name: ci } }] }] },
@@ -19,12 +21,12 @@ export async function globalSearch(q: string): Promise<SearchHit[]> {
       take: 6,
       orderBy: { updatedAt: "desc" },
     }),
-    db.account.findMany({
+    !sales ? [] : db.account.findMany({
       where: { AND: [accountScope(user), { OR: [{ name: ci }, { code: ci }, { city: ci }] }] },
       select: { id: true, name: true, code: true, city: true },
       take: 4,
     }),
-    db.contact.findMany({
+    !sales ? [] : db.contact.findMany({
       where: {
         deletedAt: null,
         account: accountScope(user),
@@ -42,8 +44,8 @@ export async function globalSearch(q: string): Promise<SearchHit[]> {
   return [
     ...opps.map((o) => ({
       id: o.id, type: "opportunity" as const, title: o.name,
-      sub: `${o.code} · ${o.account.name} · ${inr(o.amount)} · ${STAGE_META[o.stage as StageKey].label}`,
-      href: `/opportunities/${o.id}`,
+      sub: [o.code, o.account.name, sales && inr(o.amount), STAGE_META[o.stage as StageKey].label].filter(Boolean).join(" · "),
+      href: sales ? `/opportunities/${o.id}` : `/opportunities/${o.id}?tab=boq`,
     })),
     ...accounts.map((a) => ({ id: a.id, type: "account" as const, title: a.name, sub: `${a.code} · ${a.city ?? ""}`, href: `/accounts/${a.id}` })),
     ...contacts.map((c) => ({

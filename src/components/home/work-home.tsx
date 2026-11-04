@@ -65,14 +65,24 @@ function Updates({ notifications }: { notifications: Base["notifications"] }) {
   );
 }
 
-export function PresalesHome({ name, data }: { name: string; data: Base }) {
+/** The day's summary, and why the person landed here when a page was not for their role */
+function Summary({ text, notice }: { text: string; notice?: string }) {
+  return (
+    <>
+      {text}
+      {notice && <span role="status" className="mt-1 block text-xs text-[var(--t-amber)]">{notice}</span>}
+    </>
+  );
+}
+
+export function PresalesHome({ name, data, notice }: { name: string; data: Base; notice?: string }) {
   const overdue = data.queue.filter((q) => q.overdue).length;
   const summary = data.queue.length
     ? `${plural(data.queue.length, "BOQ")} to prepare${overdue ? ` · ${overdue} overdue` : ""}${data.waiting.length ? ` · ${data.waiting.length} waiting on purchase` : ""}`
     : "No BOQs waiting on you right now.";
   return (
     <>
-      <PageHeader title={`${greeting()}, ${name.split(" ")[0]}`} description={summary} />
+      <PageHeader title={`${greeting()}, ${name.split(" ")[0]}`} description={<Summary text={summary} notice={notice} />} />
       <PageBody>
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="min-w-0 lg:col-span-2">
@@ -104,7 +114,7 @@ export function PresalesHome({ name, data }: { name: string; data: Base }) {
   );
 }
 
-export function PurchaseHome({ name, data }: { name: string; data: Purchase }) {
+export function PurchaseHome({ name, data, notice }: { name: string; data: Purchase; notice?: string }) {
   const overdue = data.queue.filter((q) => q.overdue).length;
   const uncosted = data.rfqByOem.reduce((a, x) => a + x.lines, 0);
   const summary = data.queue.length
@@ -112,7 +122,7 @@ export function PurchaseHome({ name, data }: { name: string; data: Purchase }) {
     : "No pricing requests waiting on you right now.";
   return (
     <>
-      <PageHeader title={`${greeting()}, ${name.split(" ")[0]}`} description={summary} />
+      <PageHeader title={`${greeting()}, ${name.split(" ")[0]}`} description={<Summary text={summary} notice={notice} />} />
       <PageBody>
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="min-w-0 lg:col-span-2">

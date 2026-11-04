@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { requireUser } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
+import { SALES_ROLES } from "@/lib/authz";
 import { getReports } from "@/server/queries/reports";
 import { getOptions } from "@/server/queries/options";
 import { PageHeader, PageBody, StatTile, Meter } from "@/components/crm/page";
@@ -17,7 +18,7 @@ import { withParams, type SearchParams } from "@/lib/filters";
 export const metadata = { title: "Reports" };
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   const sp = await searchParams;
   const [r, options] = await Promise.all([getReports(user, sp), getOptions()]);
   // Closed-deal metrics cover the selected period, or the trailing 12 months

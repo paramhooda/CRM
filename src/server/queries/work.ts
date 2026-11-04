@@ -2,7 +2,6 @@ import "server-only";
 // "My work" read models for Presales and Purchase: what is waiting on me, what I am waiting on, what I did.
 import { db } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth";
-import { toNumber } from "@/lib/format";
 
 const DAY = 86_400_000;
 const OPEN = ["REQUESTED", "IN_PROGRESS"] as const;
@@ -18,7 +17,7 @@ export type QueueItem = {
   createdAt: Date;
   note: string | null;
   requestedBy: string;
-  opp: { id: string; name: string; code: string; account: string; amount: number; salesOwner: string };
+  opp: { id: string; name: string; code: string; account: string; salesOwner: string };
   lines: number;
   costed?: number;
   oems?: string[];
@@ -47,7 +46,7 @@ function sortQueue(a: QueueItem, b: QueueItem) {
 }
 
 const oppSelect = {
-  id: true, name: true, code: true, amount: true,
+  id: true, name: true, code: true,
   account: { select: { name: true } }, salesOwner: { select: { name: true } },
 } as const;
 
@@ -91,7 +90,7 @@ export async function getPresalesWork(user: CurrentUser) {
       tag: r.revision > 1 ? `Revision ${r.revision}` : undefined,
       requestedBy: r.requestedBy.name, lines: r.opportunity.lineItems.length,
       oems: [...new Set(r.opportunity.lineItems.map((l) => l.oem.name))],
-      opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, amount: toNumber(r.opportunity.amount), salesOwner: r.opportunity.salesOwner.name },
+      opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, salesOwner: r.opportunity.salesOwner.name },
       ...classify(r.dueDate, r.status, now),
     }))
     .sort(sortQueue);
@@ -145,7 +144,7 @@ export async function getPurchaseWork(user: CurrentUser) {
         tag: KIND_TAG[r.kind],
         requestedBy: r.requestedBy.name, lines: lines.length, costed: lines.filter((l) => l.unitCost !== null && l.pricingStatus === "QUOTED").length,
         oems: [...new Set(lines.map((l) => l.oem.name))],
-        opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, amount: toNumber(r.opportunity.amount), salesOwner: r.opportunity.salesOwner.name },
+        opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, salesOwner: r.opportunity.salesOwner.name },
         ...classify(r.dueDate, r.status, now),
       };
     })

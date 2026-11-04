@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { can } from "@/lib/authz";
 import { listOpportunities } from "@/server/queries/opportunities";
 import { STAGE_META, FORECAST_LABEL, HEALTH_LABEL, REVENUE_MODEL_LABEL, ACCOUNT_TYPE_LABEL, type StageKey } from "@/lib/constants";
 import { FLAG_META, type FlagCode } from "@/lib/rules/flags";
@@ -22,6 +23,7 @@ function csvCell(v: unknown): string {
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!can.viewSales(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const sp = Object.fromEntries(req.nextUrl.searchParams.entries());
   const { rows } = await listOpportunities(user, sp, { all: true });
   const lineMode = sp.mode === "lines";

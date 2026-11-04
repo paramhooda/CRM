@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Plus, Globe, Phone, MapPin, Star, Mail } from "lucide-react";
-import { requireUser } from "@/lib/auth";
-import { accountScope, can, isManager, opportunityScope } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { accountScope, can, isManager, opportunityScope, SALES_ROLES } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { getOptions } from "@/server/queries/options";
 import { PageHeader, PageBody, StatTile, DescList } from "@/components/crm/page";
@@ -22,7 +22,7 @@ export const metadata = { title: "Account" };
 const TABS = ["overview", "contacts", "activity"] as const;
 
 export default async function AccountPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   const { id } = await params;
   const { tab: t } = await searchParams;
   const tab = TABS.includes(t as never) ? t! : "overview";

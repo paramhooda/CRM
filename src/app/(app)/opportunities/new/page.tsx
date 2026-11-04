@@ -1,5 +1,5 @@
-import { requireUser } from "@/lib/auth";
-import { can, isManager } from "@/lib/authz";
+import { requireRole } from "@/lib/auth";
+import { can, isManager, SALES_ROLES } from "@/lib/authz";
 import { redirect } from "next/navigation";
 import { getOptions } from "@/server/queries/options";
 import { accountOptions } from "@/server/queries/accounts-lite";
@@ -10,7 +10,7 @@ import { emptyOppValues } from "@/lib/opp-defaults";
 export const metadata = { title: "New opportunity" };
 
 export default async function NewOpportunityPage({ searchParams }: { searchParams: Promise<{ account?: string }> }) {
-  const user = await requireUser();
+  const user = await requireRole(...SALES_ROLES);
   if (!can.createOpportunity(user)) redirect("/opportunities");
   const { account } = await searchParams;
   const [options, accounts] = await Promise.all([getOptions(), accountOptions(user)]);
