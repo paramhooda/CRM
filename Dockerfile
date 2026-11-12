@@ -49,6 +49,7 @@ COPY --from=builder --chown=app:app /app/public ./public
 COPY --from=builder --chown=app:app /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=builder --chown=app:app /app/prisma/migrations ./prisma/migrations
 COPY --from=builder --chown=app:app /app/prisma/dist/seed.js ./prisma/seed.js
+COPY --from=builder --chown=app:app /app/prisma/dist/create-admin.js ./prisma/create-admin.js
 COPY --chown=app:app docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 

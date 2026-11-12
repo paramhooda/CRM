@@ -13,7 +13,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "build:seed": "esbuild prisma/seed.ts --bundle --platform=node --target=node22 --format=cjs --external:@prisma/client --outfile=prisma/dist/seed.js",
+    "build:seed": "esbuild prisma/seed.ts --bundle --platform=node --target=node22 --format=cjs --external:@prisma/client --outfile=prisma/dist/seed.js && esbuild prisma/create-admin.ts --bundle --platform=node --target=node22 --format=cjs --external:@prisma/client --outfile=prisma/dist/create-admin.js",
     "format": "prettier --write .",
     "test:e2e": "playwright test",
     "check:migrations": "node scripts/check-migrations.mjs",

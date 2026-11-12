@@ -260,10 +260,10 @@ export function EmailSettingsCard({ initial, adminEmail, appUrlFromEnv }: { init
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Port" error={errors.port}><Input type="number" value={v.port} onChange={(e) => set("port", Number(e.target.value))} aria-label="Port" /></Field>
-          <Field label="Security">
+          <Field label="Security" hint={v.security === "tls" ? "Usually port 465" : v.security === "starttls" ? "Usually port 587" : "Unencrypted"}>
             <Select value={v.security} onChange={(e) => set("security", e.target.value as EmailForm["security"])} aria-label="Security">
-              <option value="starttls">STARTTLS (587)</option>
-              <option value="tls">SSL/TLS (465)</option>
+              <option value="starttls">STARTTLS</option>
+              <option value="tls">SSL/TLS</option>
               <option value="none">None</option>
             </Select>
           </Field>
