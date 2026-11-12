@@ -9,7 +9,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center">
       <h1 className="text-lg font-semibold">Something went wrong</h1>
-      <p className="max-w-md text-[13px] text-ink-2">The error has been logged{error.digest ? ` (ref ${error.digest})` : ""}. Try again, and contact your CRM administrator if it persists.</p>
+      <p className="max-w-md text-[13px] text-ink-2">This page could not load. Try again; if it keeps happening, tell your administrator{error.digest ? ` and quote reference ${error.digest}` : ""}.</p>
       <Button variant="primary" onClick={reset}>Try again</Button>
     </div>
   );

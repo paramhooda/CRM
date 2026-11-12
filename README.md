@@ -4,13 +4,20 @@ A focused CRM for a Systems Integrator / Managed Services Provider. It covers ac
 
 ## Run it
 
-You need Docker Desktop (or Docker Engine with Compose v2). From the project folder:
+You need Docker Desktop (or Docker Engine with Compose v2). From the project folder, for a demo install with sample data:
 
 ```bash
+cat > .env <<EOT
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+SEED_DEMO_DATA=true
+DEMO_LOGINS=true
+EOT
 docker compose up -d
 ```
 
 Open **http://localhost:3000**. The first start builds the image, creates the database, applies migrations and loads demo data. That takes a few minutes. Later starts take seconds.
+
+For a real installation (no demo data, HTTPS, email, backups, upgrades) follow **[docs/operations.md](docs/operations.md)**.
 
 | Role | Demo login | What to try |
 |---|---|---|
@@ -27,8 +34,8 @@ Useful commands:
 ```bash
 docker compose logs -f app          # follow application logs
 docker compose down                 # stop (data is kept)
-docker compose down -v              # stop and delete all data
-APP_PORT=8080 docker compose up -d  # run on another port
+scripts/backup-now.sh               # back up the database now
+deploy/upgrade.sh                   # back up, update to the latest code, restart
 ```
 
 ## What is inside
@@ -158,18 +165,10 @@ Permissions are enforced on the server in every action and query, and the UI mir
 
 ## Configuration
 
-Set these in your shell or in a `.env` file next to `docker-compose.yml`.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `APP_PORT` | `3000` | Host port for the web app |
-| `POSTGRES_PASSWORD` | `crm_local_only` | Database password. Change it for any shared deployment. |
-| `SESSION_SECRET` | auto-generated | Signs session cookies. If empty, a random secret is generated on first start and kept in the `appdata` volume. |
-| `SEED_DEMO_DATA` | `true` | Load demo data when the database is empty |
-| `DEMO_LOGINS` | `true` | Show one-click demo sign-in buttons. Set `false` in production. |
-| `COOKIE_SECURE` | `false` | Set `true` when served over HTTPS |
-
-**Going to production:** put the app behind HTTPS (for example Nginx, Caddy or a load balancer), set `COOKIE_SECURE=true`, `DEMO_LOGINS=false`, `SEED_DEMO_DATA=false` and a strong `POSTGRES_PASSWORD`, then create real users under Settings → Users. Back up the database with `docker compose exec db pg_dump -U crm crm > backup.sql`.
+Settings live in a `.env` file next to `docker-compose.yml`; `.env.example` lists them all with explanations. The
+essentials: `POSTGRES_PASSWORD` (required), `APP_PORT`, and for HTTPS `DOMAIN` + `TRUST_PROXY=true`. Demo data and
+demo sign-in are off unless `SEED_DEMO_DATA=true` / `DEMO_LOGINS=true`. Outgoing email (SMTP) is set by an
+administrator in the app under **Settings → Email & system**. See [docs/operations.md](docs/operations.md).
 
 ## Development
 
@@ -179,7 +178,7 @@ Requires Node 22 and PostgreSQL 16.
 cp .env.example .env               # point DATABASE_URL at your Postgres
 npm ci
 npx prisma migrate deploy
-npm run db:seed -- --force         # wipe and reload demo data
+npm run db:seed -- --force         # wipe and reload demo data (local databases only)
 npm run dev                        # http://localhost:3000
 ```
 
@@ -189,6 +188,8 @@ npm run dev                        # http://localhost:3000
 | `npm test` | Unit tests for the health rules, fiscal calendar, INR formatting, BOQ and billing-period maths, line attribution, billing readiness and the billable-line contract, and permissions |
 | `npm run test:e2e` | Playwright end-to-end test of the full flow (multi-OEM deal → presales home → purchase RFQs → quote → won and locked → billing export) and role checks, against a running app |
 | `npm run db:migrate` | Create a new migration after editing `prisma/schema.prisma` |
+| `npm run check` | Lint, types, unit tests and the migration safety check: run before every commit |
+| `npm run check:migrations` | Shipped migrations unchanged; new ones only add (see CLAUDE.md) |
 
 **Stack:** Next.js 15 (App Router, server actions), React 19, TypeScript, Tailwind CSS 4, Prisma 6 with PostgreSQL 16, Recharts, Radix UI primitives, Zod validation, and signed HttpOnly JWT sessions with bcrypt password hashing.
 
@@ -210,10 +211,19 @@ tests/                  unit (Vitest) and end-to-end (Playwright) tests
 
 ## Security notes
 
-- Passwords are hashed with bcrypt. Sign-in is throttled per email and IP. Sessions are signed, HttpOnly, SameSite=Lax cookies with a 10-hour lifetime. Inactive users are signed out on their next request.
-- Every page and API route except `/login` and `/api/health` requires a session.
-- All input is validated with Zod on the server. CSV exports neutralise spreadsheet formula injection.
-- Every create, update, stage change, login and export is written to the audit log, which is visible under Settings.
-- Security headers are set: X-Frame-Options DENY, nosniff, a strict referrer policy and a permissions policy. The container runs as a non-root user.
+- Passwords are hashed with bcrypt and must have 10+ characters with upper and lower case and a number. Ten wrong
+  passwords lock the account for 15 minutes (an administrator can unlock it). Attempts are kept in the database, so
+  the limit survives restarts, and failed sign-ins appear in the audit log.
+- A password set by an administrator is temporary: the user picks their own at the next sign-in. Changing a
+  password, changing a role or deactivating a user signs that user out on every device.
+- Sessions are signed, HttpOnly, SameSite=Lax cookies with a 10-hour lifetime, marked Secure automatically when the
+  CRM is opened over HTTPS (where HSTS is also sent).
+- The server refuses to start with a missing or example `SESSION_SECRET`.
+- Every page and API route except sign-in, password reset and `/api/health` requires a session. All input is
+  validated with Zod on the server. CSV exports neutralise spreadsheet formula injection.
+- Two people editing the same deal or BOQ can't overwrite each other: the second save is refused with who changed it.
+- Unexpected errors show the user a reference code and are logged on the server with full detail.
+- Security headers: X-Frame-Options DENY, nosniff, a strict referrer policy and a permissions policy. The container
+  runs as a non-root user.
 
 Demo customer names, GSTINs and contacts are fictional.

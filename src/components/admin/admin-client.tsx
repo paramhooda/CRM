@@ -1,33 +1,50 @@
 "use client";
 import { useState } from "react";
-import { Plus, Pencil, RefreshCw, Save } from "lucide-react";
+import { Plus, Pencil, RefreshCw, Save, Unlock, Send, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
-import { saveUser, addPicklistValue, togglePicklistValue, togglePicklistFlag, saveTargets, runRecompute } from "@/server/actions/admin";
+import { saveUser, unlockUser, saveEmailSettings, sendTestEmail, addPicklistValue, togglePicklistValue, togglePicklistFlag, saveTargets, runRecompute } from "@/server/actions/admin";
+import { PASSWORD_HINT } from "@/lib/password";
 import { ROLE_LABEL } from "@/lib/constants";
 import { inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-export function UserDialog({ id, initial }: { id?: string; initial?: { name: string; email: string; role: string; title: string | null; phone: string | null; active: boolean } }) {
+/** A random password that meets the policy, for the administrator to pass on */
+function tempPassword() {
+  const pick = (set: string) => set[crypto.getRandomValues(new Uint32Array(1))[0]! % set.length]!;
+  const words = "ABCDEFGHJKLMNPQRSTUVWXYZ", lower = "abcdefghijkmnpqrstuvwxyz", digits = "23456789";
+  return [pick(words), ...Array.from({ length: 6 }, () => pick(lower)), pick(digits), pick(digits), pick(digits), pick(words), pick(lower)].join("");
+}
+
+export function UserDialog({ id, initial, emailOn = false }: { id?: string; initial?: { name: string; email: string; role: string; title: string | null; phone: string | null; active: boolean }; emailOn?: boolean }) {
   const [open, setOpen] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [pw, setPw] = useState("");
+  const [shown, setShown] = useState(false);
   const { pending, run } = useAction();
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {id ? <Button size="icon-sm" variant="ghost" aria-label="Edit user"><Pencil /></Button> : <Button variant="primary"><Plus /> Add user</Button>}
       </DialogTrigger>
-      <DialogContent title={id ? "Edit user" : "Add user"} description="Passwords need 10+ characters with upper, lower case and a number.">
+      <DialogContent
+        title={id ? "Edit user" : "Add user"}
+        description={id ? "Setting a password signs the user out; they choose their own at next sign-in." : emailOn ? "Leave the password blank to email an invitation link." : "The user chooses their own password at first sign-in."}
+      >
         <form
           className="grid gap-3 sm:grid-cols-2"
           onSubmit={(e) => {
             e.preventDefault();
             const f = Object.fromEntries(new FormData(e.currentTarget).entries());
             if (id && !f.active) f.active = "false";
-            run(() => saveUser(id ?? null, f), { success: "User saved", onOk: () => setOpen(false), onError: (r) => setErrors(r.fieldErrors ?? {}) });
+            run(() => saveUser(id ?? null, f), {
+              success: !id && !f.password ? "Invitation sent" : "User saved",
+              onOk: () => { setOpen(false); setPw(""); setShown(false); },
+              onError: (r) => setErrors(r.fieldErrors ?? {}),
+            });
           }}
         >
           <Field label="Full name" required error={errors.name}><Input name="name" defaultValue={initial?.name} /></Field>
@@ -37,7 +54,15 @@ export function UserDialog({ id, initial }: { id?: string; initial?: { name: str
           </Field>
           <Field label="Title"><Input name="title" defaultValue={initial?.title ?? ""} /></Field>
           <Field label="Phone"><Input name="phone" defaultValue={initial?.phone ?? ""} /></Field>
-          <Field label={id ? "Reset password" : "Initial password"} required={!id} error={errors.password}><Input name="password" type="password" autoComplete="new-password" placeholder={id ? "Leave blank to keep" : ""} /></Field>
+          <Field label={id ? "Reset password" : "Temporary password"} required={!id && !emailOn} error={errors.password} hint={pw ? PASSWORD_HINT : undefined}>
+            <div className="flex gap-1.5">
+              <Input
+                name="password" type={shown ? "text" : "password"} autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)}
+                placeholder={id ? "Leave blank to keep" : emailOn ? "Blank: email an invitation" : ""} aria-label={id ? "Reset password" : "Temporary password"}
+              />
+              <Button type="button" size="icon-sm" variant="ghost" aria-label="Generate a password" title="Generate a password" onClick={() => { setPw(tempPassword()); setShown(true); }}><Wand2 /></Button>
+            </div>
+          </Field>
           {id && (
             <label className="flex items-center gap-2 text-[13px] text-ink-2 sm:col-span-2">
               <input type="checkbox" name="active" defaultChecked={initial?.active} className="accent-[var(--primary)]" /> Active (inactive users cannot sign in)
@@ -189,5 +214,85 @@ export function RecomputeButton() {
     <Button disabled={pending} onClick={() => run(() => runRecompute(), { onOk: (r) => toast.success(`Re-evaluated ${(r.data as { count: number }).count} opportunities`) })}>
       <RefreshCw className={pending ? "animate-spin" : ""} /> Re-run health rules now
     </Button>
+  );
+}
+
+export function UnlockButton({ id, name }: { id: string; name: string }) {
+  const { pending, run } = useAction();
+  return (
+    <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => unlockUser(id), { success: `${name} unlocked` })}>
+      <Unlock /> Unlock
+    </Button>
+  );
+}
+
+type EmailForm = { enabled: boolean; host: string; port: number; security: "tls" | "starttls" | "none"; user: string; fromName: string; fromEmail: string; appUrl: string; hasPassword: boolean };
+
+/** Admin → Email: the SMTP server the CRM sends password reset links and invitations through */
+export function EmailSettingsCard({ initial, adminEmail, appUrlFromEnv }: { initial: EmailForm; adminEmail: string; appUrlFromEnv?: string }) {
+  const [v, setV] = useState(initial);
+  const [password, setPassword] = useState("");
+  const [testTo, setTestTo] = useState(adminEmail);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const save = useAction();
+  const test = useAction();
+  const set = <K extends keyof EmailForm>(k: K, val: EmailForm[K]) => setV((x) => ({ ...x, [k]: val }));
+  const payload = () => ({ ...v, password: password || undefined, appUrl: v.appUrl || "" });
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return (
+    <div className="rounded-xl border border-border bg-surface">
+      <div className="border-b border-border px-5 py-3.5">
+        <h2 className="text-sm font-semibold">Email</h2>
+        <p className="mt-0.5 text-xs text-ink-3">Optional. When on, people can reset a forgotten password by email and new users get an invitation link.</p>
+      </div>
+      <form
+        className="grid gap-3 p-5 sm:grid-cols-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.run(() => saveEmailSettings(payload()), { success: "Email settings saved", onOk: () => { setErrors({}); setPassword(""); if (password) set("hasPassword", true); }, onError: (r) => setErrors(r.fieldErrors ?? {}) });
+        }}
+      >
+        <label className="flex items-center gap-2 text-[13px] sm:col-span-2">
+          <input type="checkbox" checked={v.enabled} onChange={(e) => set("enabled", e.target.checked)} className="accent-[var(--primary)]" aria-label="Send email" /> Send email from the CRM
+        </label>
+        <Field label="SMTP server" error={errors.host} hint="e.g. smtp.office365.com, smtp.gmail.com, smtp.zoho.in">
+          <Input value={v.host} onChange={(e) => set("host", e.target.value)} aria-label="SMTP server" />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Port" error={errors.port}><Input type="number" value={v.port} onChange={(e) => set("port", Number(e.target.value))} aria-label="Port" /></Field>
+          <Field label="Security">
+            <Select value={v.security} onChange={(e) => set("security", e.target.value as EmailForm["security"])} aria-label="Security">
+              <option value="starttls">STARTTLS (587)</option>
+              <option value="tls">SSL/TLS (465)</option>
+              <option value="none">None</option>
+            </Select>
+          </Field>
+        </div>
+        <Field label="Username" error={errors.user}><Input value={v.user} onChange={(e) => set("user", e.target.value)} autoComplete="off" aria-label="SMTP username" /></Field>
+        <Field label="Password" hint={v.hasPassword ? "Saved. Leave blank to keep it." : "Stored encrypted; never shown again."}>
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={v.hasPassword ? "••••••••" : ""} aria-label="SMTP password" />
+        </Field>
+        <Field label="From name"><Input value={v.fromName} onChange={(e) => set("fromName", e.target.value)} aria-label="From name" /></Field>
+        <Field label="From address" error={errors.fromEmail}><Input type="email" value={v.fromEmail} onChange={(e) => set("fromEmail", e.target.value)} placeholder="crm@yourcompany.com" aria-label="From address" /></Field>
+        <Field
+          label="CRM web address" error={errors.appUrl} className="sm:col-span-2"
+          hint={appUrlFromEnv ? `Set by APP_URL on the server: ${appUrlFromEnv}` : "Used for links in emails. The address people type to open the CRM."}
+        >
+          <div className="flex gap-1.5">
+            <Input value={appUrlFromEnv ?? v.appUrl} disabled={!!appUrlFromEnv} onChange={(e) => set("appUrl", e.target.value)} placeholder="https://crm.yourcompany.com" aria-label="CRM web address" />
+            {!appUrlFromEnv && origin && v.appUrl !== origin && <Button type="button" size="sm" variant="ghost" onClick={() => set("appUrl", origin)}>Use {origin}</Button>}
+          </div>
+        </Field>
+        <div className="flex flex-wrap items-end justify-between gap-2 border-t border-border pt-3 sm:col-span-2">
+          <div className="flex items-end gap-1.5">
+            <Field label="Send a test to"><Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} aria-label="Test recipient" /></Field>
+            <Button type="button" disabled={test.pending || !v.host} onClick={() => test.run(() => sendTestEmail(payload(), testTo), { success: `Test email sent to ${testTo}` })}>
+              <Send /> Send test
+            </Button>
+          </div>
+          <Button type="submit" variant="primary" disabled={save.pending}><Save /> Save</Button>
+        </div>
+      </form>
+    </div>
   );
 }

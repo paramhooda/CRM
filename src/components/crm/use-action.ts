@@ -21,8 +21,10 @@ export function useAction() {
           toast.error(r.error);
           opts.onError?.(r);
         }
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Something went wrong");
+      } catch {
+        // The server action itself never throws (see src/server/action-error.ts); this is a lost connection or a
+        // new version deployed while the page was open.
+        toast.error("Could not reach the server. Check your connection, reload the page and try again.");
       }
     });
   }

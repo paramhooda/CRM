@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -10,19 +11,17 @@ import { recordEvent, recordChanges } from "@/lib/audit";
 import { recomputeAll } from "@/lib/opportunity-service";
 import { PICKLIST_TYPES } from "@/lib/constants";
 import { zodErrors, type ActionResult } from "@/lib/validation";
+import { safeAction, UserError } from "@/server/action-error";
+import { BCRYPT_COST, passwordProblems } from "@/lib/password";
+import { sealSecret } from "@/lib/secret-box";
+import { emailReady, getEmailSettings, linkBase, putEmailSettings, type EmailSettings } from "@/server/settings";
+import { sendMail, sendWith } from "@/server/email";
 
 async function requireAdmin() {
   const user = await requireUser();
-  if (!can.admin(user)) throw new Error("Administrator access required");
+  if (!can.admin(user)) throw new UserError("Administrator access required.");
   return user;
 }
-
-const password = z
-  .string()
-  .min(10, "At least 10 characters")
-  .regex(/[A-Z]/, "Include an uppercase letter")
-  .regex(/[a-z]/, "Include a lowercase letter")
-  .regex(/\d/, "Include a number");
 
 const userSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -30,38 +29,152 @@ const userSchema = z.object({
   role: z.enum(["ADMIN", "SALES_HEAD", "SALES", "PRESALES", "PURCHASE"]),
   title: z.string().max(100).optional(),
   phone: z.string().max(40).optional(),
-  password: password.optional(),
+  password: z.string().max(200).optional(),
   active: z.preprocess((v) => v === undefined ? undefined : v === "on" || v === true || v === "true", z.boolean().optional()),
 });
 
-export async function saveUser(id: string | null, input: Record<string, unknown>): Promise<ActionResult> {
+const INVITE_TTL_MS = 72 * 3_600_000;
+
+/** Email a new user a link to choose their own password (when email is set up and no password was given) */
+async function sendInvite(user: { id: string; name: string; email: string }) {
+  const token = randomBytes(32).toString("base64url");
+  await db.passwordResetToken.create({ data: { userId: user.id, tokenHash: createHash("sha256").update(token).digest("hex"), expiresAt: new Date(Date.now() + INVITE_TTL_MS) } });
+  return sendMail({
+    to: user.email,
+    subject: "Your Progression CRM account",
+    text: [
+      `Hi ${user.name.split(" ")[0]},`,
+      "",
+      "An account has been created for you on Progression CRM. Open this link within 3 days to choose your password:",
+      "",
+      `${await linkBase()}/reset-password?token=${token}`,
+      "",
+      `Then sign in at ${await linkBase()}/login with ${user.email}.`,
+    ].join("\n"),
+  });
+}
+
+/**
+ * Create or edit a user. A password set here is temporary: the user must choose their own at next sign-in.
+ * Resetting the password, changing the role or deactivating signs the user out everywhere.
+ */
+export const saveUser = safeAction("saveUser", async function saveUser(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ invited?: boolean }>> {
   const admin = await requireAdmin();
   const parsed = userSchema.safeParse({ ...input, password: input.password || undefined });
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const v = parsed.data;
+  if (v.password) {
+    const problems = passwordProblems(v.password, { email: v.email, name: v.name });
+    if (problems.length) return { ok: false, error: problems[0]!, fieldErrors: { password: problems[0]! } };
+  }
   const dupe = await db.user.findFirst({ where: { email: v.email, ...(id ? { NOT: { id } } : {}) } });
   if (dupe) return { ok: false, error: "A user with this email already exists.", fieldErrors: { email: "Already in use" } };
   if (id) {
     if (id === admin.id && (v.role !== "ADMIN" || v.active === false)) return { ok: false, error: "You cannot remove your own admin access." };
     const before = await db.user.findUniqueOrThrow({ where: { id } });
-    const data = { name: v.name, email: v.email, role: v.role, title: v.title || null, phone: v.phone || null, active: v.active ?? before.active, ...(v.password ? { passwordHash: await bcrypt.hash(v.password, 10) } : {}) };
+    const active = v.active ?? before.active;
+    const signOut = !!v.password || v.role !== before.role || (before.active && !active);
+    const data = {
+      name: v.name, email: v.email, role: v.role, title: v.title || null, phone: v.phone || null, active,
+      ...(v.password ? { passwordHash: await bcrypt.hash(v.password, BCRYPT_COST), mustChangePassword: id !== admin.id, lockedUntil: null } : {}),
+      ...(signOut ? { sessionVersion: { increment: 1 } } : {}),
+    };
     await db.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data });
-      await recordChanges(tx, { entityType: "User", entityId: id, before, after: data, fields: ["name", "email", "role", "title", "active"], userId: admin.id });
+      await recordChanges(tx, { entityType: "User", entityId: id, before, after: { ...data, sessionVersion: undefined }, fields: ["name", "email", "role", "title", "active"], userId: admin.id });
       if (v.password) await recordEvent(tx, { entityType: "User", entityId: id, action: "PASSWORD_RESET", userId: admin.id });
     });
-  } else {
-    if (!v.password) return { ok: false, error: "Set an initial password.", fieldErrors: { password: "Required" } };
-    await db.$transaction(async (tx) => {
-      const u = await tx.user.create({ data: { name: v.name, email: v.email, role: v.role, title: v.title || null, phone: v.phone || null, passwordHash: await bcrypt.hash(v.password!, 10) } });
-      await recordEvent(tx, { entityType: "User", entityId: u.id, action: "CREATE", userId: admin.id, newValue: `${u.email} (${u.role})` });
-    });
+    revalidatePath("/admin");
+    return { ok: true, ...(signOut && id !== admin.id ? { warning: `${v.name} was signed out of all devices.` } : {}) };
   }
+  const invite = !v.password;
+  if (invite && !(await emailReady())) return { ok: false, error: "Set a temporary password. (Or set up email in Settings → Email to send an invitation link instead.)", fieldErrors: { password: "Required" } };
+  const u = await db.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        name: v.name, email: v.email, role: v.role, title: v.title || null, phone: v.phone || null,
+        // Invited users have no usable password until they follow the link
+        passwordHash: await bcrypt.hash(v.password ?? randomBytes(24).toString("base64url"), BCRYPT_COST),
+        mustChangePassword: !invite,
+      },
+    });
+    await recordEvent(tx, { entityType: "User", entityId: created.id, action: "CREATE", userId: admin.id, newValue: `${created.email} (${created.role})` });
+    return created;
+  });
+  revalidatePath("/admin");
+  if (invite) {
+    const sent = await sendInvite(u);
+    return sent ? { ok: true, data: { invited: true } } : { ok: true, warning: "The user was created but the invitation email could not be sent. Set a temporary password for them instead." };
+  }
+  return { ok: true };
+});
+
+/** Lift a lockout after repeated wrong passwords */
+export const unlockUser = safeAction("unlockUser", async function unlockUser(id: string): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  const u = await db.user.findUniqueOrThrow({ where: { id } });
+  await db.$transaction([
+    db.user.update({ where: { id }, data: { lockedUntil: null } }),
+    db.loginAttempt.deleteMany({ where: { email: u.email, ok: false } }),
+    db.auditLog.create({ data: { entityType: "User", entityId: id, action: "UNLOCKED", changedById: admin.id } }),
+  ]);
   revalidatePath("/admin");
   return { ok: true };
+});
+
+const emailInput = z.object({
+  enabled: z.boolean(),
+  host: z.string().trim().max(200),
+  port: z.coerce.number().int().min(1, "Port 1–65535").max(65535, "Port 1–65535"),
+  security: z.enum(["tls", "starttls", "none"]),
+  user: z.string().trim().max(200),
+  /** Empty keeps the saved password */
+  password: z.string().max(500).optional(),
+  clearPassword: z.boolean().optional(),
+  fromName: z.string().trim().max(100),
+  fromEmail: z.union([z.literal(""), z.string().trim().email("Enter a valid email")]),
+  appUrl: z.union([z.literal(""), z.string().trim().regex(/^https?:\/\/[^\s/]+(:\d+)?\/?$/, "Like https://crm.yourcompany.com or http://10.0.0.5")]),
+});
+
+type Merged = { error: { error: string; fieldErrors?: Record<string, string> } } | { settings: EmailSettings };
+async function mergedEmailSettings(input: unknown): Promise<Merged> {
+  const p = emailInput.safeParse(input);
+  if (!p.success) return { error: zodErrors(p.error) };
+  const v = p.data;
+  if (v.enabled && (!v.host || !v.fromEmail)) return { error: { error: "Enter the SMTP server and the From address to turn email on.", fieldErrors: {} } };
+  if (v.enabled && !v.appUrl && !process.env.APP_URL) return { error: { error: "Enter the CRM web address so links in emails work.", fieldErrors: { appUrl: "Required" } } };
+  const cur = await getEmailSettings();
+  const passwordSealed = v.clearPassword ? undefined : v.password ? sealSecret(v.password) : cur.passwordSealed;
+  const settings: EmailSettings = { enabled: v.enabled, host: v.host, port: v.port, security: v.security, user: v.user, passwordSealed, fromName: v.fromName, fromEmail: v.fromEmail, appUrl: v.appUrl.replace(/\/$/, "") };
+  return { settings };
 }
 
-export async function addPicklistValue(type: string, value: string): Promise<ActionResult> {
+export const saveEmailSettings = safeAction("saveEmailSettings", async function saveEmailSettings(input: unknown): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  const m = await mergedEmailSettings(input);
+  if ("error" in m) return { ok: false, ...m.error };
+  await putEmailSettings(m.settings);
+  await db.auditLog.create({ data: { entityType: "Settings", entityId: "email", action: "UPDATE", newValue: m.settings.enabled ? `on · ${m.settings.host}:${m.settings.port}` : "off", changedById: admin.id } });
+  revalidatePath("/admin");
+  return { ok: true };
+});
+
+/** Send a test message with the settings as entered (saved or not) and report the server's answer */
+export const sendTestEmail = safeAction("sendTestEmail", async function sendTestEmail(input: unknown, to: string): Promise<ActionResult> {
+  await requireAdmin();
+  const m = await mergedEmailSettings({ ...(input as object), enabled: true });
+  if ("error" in m) return { ok: false, ...m.error };
+  const addr = z.string().email().safeParse(to);
+  if (!addr.success) return { ok: false, error: "Enter the address to send the test to." };
+  try {
+    await sendWith(m.settings, { to: addr.data, subject: "Progression CRM test email", text: "Email from Progression CRM is working. Password reset links and invitations will be sent from this address." });
+  } catch (e) {
+    return { ok: false, error: `The mail server refused: ${e instanceof Error ? e.message : String(e)}`.slice(0, 400) };
+  }
+  return { ok: true };
+});
+
+export const addPicklistValue = safeAction("addPicklistValue", async function addPicklistValue(type: string, value: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const v = value.trim();
   if (!v || v.length > 80) return { ok: false, error: "Enter a value (max 80 characters)." };
@@ -82,14 +195,15 @@ export async function addPicklistValue(type: string, value: string): Promise<Act
   await db.auditLog.create({ data: { entityType: "Picklist", entityId: type, action: "ADD", newValue: v, changedById: admin.id } });
   revalidatePath("/admin");
   return { ok: true };
-}
+});
 
 /**
  * Category "needs presales" (solution vs resale default); OEM "runs deal registration" and "own brand" (costed from
  * the rate card or by presales instead of purchase, for lines added from now on).
  */
-export async function togglePicklistFlag(kind: "OEM" | "CATEGORY", id: string, flag = "dealRegistration"): Promise<ActionResult> {
+export const togglePicklistFlag = safeAction("togglePicklistFlag", async function togglePicklistFlag(kind: "OEM" | "CATEGORY", id: string, flag: string = "dealRegistration"): Promise<ActionResult> {
   const admin = await requireAdmin();
+  if (kind === "OEM" && flag !== "dealRegistration" && flag !== "ownBrand") return { ok: false, error: "Unknown flag." };
   if (kind === "OEM") {
     const o = await db.oem.findUniqueOrThrow({ where: { id } });
     if (o.isPlaceholder) return { ok: false, error: "\"To be decided\" is a placeholder and cannot carry flags." };
@@ -102,9 +216,9 @@ export async function togglePicklistFlag(kind: "OEM" | "CATEGORY", id: string, f
   await db.auditLog.create({ data: { entityType: "Picklist", entityId: id, action: "FLAG", field: kind === "OEM" ? flag : "needsPresales", changedById: admin.id } });
   revalidatePath("/admin");
   return { ok: true };
-}
+});
 
-export async function togglePicklistValue(kind: "OEM" | "CATEGORY" | "VALUE", id: string): Promise<ActionResult> {
+export const togglePicklistValue = safeAction("togglePicklistValue", async function togglePicklistValue(kind: "OEM" | "CATEGORY" | "VALUE", id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   if (kind === "OEM") {
     const o = await db.oem.findUniqueOrThrow({ where: { id } });
@@ -120,9 +234,9 @@ export async function togglePicklistValue(kind: "OEM" | "CATEGORY" | "VALUE", id
   await db.auditLog.create({ data: { entityType: "Picklist", entityId: id, action: "TOGGLE", changedById: admin.id } });
   revalidatePath("/admin");
   return { ok: true };
-}
+});
 
-export async function saveTargets(fiscalYear: number, rows: { userId: string; quarter: number; amount: number }[]): Promise<ActionResult> {
+export const saveTargets = safeAction("saveTargets", async function saveTargets(fiscalYear: number, rows: { userId: string; quarter: number; amount: number }[]): Promise<ActionResult> {
   const user = await requireUser();
   if (!can.manageTargets(user)) return { ok: false, error: "Not allowed." };
   const parsed = z.array(z.object({ userId: z.string(), quarter: z.number().int().min(1).max(4), amount: z.number().min(0).max(1e11) })).max(400).safeParse(rows);
@@ -140,11 +254,11 @@ export async function saveTargets(fiscalYear: number, rows: { userId: string; qu
   revalidatePath("/admin");
   revalidatePath("/dashboard");
   return { ok: true };
-}
+});
 
-export async function runRecompute(): Promise<ActionResult<{ count: number }>> {
+export const runRecompute = safeAction("runRecompute", async function runRecompute(): Promise<ActionResult<{ count: number }>> {
   await requireAdmin();
   const count = await recomputeAll(db);
   revalidatePath("/", "layout");
   return { ok: true, data: { count } };
-}
+});

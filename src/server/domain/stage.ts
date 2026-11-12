@@ -15,7 +15,8 @@ import { billingReadinessIssues, lockForBilling, unlockForBilling, BillingLocked
 const DAY = 86_400_000;
 const LIVE_QUOTE: string[] = ["SUBMITTED", "CHANGES_REQUESTED"];
 
-export class UserError extends Error {}
+export { UserError } from "./errors";
+import { UserError } from "./errors";
 
 /**
  * Stage transitions with gates, history and side-effects. Every stage change goes through here.
@@ -104,7 +105,7 @@ export async function applyStageChange(
     data.lossReason = extra.lossReason ?? o.lossReason;
     data.lossNotes = extra.lossNotes ?? o.lossNotes;
   }
-  await tx.opportunity.update({ where: { id }, data });
+  await tx.opportunity.update({ where: { id }, data: { ...data, version: { increment: 1 } } });
   if (to === "WON") {
     await lockForBilling(tx, id, {
       poDate: (data.poDate as Date | undefined) ?? null,

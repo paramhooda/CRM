@@ -12,6 +12,7 @@ import { fcLabel, healthLabel, stageLabel } from "@/lib/review";
 import type { ActionResult } from "@/lib/validation";
 import { dealFieldErrors } from "@/lib/stage-rules";
 import type { StageKey } from "@/lib/constants";
+import { safeAction } from "@/server/action-error";
 
 const DAY = 86_400_000;
 
@@ -36,7 +37,7 @@ const completeSchema = z.object({
  * Complete a pipeline review for exactly who was reviewed (one person, a team or everyone). It becomes the
  * "since last review" baseline for those people, and every agreed action becomes a task for its owner.
  */
-export async function completeReview(input: unknown): Promise<ActionResult<{ id: string }>> {
+export const completeReview = safeAction("completeReview", async function completeReview(input: unknown): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   if (!can.reviewPipeline(user)) return { ok: false, error: "Not allowed." };
   const parsed = completeSchema.safeParse(input);
@@ -82,7 +83,7 @@ export async function completeReview(input: unknown): Promise<ActionResult<{ id:
   revalidatePath("/reviews");
   revalidatePath("/dashboard");
   return { ok: true, data: { id: review.id } };
-}
+});
 
 const quickSchema = z.object({
   nextStep: z.string().trim().max(300).optional().nullable(),
@@ -92,7 +93,7 @@ const quickSchema = z.object({
 });
 
 /** In-call update of the fields a review usually agrees on. Audited; a pushed close date counts as a slip. */
-export async function quickUpdateDeal(id: string, input: unknown): Promise<ActionResult> {
+export const quickUpdateDeal = safeAction("quickUpdateDeal", async function quickUpdateDeal(id: string, input: unknown): Promise<ActionResult> {
   const user = await requireUser();
   const before = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] } });
   if (!before) return { ok: false, error: "Opportunity not found." };
@@ -114,7 +115,7 @@ export async function quickUpdateDeal(id: string, input: unknown): Promise<Actio
     const slip = data.expectedCloseDate.getTime() - before.expectedCloseDate.getTime() > DAY ? 1 : 0;
     await tx.opportunity.update({
       where: { id },
-      data: { ...data, closeDateSlipCount: before.closeDateSlipCount + slip, lastActivityAt: now, updatedById: user.id },
+      data: { ...data, closeDateSlipCount: before.closeDateSlipCount + slip, lastActivityAt: now, updatedById: user.id, version: { increment: 1 } },
     });
     await recordChanges(tx, {
       entityType: "Opportunity", entityId: id, before, after: { ...before, ...data },
@@ -125,7 +126,7 @@ export async function quickUpdateDeal(id: string, input: unknown): Promise<Actio
   revalidatePath("/reviews");
   revalidatePath(`/opportunities/${id}`);
   return { ok: true };
-}
+});
 
 const FIELD_LABEL: Record<string, string> = {
   stage: "Stage", amount: "Amount", expectedCloseDate: "Close date", forecastCategory: "Forecast", healthLabel: "Health",

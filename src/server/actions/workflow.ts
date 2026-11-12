@@ -20,6 +20,7 @@ import { zodErrors, type ActionResult } from "@/lib/validation";
 import { applyStageChange, UserError } from "@/server/domain/stage";
 import { lineInputSchema, resolveSpec, rollUpDeal, costFactsLoader } from "@/server/domain/lines";
 import { costExpired, lineCostStatus, linesText, needsInternalCost, needsPurchaseCost, resolveCostSource, type CostSourceKey } from "@/lib/costing";
+import { safeAction } from "@/server/action-error";
 
 const DAY = 86_400_000;
 const openPresales = { in: [...OPEN_PRESALES] };
@@ -45,6 +46,9 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
     throw e;
   }
 }
+
+/** Line costs or validity changed outside the BOQ editor: an editor already open must reload before saving */
+const touchBoq = (tx: Tx, oppId: string) => tx.opportunity.update({ where: { id: oppId }, data: { boqVersion: { increment: 1 } } });
 
 /**
  * Keep the pipeline stage in step with who holds the deal: BOQ while presales works on it, Pricing while purchase
@@ -124,7 +128,7 @@ const presalesSchema = z.object({
  * the lines sales built, and only the lines they change go back to purchase. A quote with the customer stays there
  * until sales sends a revised one.
  */
-export async function requestPresales(oppId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const requestPresales = safeAction("requestPresales", async function requestPresales(oppId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
@@ -173,7 +177,7 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
         },
       });
       // Pulling in presales makes it a solution deal
-      await tx.opportunity.update({ where: { id: oppId }, data: { presalesOwnerId: v.assignedToId, presalesRequired: true, updatedById: user.id } });
+      await tx.opportunity.update({ where: { id: oppId }, data: { presalesOwnerId: v.assignedToId, presalesRequired: true, updatedById: user.id, version: { increment: 1 } } });
       await recordChanges(tx, {
         entityType: "Opportunity", entityId: oppId, before: opp, after: { presalesOwnerId: v.assignedToId, presalesRequired: true },
         fields: ["presalesOwnerId", "presalesRequired"], userId: user.id,
@@ -196,7 +200,7 @@ export async function requestPresales(oppId: string, input: Record<string, unkno
   );
   if (res.ok) refresh(oppId);
   return res;
-}
+});
 
 async function presalesForAssignee(user: CurrentUser, requestId: string) {
   const r = await db.presalesRequest.findUnique({ where: { id: requestId }, include: { opportunity: true } });
@@ -204,7 +208,7 @@ async function presalesForAssignee(user: CurrentUser, requestId: string) {
   return r;
 }
 
-export async function startPresales(requestId: string): Promise<ActionResult> {
+export const startPresales = safeAction("startPresales", async function startPresales(requestId: string): Promise<ActionResult> {
   const user = await requireUser();
   const r = await presalesForAssignee(user, requestId);
   if (!r) return { ok: false, error: "Request not found." };
@@ -212,10 +216,10 @@ export async function startPresales(requestId: string): Promise<ActionResult> {
   await db.presalesRequest.update({ where: { id: requestId }, data: { status: "IN_PROGRESS", startedAt: new Date() } });
   refresh(r.opportunityId);
   return { ok: true };
-}
+});
 
 /** Presales needs an answer from sales. The request pauses; its due date moves out by the time spent waiting. */
-export async function askSales(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const askSales = safeAction("askSales", async function askSales(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const r = await presalesForAssignee(user, requestId);
   if (!r) return { ok: false, error: "Request not found." };
@@ -240,10 +244,10 @@ export async function askSales(requestId: string, input: Record<string, unknown>
   });
   refresh(r.opportunityId);
   return { ok: true };
-}
+});
 
 /** Sales answers the presales question; the request resumes with its due date extended. */
-export async function answerPresales(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const answerPresales = safeAction("answerPresales", async function answerPresales(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const r = await db.presalesRequest.findUnique({ where: { id: requestId }, include: { opportunity: true } });
   if (!r || !(await visibleOpp(user, r.opportunityId))) return { ok: false, error: "Request not found." };
@@ -270,7 +274,7 @@ export async function answerPresales(requestId: string, input: Record<string, un
   });
   refresh(r.opportunityId);
   return { ok: true };
-}
+});
 
 const submitBoqSchema = z.object({
   solutionSummary: z.string().trim().min(10, "Add a short solution summary").max(4000),
@@ -284,7 +288,7 @@ const submitBoqSchema = z.object({
  * Presales hands over the BOQ. Purchase is asked to price only the lines without a current cost
  * (new lines, or lines whose specification changed). If nothing needs a cost, the deal goes straight to quoting.
  */
-export async function submitBoq(requestId: string, input: Record<string, unknown>): Promise<ActionResult<{ pricing: boolean }>> {
+export const submitBoq = safeAction("submitBoq", async function submitBoq(requestId: string, input: Record<string, unknown>): Promise<ActionResult<{ pricing: boolean }>> {
   const user = await requireUser();
   const r = await presalesForAssignee(user, requestId);
   if (!r) return { ok: false, error: "Request not found." };
@@ -300,10 +304,12 @@ export async function submitBoq(requestId: string, input: Record<string, unknown
       assertInternalCosts(lines, "submitting");
       const pending = lines.filter(needsPurchaseCost);
       const now = new Date();
-      await tx.presalesRequest.update({
-        where: { id: requestId },
+      // Only from an open status: a double-click or a second tab finds it already submitted
+      const claimed = await tx.presalesRequest.updateMany({
+        where: { id: requestId, status: { in: [...OPEN_PRESALES] } },
         data: { status: "BOQ_SUBMITTED", submittedAt: now, solutionSummary: parsed.data.solutionSummary, assumptions: parsed.data.assumptions || null, startedAt: r.startedAt ?? now },
       });
+      if (!claimed.count) throw new UserError("This BOQ was already submitted. Reload the page.");
       await recordEvent(tx, {
         entityType: "Opportunity", entityId: r.opportunityId, action: "BOQ_SUBMITTED", userId: user.id,
         newValue: `Revision ${r.revision} · ${count} lines${pending.length ? ` · ${pending.length} to price` : " · no cost changes"}`,
@@ -318,7 +324,7 @@ export async function submitBoq(requestId: string, input: Record<string, unknown
             reason: r.reason, dueDate: parsed.data.dueDate ?? new Date(now.getTime() + THRESHOLDS.pricingSlaDays * DAY), notes: parsed.data.notes || null,
           },
         });
-        await tx.opportunity.update({ where: { id: r.opportunityId }, data: { purchaseOwnerId: purchaseId } });
+        await tx.opportunity.update({ where: { id: r.opportunityId }, data: { purchaseOwnerId: purchaseId, boqVersion: { increment: 1 } } });
         await notify(tx, [purchaseId], {
           type: "PRICING_REQUEST",
           title: `${kind === "REPRICE" ? "Re-pricing" : "Pricing"} requested: ${opp.name}`,
@@ -344,7 +350,7 @@ export async function submitBoq(requestId: string, input: Record<string, unknown
   );
   if (res.ok) refresh(r.opportunityId);
   return res;
-}
+});
 
 // ───────────── Pricing ─────────────
 
@@ -359,7 +365,7 @@ const pricingSchema = z.object({
  * Ask purchase for pricing without presales: a BOQ built by sales, a changed line, or re-validating costs
  * that have expired. With nothing changed, every line is re-validated.
  */
-export async function requestPricing(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ kind: string }>> {
+export const requestPricing = safeAction("requestPricing", async function requestPricing(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ kind: string }>> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
@@ -396,7 +402,7 @@ export async function requestPricing(oppId: string, input: Record<string, unknow
       await tx.pricingRequest.create({
         data: { opportunityId: oppId, requestedById: user.id, assignedToId: purchaseId, kind, reason: parsed.data.reason || null, dueDate: parsed.data.dueDate, notes: parsed.data.notes || null },
       });
-      await tx.opportunity.update({ where: { id: oppId }, data: { purchaseOwnerId: purchaseId } });
+      await tx.opportunity.update({ where: { id: oppId }, data: { purchaseOwnerId: purchaseId, boqVersion: { increment: 1 } } });
       const what = kind === "REVALIDATE" ? "Re-validation" : kind === "REPRICE" ? "Re-pricing" : "Pricing";
       await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "PRICING_REQUESTED", userId: user.id, newValue: `${what} · ${target.length} lines${parsed.data.reason ? ` · ${parsed.data.reason}` : ""}` });
       await notify(tx, [purchaseId], {
@@ -413,7 +419,7 @@ export async function requestPricing(oppId: string, input: Record<string, unknow
   );
   if (res.ok) refresh(oppId);
   return res;
-}
+});
 
 async function pricingForAssignee(user: CurrentUser, requestId: string) {
   const r = await db.pricingRequest.findUnique({ where: { id: requestId }, include: { opportunity: true } });
@@ -421,21 +427,21 @@ async function pricingForAssignee(user: CurrentUser, requestId: string) {
   return r;
 }
 
-export async function startPricing(requestId: string): Promise<ActionResult> {
+export const startPricing = safeAction("startPricing", async function startPricing(requestId: string): Promise<ActionResult> {
   const user = await requireUser();
   const r = await pricingForAssignee(user, requestId);
   if (!r) return { ok: false, error: "Request not found." };
   if (r.status === "REQUESTED") await db.pricingRequest.update({ where: { id: requestId }, data: { status: "IN_PROGRESS", startedAt: new Date() } });
   refresh(r.opportunityId);
   return { ok: true };
-}
+});
 
 const completePricingSchema = z.object({
   quoteValidTill: z.coerce.date(),
   responseNotes: z.string().max(2000).optional(),
 });
 
-export async function completePricing(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const completePricing = safeAction("completePricing", async function completePricing(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const r = await pricingForAssignee(user, requestId);
   if (!r) return { ok: false, error: "Request not found." };
@@ -448,7 +454,9 @@ export async function completePricing(requestId: string, input: Record<string, u
   if (missing.length) return { ok: false, error: `Line ${missing.map((l) => l.lineNo).join(", ")} still need${missing.length === 1 ? "s" : ""} a unit cost.` };
   const now = new Date();
   // Each supplier quotes its own validity. Lines without one, or with a lapsed one, take the date confirmed here.
-  await db.$transaction(async (tx) => {
+  const res = await run(() => db.$transaction(async (tx) => {
+    const claimed = await tx.pricingRequest.updateMany({ where: { id: requestId, status: { in: [...OPEN_PRICING] } }, data: { status: "QUOTED" } });
+    if (!claimed.count) throw new UserError("Pricing on this request was already completed. Reload the page.");
     await tx.opportunityLineItem.updateMany({
       where: { ...purchaseLines, OR: [{ costValidTill: null }, { costValidTill: { lt: now } }] },
       data: { costValidTill: parsed.data.quoteValidTill },
@@ -468,17 +476,19 @@ export async function completePricing(requestId: string, input: Record<string, u
       link: boqLink(r.opportunityId),
       exclude: user.id,
     });
+    await touchBoq(tx, r.opportunityId);
     await recomputeOpportunity(tx, r.opportunityId);
-  });
+  }));
+  if (!res.ok) return res;
   refresh(r.opportunityId);
   return { ok: true };
-}
+});
 
 /**
  * Purchase cannot price the BOQ as specified (wrong part, end-of-life, no distributor, unclear scope).
  * It goes back to presales as a new revision, or to sales when presales was never involved.
  */
-export async function returnToPresales(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const returnToPresales = safeAction("returnToPresales", async function returnToPresales(requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const r = await pricingForAssignee(user, requestId);
   if (!r) return { ok: false, error: "Request not found." };
@@ -490,7 +500,8 @@ export async function returnToPresales(requestId: string, input: Record<string, 
   const res = await run(() =>
     db.$transaction(async (tx) => {
       const now = new Date();
-      await tx.pricingRequest.update({ where: { id: requestId }, data: { status: "RETURNED", returnReason: reason, returnedAt: now, startedAt: r.startedAt ?? now } });
+      const claimed = await tx.pricingRequest.updateMany({ where: { id: requestId, status: { in: [...OPEN_PRICING] } }, data: { status: "RETURNED", returnReason: reason, returnedAt: now, startedAt: r.startedAt ?? now } });
+      if (!claimed.count) throw new UserError("This pricing request was already closed. Reload the page.");
       const presales = opp.presalesOwnerId ? await tx.user.findFirst({ where: { id: opp.presalesOwnerId, role: "PRESALES", active: true } }) : null;
       if (presales) {
         const last = await tx.presalesRequest.findFirst({ where: { opportunityId: opp.id }, orderBy: { revision: "desc" } });
@@ -525,7 +536,7 @@ export async function returnToPresales(requestId: string, input: Record<string, 
   );
   if (res.ok) refresh(opp.id);
   return res;
-}
+});
 
 // ───────────── Reassign and cancel (both request types) ─────────────
 
@@ -540,7 +551,7 @@ async function loadRequest(kind: ReqKind, id: string) {
 }
 
 /** Hand an open request to someone else: managers, the deal owner, or the current assignee handing off. */
-export async function reassignRequest(kind: ReqKind, requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const reassignRequest = safeAction("reassignRequest", async function reassignRequest(kind: ReqKind, requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const r = await loadRequest(kind, requestId);
   if (!r) return { ok: false, error: "Request not found." };
@@ -579,10 +590,10 @@ export async function reassignRequest(kind: ReqKind, requestId: string, input: R
   });
   refresh(oppId);
   return { ok: true };
-}
+});
 
 /** Withdraw an open request with a reason. The assignee is told so they stop work. */
-export async function cancelRequest(kind: ReqKind, requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const cancelRequest = safeAction("cancelRequest", async function cancelRequest(kind: ReqKind, requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const r = await loadRequest(kind, requestId);
   if (!r) return { ok: false, error: "Request not found." };
@@ -608,7 +619,7 @@ export async function cancelRequest(kind: ReqKind, requestId: string, input: Rec
   });
   refresh(oppId);
   return { ok: true };
-}
+});
 
 // ───────────── Line items (BOQ) ─────────────
 
@@ -622,8 +633,9 @@ export async function cancelRequest(kind: ReqKind, requestId: string, input: Rec
  *   lines from the catalogue's standard cost, presales lines from presales. Spec editors choose the source, within
  *   what the line allows; moving a line to or from purchase is a specification change.
  */
-export async function saveBoq(oppId: string, rawLines: unknown[], version?: number): Promise<ActionResult<{ version: number }>> {
+export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: string, rawLines: unknown[], version: number): Promise<ActionResult<{ version: number }>> {
   const user = await requireUser();
+  if (!Number.isInteger(version)) return { ok: false, error: "This page is out of date. Reload it and make your changes again." };
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
   const parsed = z.array(lineInputSchema).max(200).safeParse(rawLines);
@@ -641,8 +653,8 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
   const res = await run(() =>
     db.$transaction(async (tx) => {
       // Optimistic concurrency: claim the next version atomically, or fail if someone saved first
-      const next = (version ?? opp.boqVersion) + 1;
-      const claimed = await tx.opportunity.updateMany({ where: { id: oppId, boqVersion: version ?? opp.boqVersion }, data: { boqVersion: next } });
+      const next = version + 1;
+      const claimed = await tx.opportunity.updateMany({ where: { id: oppId, boqVersion: version }, data: { boqVersion: next } });
       if (!claimed.count) throw new UserError("Someone else saved this BOQ after you opened it. Reload the page to see their changes, then make yours again.");
 
       const [presalesOpen, pricingOpen, tbd] = await Promise.all([
@@ -736,11 +748,11 @@ export async function saveBoq(oppId: string, rawLines: unknown[], version?: numb
       await rollUpDeal(tx, oppId, user.id);
       await recomputeOpportunity(tx, oppId);
       return { version: next };
-    }),
+    }, { timeout: 20_000, maxWait: 5_000 }), // a 200-line BOQ is many statements
   );
   if (res.ok) refresh(oppId);
   return res;
-}
+});
 
 // ───────────── Quotes ─────────────
 
@@ -751,7 +763,7 @@ const quoteSchema = z.object({
   marginPct: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : Number(v)), z.number().min(0).max(90).optional()),
 });
 
-export async function createQuote(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
+export const createQuote = safeAction("createQuote", async function createQuote(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
@@ -826,7 +838,7 @@ export async function createQuote(oppId: string, input: Record<string, unknown>)
   );
   if (res.ok) refresh(oppId);
   return res;
-}
+});
 
 const responseSchema = z
   .object({
@@ -840,7 +852,7 @@ const responseSchema = z
  * changes requested sends sales back to re-price or ask presales for a revision; rejected keeps the deal open
  * until sales closes it, in case the customer re-engages.
  */
-export async function recordQuoteResponse(quoteId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const recordQuoteResponse = safeAction("recordQuoteResponse", async function recordQuoteResponse(quoteId: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const q = await db.quote.findUnique({ where: { id: quoteId }, include: { opportunity: true } });
   if (!q || !(await visibleOpp(user, q.opportunityId))) return { ok: false, error: "Quote not found." };
@@ -868,4 +880,4 @@ export async function recordQuoteResponse(quoteId: string, input: Record<string,
   });
   refresh(q.opportunityId);
   return { ok: true };
-}
+});

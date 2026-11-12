@@ -4,17 +4,18 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { can, isManager, leadScope } from "@/lib/authz";
+import { accountScope, can, isManager, leadScope } from "@/lib/authz";
 import { recordChanges, recordEvent } from "@/lib/audit";
 import { nextCode } from "@/lib/sequence";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { leadSchema, zodErrors, type ActionResult } from "@/lib/validation";
 import { createEstimateLine } from "@/server/domain/lines";
 import { dealTypeFor } from "@/lib/deal-setup";
+import { safeAction } from "@/server/action-error";
 
 const LEAD_FIELDS = ["firstName", "lastName", "company", "title", "email", "phone", "city", "source", "businessUnitId", "requirement", "estimatedValue", "status", "ownerId", "disqualifyReason"];
 
-export async function saveLead(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
+export const saveLead = safeAction("saveLead", async function saveLead(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   if (!can.manageLeads(user)) return { ok: false, error: "Not allowed." };
   const parsed = leadSchema.safeParse(input);
@@ -48,7 +49,7 @@ export async function saveLead(id: string | null, input: Record<string, unknown>
   });
   revalidatePath("/leads");
   return { ok: true, data: { id: lead.id } };
-}
+});
 
 const convertSchema = z.object({
   accountId: z.string().optional(),
@@ -60,7 +61,7 @@ const convertSchema = z.object({
 });
 
 /** Convert a qualified lead: creates (or reuses) the account, the contact and an opportunity in Qualified stage. */
-export async function convertLead(id: string, input: Record<string, unknown>): Promise<ActionResult<{ opportunityId: string }>> {
+export const convertLead = safeAction("convertLead", async function convertLead(id: string, input: Record<string, unknown>): Promise<ActionResult<{ opportunityId: string }>> {
   const user = await requireUser();
   if (!can.manageLeads(user)) return { ok: false, error: "Not allowed." };
   const lead = await db.lead.findFirst({ where: { AND: [{ id }, leadScope(user)] } });
@@ -71,6 +72,9 @@ export async function convertLead(id: string, input: Record<string, unknown>): P
   const v = parsed.data;
   const cat = await db.category.findUnique({ where: { id: v.categoryId } });
   if (!cat) return { ok: false, error: "Category not found." };
+  if (v.accountId && !(await db.account.findFirst({ where: { AND: [{ id: v.accountId }, accountScope(user)] }, select: { id: true } }))) {
+    return { ok: false, error: "Account not found, or it isn't one you can see." };
+  }
 
   const oppId = await db.$transaction(async (tx) => {
     const now = new Date();
@@ -116,4 +120,4 @@ export async function convertLead(id: string, input: Record<string, unknown>): P
   revalidatePath("/leads");
   revalidatePath("/opportunities");
   return { ok: true, data: { opportunityId: oppId } };
-}
+});

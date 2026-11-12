@@ -6,7 +6,9 @@ import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PersonCell } from "@/components/crm/badges";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
-import { UserDialog, PicklistEditor, TargetsGrid, RecomputeButton } from "@/components/admin/admin-client";
+import { UserDialog, PicklistEditor, TargetsGrid, RecomputeButton, UnlockButton, EmailSettingsCard } from "@/components/admin/admin-client";
+import { getEmailSettings, emailReady } from "@/server/settings";
+import { systemStatus } from "@/server/system";
 import { ROLE_LABEL, PICKLIST_TYPES, THRESHOLDS, STAGE_META, type StageKey, type Tone } from "@/lib/constants";
 import { FLAG_META, FLAG_CODES } from "@/lib/rules/flags";
 import { fiscalPeriod } from "@/lib/fiscal";
@@ -14,11 +16,11 @@ import { fmtDateTime, relativeDays, toNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Settings" };
-const TABS = [["users", "Users & roles"], ["picklists", "Picklists"], ["targets", "Targets"], ["rules", "Rules"], ["audit", "Audit log"]] as const;
+const TABS = [["users", "Users & roles"], ["picklists", "Picklists"], ["targets", "Targets"], ["rules", "Rules"], ["system", "Email & system"], ["audit", "Audit log"]] as const;
 const ROLE_TONE: Record<string, Tone> = { ADMIN: "red", SALES_HEAD: "violet", SALES: "blue", PRESALES: "aqua", PURCHASE: "amber" };
 
 export default async function AdminPage({ searchParams }: { searchParams: Promise<{ tab?: string; entity?: string }> }) {
-  await requireRole("ADMIN");
+  const me = await requireRole("ADMIN");
   const { tab: t, entity } = await searchParams;
   const tab = TABS.some(([k]) => k === t) ? t! : "users";
   return (
@@ -29,6 +31,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
         {tab === "picklists" && <Picklists />}
         {tab === "targets" && <Targets />}
         {tab === "rules" && <Rules />}
+        {tab === "system" && <System adminEmail={me.email} />}
         {tab === "audit" && <Audit entity={entity} />}
       </PageBody>
     </>
@@ -36,10 +39,11 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
 }
 
 async function Users() {
-  const users = await db.user.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] });
+  const [users, emailOn] = await Promise.all([db.user.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] }), emailReady()]);
+  const now = new Date();
   return (
     <Card>
-      <CardHeader title="Users" description={`${users.filter((u) => u.active).length} active users`} action={<UserDialog />} />
+      <CardHeader title="Users" description={`${users.filter((u) => u.active).length} active users`} action={<UserDialog emailOn={emailOn} />} />
       <Table>
         <THead><tr><TH>Name</TH><TH>Email</TH><TH>Role</TH><TH>Title</TH><TH>Status</TH><TH>Last sign-in</TH><TH /></tr></THead>
         <TBody>
@@ -49,9 +53,17 @@ async function Users() {
               <TD className="text-xs">{u.email}</TD>
               <TD><Badge tone={ROLE_TONE[u.role]}>{ROLE_LABEL[u.role]}</Badge></TD>
               <TD className="text-xs text-ink-2">{u.title}</TD>
-              <TD>{u.active ? <Badge tone="green" dot>Active</Badge> : <Badge dot>Inactive</Badge>}</TD>
+              <TD>
+                <span className="flex flex-wrap items-center gap-1">
+                  {!u.active ? <Badge dot>Inactive</Badge> : u.lockedUntil && u.lockedUntil > now ? <Badge tone="red" dot>Locked</Badge> : <Badge tone="green" dot>Active</Badge>}
+                  {u.active && u.mustChangePassword && <Badge tone="amber">Temporary password</Badge>}
+                </span>
+              </TD>
               <TD className="text-xs text-ink-2">{relativeDays(u.lastLoginAt)}</TD>
-              <TD className="text-right"><UserDialog id={u.id} initial={{ name: u.name, email: u.email, role: u.role, title: u.title, phone: u.phone, active: u.active }} /></TD>
+              <TD className="whitespace-nowrap text-right">
+                {u.active && u.lockedUntil && u.lockedUntil > now && <UnlockButton id={u.id} name={u.name} />}
+                <UserDialog id={u.id} emailOn={emailOn} initial={{ name: u.name, email: u.email, role: u.role, title: u.title, phone: u.phone, active: u.active }} />
+              </TD>
             </TR>
           ))}
         </TBody>
@@ -144,12 +156,15 @@ async function Audit({ entity }: { entity?: string }) {
     take: 300,
     include: { changedBy: { select: { name: true } } },
   });
-  const types = ["Opportunity", "Account", "Contact", "Lead", "User", "Picklist", "SalesTarget", "Export"];
+  const types = ["Opportunity", "Account", "Contact", "Lead", "User", "Picklist", "SalesTarget", "Settings", "Export"];
+  // Name the user on sign-in events (a failed sign-in has no "changed by")
+  const userIds = [...new Set(logs.filter((l) => l.entityType === "User").map((l) => l.entityId))];
+  const names = new Map((await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
   return (
     <Card>
       <CardHeader
         title="Audit log"
-        description="Latest 300 events. Every create, update, stage change, login and export is recorded."
+        description="Latest 300 events. Every create, update, stage change, sign-in (including failed ones) and export is recorded."
         action={
           <div className="flex flex-wrap gap-1">
             {["", ...types].map((x) => (
@@ -166,7 +181,7 @@ async function Audit({ entity }: { entity?: string }) {
               <TD className="whitespace-nowrap text-xs">{fmtDateTime(l.changedAt)}</TD>
               <TD className="text-xs">{l.changedBy?.name ?? "System"}</TD>
               <TD className="text-xs">
-                {l.entityType === "Opportunity" ? <Link href={`/opportunities/${l.entityId}?tab=history`} className="text-primary hover:underline">{l.entityType}</Link> : l.entityType}
+                {l.entityType === "Opportunity" ? <Link href={`/opportunities/${l.entityId}?tab=history`} className="text-primary hover:underline">{l.entityType}</Link> : l.entityType === "User" && names.get(l.entityId) ? `User · ${names.get(l.entityId)}` : l.entityType}
               </TD>
               <TD><Badge>{l.action}</Badge></TD>
               <TD className="text-xs">{l.field ?? "—"}</TD>
@@ -177,5 +192,43 @@ async function Audit({ entity }: { entity?: string }) {
         </TBody>
       </Table>
     </Card>
+  );
+}
+
+async function System({ adminEmail }: { adminEmail: string }) {
+  const [email, status] = await Promise.all([getEmailSettings(), systemStatus()]);
+  const rows: [string, React.ReactNode][] = [
+    ["Version", status.version],
+    ["Database", status.dbOk ? <Badge tone="green" dot key="db">Connected · {status.dbMs} ms</Badge> : <Badge tone="red" dot key="db">Not reachable</Badge>],
+    ["Database size", status.dbSize ?? "—"],
+    [
+      "Last backup",
+      status.lastBackup ? (
+        <span key="b" className={cn(status.backupStale && "text-[var(--t-red)]")}>{fmtDateTime(status.lastBackup.at)} · {status.lastBackup.file} · {status.lastBackup.size}{status.backupStale ? " · more than 2 days old" : ""}</span>
+      ) : (
+        <span key="b" className="text-ink-3">{status.backupsVisible ? "No backups yet" : "Backups are not visible to the app (see docs/operations.md)"}</span>
+      ),
+    ],
+    ["Backups kept", status.backupCount != null ? String(status.backupCount) : "—"],
+    ["Secure cookies", status.cookieMode],
+  ];
+  return (
+    <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+      <EmailSettingsCard
+        adminEmail={adminEmail}
+        appUrlFromEnv={process.env.APP_URL || undefined}
+        initial={{ enabled: email.enabled, host: email.host, port: email.port, security: email.security, user: email.user, fromName: email.fromName, fromEmail: email.fromEmail, appUrl: email.appUrl, hasPassword: !!email.passwordSealed }}
+      />
+      <Card className="self-start">
+        <CardHeader title="System" description="Health of this installation" />
+        <CardContent>
+          <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 text-[13px]">
+            {rows.map(([k, val]) => (
+              <div key={k} className="contents"><dt className="text-ink-3">{k}</dt><dd>{val}</dd></div>
+            ))}
+          </dl>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

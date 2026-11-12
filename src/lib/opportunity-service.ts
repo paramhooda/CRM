@@ -79,9 +79,15 @@ export async function recomputeAll(tx: Tx, now = new Date()) {
   return open.length;
 }
 
-/** Ensure rules are fresh (days-based rules drift as time passes). Cheap check, runs at most every 30 min. */
+/**
+ * Ensure rules are fresh (days-based rules drift as time passes). Cheap check, runs at most every 30 min. The
+ * timestamp is claimed atomically first, so when several people load pages at once only one of them recomputes
+ * (and reminders are not sent twice).
+ */
 export async function ensureRulesFresh(tx: Tx) {
-  const s = await tx.systemSetting.findUnique({ where: { key: "rules.lastRunAt" } });
-  const last = s ? new Date(s.value).getTime() : 0;
-  if (Date.now() - last > 30 * 60_000) await recomputeAll(tx);
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - 30 * 60_000).toISOString();
+  await tx.systemSetting.createMany({ data: [{ key: "rules.lastRunAt", value: new Date(0).toISOString() }], skipDuplicates: true });
+  const claimed = await tx.systemSetting.updateMany({ where: { key: "rules.lastRunAt", value: { lt: staleBefore } }, data: { value: now.toISOString() } });
+  if (claimed.count) await recomputeAll(tx, now);
 }

@@ -8,6 +8,7 @@ import { can } from "@/lib/authz";
 import { recordChanges, recordEvent } from "@/lib/audit";
 import { HSN_SAC } from "@/server/domain/lines";
 import { zodErrors, type ActionResult } from "@/lib/validation";
+import { safeAction } from "@/server/action-error";
 
 const optNum = z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : Number(v)), z.number().min(0).max(1e11).optional());
 
@@ -38,7 +39,7 @@ const productSchema = z
 
 const FIELDS = ["code", "name", "businessUnitId", "categoryId", "oemId", "productType", "unit", "billingFrequency", "defaultTermMonths", "listPrice", "standardCost", "hsnSac", "gstRatePct", "active"];
 
-export async function saveProduct(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
+export const saveProduct = safeAction("saveProduct", async function saveProduct(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   if (!can.manageProducts(user)) return { ok: false, error: "Only administrators can change the product catalogue." };
   const parsed = productSchema.safeParse(input);
@@ -71,9 +72,9 @@ export async function saveProduct(id: string | null, input: Record<string, unkno
   });
   revalidatePath("/products");
   return { ok: true, data: { id: result } };
-}
+});
 
-export async function toggleProduct(id: string): Promise<ActionResult> {
+export const toggleProduct = safeAction("toggleProduct", async function toggleProduct(id: string): Promise<ActionResult> {
   const user = await requireUser();
   if (!can.manageProducts(user)) return { ok: false, error: "Only administrators can change the product catalogue." };
   const p = await db.product.findUnique({ where: { id } });
@@ -84,4 +85,4 @@ export async function toggleProduct(id: string): Promise<ActionResult> {
   });
   revalidatePath("/products");
   return { ok: true };
-}
+});

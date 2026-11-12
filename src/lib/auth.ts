@@ -6,19 +6,22 @@ import { db } from "./db";
 import { SESSION_COOKIE, verifySession } from "./session";
 import type { Role } from "@prisma/client";
 
-export type CurrentUser = { id: string; name: string; email: string; role: Role; title: string | null };
+export type CurrentUser = { id: string; name: string; email: string; role: Role; title: string | null; mustChangePassword?: boolean };
 
-/** Resolve the signed-in user once per request. Inactive users are treated as signed out. */
+/**
+ * Resolve the signed-in user once per request. Inactive users, and sessions issued before the user's last password
+ * change, deactivation or role change (session version), are treated as signed out.
+ */
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const jar = await cookies();
   const session = await verifySession(jar.get(SESSION_COOKIE)?.value);
   if (!session) return null;
   const user = await db.user.findUnique({
     where: { id: session.sub },
-    select: { id: true, name: true, email: true, role: true, title: true, active: true },
+    select: { id: true, name: true, email: true, role: true, title: true, active: true, sessionVersion: true, mustChangePassword: true },
   });
-  if (!user || !user.active) return null;
-  return { id: user.id, name: user.name, email: user.email, role: user.role, title: user.title };
+  if (!user || !user.active || user.sessionVersion !== session.sv) return null;
+  return { id: user.id, name: user.name, email: user.email, role: user.role, title: user.title, mustChangePassword: user.mustChangePassword };
 });
 
 export async function requireUser(): Promise<CurrentUser> {

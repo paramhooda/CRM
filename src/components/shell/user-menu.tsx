@@ -1,5 +1,6 @@
 "use client";
-import { LogOut, User as UserIcon } from "lucide-react";
+import { KeyRound, LogOut } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/crm/badges";
 import { Dropdown, DropdownTrigger, DropdownContent, DropdownItem, DropdownLabel, DropdownSeparator } from "@/components/ui/dropdown";
 import { logout } from "@/server/actions/auth";
@@ -7,6 +8,7 @@ import { ROLE_LABEL } from "@/lib/constants";
 import type { Role } from "@prisma/client";
 
 export function UserMenu({ user }: { user: { name: string; email: string; role: Role; title: string | null } }) {
+  const router = useRouter();
   return (
     <Dropdown>
       <DropdownTrigger className="rounded-full p-0.5 hover:bg-surface-hover cursor-pointer" aria-label="Account menu">
@@ -19,8 +21,8 @@ export function UserMenu({ user }: { user: { name: string; email: string; role: 
           <span className="block">{ROLE_LABEL[user.role]}{user.title ? ` · ${user.title}` : ""}</span>
         </DropdownLabel>
         <DropdownSeparator />
-        <DropdownItem disabled>
-          <UserIcon /> Profile
+        <DropdownItem onSelect={() => router.push("/account/password")}>
+          <KeyRound /> Change password
         </DropdownItem>
         <DropdownItem onSelect={() => logout()}>
           <LogOut /> Sign out

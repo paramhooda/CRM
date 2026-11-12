@@ -216,9 +216,16 @@ model User {
   reports      User[]    @relation("UserManager")
   active       Boolean   @default(true)
   lastLoginAt  DateTime?
+  /// Bumped on password change, deactivation or role change; older sessions stop working
+  sessionVersion     Int      @default(0)
+  /// Set when an administrator creates the user or resets the password; the user picks their own at next sign-in
+  mustChangePassword Boolean  @default(false)
+  /// Sign-in blocked until this time after repeated wrong passwords; an administrator can clear it
+  lockedUntil        DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
+  resetTokens           PasswordResetToken[]
   ownedAccounts         Account[]         @relation("AccountOwner")
   salesOpportunities    Opportunity[]     @relation("OppSalesOwner")
   presalesOpportunities Opportunity[]     @relation("OppPresalesOwner")
@@ -463,6 +470,8 @@ model Opportunity {
   id               String   @id @default(cuid())
   /// Increments on every line-item save; stale saves are rejected (two people editing at once)
   boqVersion       Int      @default(0)
+  /// Increments on every edit of the deal's details; a save from a stale form is rejected instead of overwriting
+  version          Int      @default(0)
   code             String   @unique
   name             String
   accountId        String
@@ -845,6 +854,8 @@ model SavedView {
   @@index([userId, page])
 }
 
+/// Small key/value settings: rule-run timestamps, and what an administrator sets in the app (e.g. outgoing email,
+/// stored as JSON with secrets encrypted)
 model SystemSetting {
   key       String   @id
   value     String
@@ -887,4 +898,29 @@ model OpportunityDocument {
   createdAt         DateTime         @default(now())
 
   @@index([opportunityId, createdAt])
+}
+
+/// Sign-in attempts, kept 30 days: lockout after repeated wrong passwords, and an audit trail of failures
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  ip        String?
+  ok        Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([createdAt])
+}
+
+/// Single-use "forgot password" link; only the SHA-256 hash of the token is stored
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }

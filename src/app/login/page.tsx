@@ -2,7 +2,10 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { LoginForm } from "./login-form";
-import { Logo } from "@/components/crm/logo";
+import { AuthFrame } from "@/components/auth/auth-card";
+import { DEMO_PASSWORD, demoLoginsOn } from "@/lib/demo";
+import { emailReady } from "@/server/settings";
+import { safeNext } from "@/lib/lockout";
 
 export const metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
@@ -10,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   if (await getCurrentUser()) redirect("/dashboard");
   const { next } = await searchParams;
-  const showDemo = process.env.DEMO_LOGINS !== "false";
+  const showDemo = demoLoginsOn();
   const demo = showDemo
     ? await Promise.all(
         (["SALES_HEAD", "SALES", "PRESALES", "PURCHASE", "ADMIN"] as const).map((role) =>
@@ -19,15 +22,13 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       )
     : [];
   return (
-    <main className="flex min-h-screen items-center justify-center bg-page px-4 py-10">
-      <div className="w-full max-w-[400px]">
-        <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <Logo height={36} />
-          <p className="text-[13px] text-ink-3">CRM · Systems integration and managed services</p>
-        </div>
-        <LoginForm next={next} demo={demo.filter((d): d is NonNullable<typeof d> => !!d)} />
-        <p className="mt-6 text-center text-xs text-ink-3">Protected system. Access is logged and audited.</p>
-      </div>
-    </main>
+    <AuthFrame>
+      <LoginForm
+        next={next ? safeNext(next) : undefined}
+        demo={demo.filter((d): d is NonNullable<typeof d> => !!d)}
+        demoPassword={showDemo ? DEMO_PASSWORD : undefined}
+        canReset={await emailReady().catch(() => false)}
+      />
+    </AuthFrame>
   );
 }

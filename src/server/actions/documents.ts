@@ -7,9 +7,10 @@ import { recordEvent } from "@/lib/audit";
 import { CLOSED_STAGES, type StageKey } from "@/lib/constants";
 import { DOCUMENT_KIND_META, type DocumentKindKey } from "@/lib/documents";
 import type { ActionResult } from "@/lib/validation";
+import { safeAction } from "@/server/action-error";
 
 /** Remove a document: whoever added it, while the deal is open; a manager at any time. */
-export async function deleteDocument(id: string): Promise<ActionResult> {
+export const deleteDocument = safeAction("deleteDocument", async function deleteDocument(id: string): Promise<ActionResult> {
   const user = await requireUser();
   const doc = await db.opportunityDocument.findFirst({
     where: { id, opportunity: opportunityScope(user) },
@@ -28,4 +29,4 @@ export async function deleteDocument(id: string): Promise<ActionResult> {
   });
   revalidatePath(`/opportunities/${doc.opportunity.id}`);
   return { ok: true };
-}
+});

@@ -1,0 +1,10 @@
+# Optional HTTPS front door, used only with:  docker compose --profile https up -d
+# Caddy gets and renews a free Let's Encrypt certificate for $DOMAIN automatically. The domain's DNS must point at
+# this server, and ports 80 and 443 must be open to the internet for the certificate check.
+{$DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 20MB
+	}
+	reverse_proxy app:3000
+}

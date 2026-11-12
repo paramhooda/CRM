@@ -26,16 +26,20 @@ RUN npx prisma generate \
 FROM base AS prisma-cli
 WORKDIR /cli
 RUN npm init -y >/dev/null \
- && npm install --no-audit --no-fund --omit=dev prisma@6.19.3
+ && npm install --no-audit --no-fund --omit=dev --save-exact prisma@6.19.3
 
 # 4. Runtime
 FROM base AS runner
+ARG GIT_SHA=""
 ENV NODE_ENV=production \
     PORT=3000 \
-    HOSTNAME=0.0.0.0
-RUN addgroup -S -g 1001 app \
+    HOSTNAME=0.0.0.0 \
+    GIT_SHA=${GIT_SHA}
+# pg_dump / pg_isready: the automatic backup before database upgrades (docker-entrypoint.sh)
+RUN apk add --no-cache postgresql16-client \
+ && addgroup -S -g 1001 app \
  && adduser -S -u 1001 -G app app \
- && mkdir -p /app/data && chown app:app /app/data
+ && mkdir -p /app/data /backups && chown app:app /app/data /backups
 
 COPY --from=prisma-cli /cli/node_modules /opt/prisma-cli/node_modules
 # The standalone bundle already contains the traced Prisma client and query engine used by the app and seed.

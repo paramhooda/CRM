@@ -5,8 +5,9 @@ import { requireUser } from "@/lib/auth";
 import { accountScope, opportunityScope } from "@/lib/authz";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { activitySchema, zodErrors, type ActionResult } from "@/lib/validation";
+import { safeAction } from "@/server/action-error";
 
-export async function logActivity(input: Record<string, unknown>): Promise<ActionResult> {
+export const logActivity = safeAction("logActivity", async function logActivity(input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const parsed = activitySchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
@@ -44,9 +45,9 @@ export async function logActivity(input: Record<string, unknown>): Promise<Actio
   if (accountId) revalidatePath(`/accounts/${accountId}`);
   revalidatePath("/dashboard");
   return { ok: true };
-}
+});
 
-export async function completeTask(id: string): Promise<ActionResult> {
+export const completeTask = safeAction("completeTask", async function completeTask(id: string): Promise<ActionResult> {
   const user = await requireUser();
   const t = await db.activity.findUnique({ where: { id } });
   if (!t || t.type !== "TASK") return { ok: false, error: "Task not found." };
@@ -61,4 +62,4 @@ export async function completeTask(id: string): Promise<ActionResult> {
   });
   if (t.opportunityId) revalidatePath(`/opportunities/${t.opportunityId}`);
   return { ok: true };
-}
+});

@@ -1,6 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
+import { ContactRole, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/auth";
 import { can, isManager, opportunityScope } from "@/lib/authz";
@@ -34,6 +34,7 @@ import {
   type ActionResult,
   type OpportunityInput,
 } from "@/lib/validation";
+import { safeAction } from "@/server/action-error";
 
 const DAY = 86_400_000;
 const AUDITED = [
@@ -132,13 +133,22 @@ async function headerFromFirstLine(tx: Prisma.TransactionClient, d: DraftLine): 
   return { amount: 1, businessUnitId: p.businessUnitId, categoryId: p.categoryId, oemId: p.oemId };
 }
 
+/** "Someone else changed this deal" with who and when, for a save from a stale form */
+async function conflictMessage(id: string) {
+  const cur = await db.opportunity.findUnique({ where: { id }, select: { updatedAt: true, updatedById: true } });
+  const by = cur?.updatedById ? await db.user.findUnique({ where: { id: cur.updatedById }, select: { name: true } }) : null;
+  const who = by?.name ?? "Someone else";
+  const when = cur ? cur.updatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "";
+  return `${who} changed this deal${when ? ` at ${when}` : ""} after you opened it. Your changes were not saved. Reload the page to see theirs, then make yours again.`;
+}
+
 async function loadEditable(user: CurrentUser, id: string) {
   const opp = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] } });
-  if (!opp) throw new Error("Opportunity not found or not accessible");
+  if (!opp) throw new UserError("This deal was not found, was deleted, or is not yours to change.");
   return opp;
 }
 
-export async function createOpportunity(form: FormData): Promise<ActionResult<{ id: string }>> {
+export const createOpportunity = safeAction("createOpportunity", async function createOpportunity(form: FormData): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   if (!can.createOpportunity(user))
     return { ok: false, error: "You do not have permission to create opportunities." };
@@ -285,9 +295,9 @@ export async function createOpportunity(form: FormData): Promise<ActionResult<{ 
   revalidatePath("/opportunities");
   revalidatePath("/dashboard");
   return { ok: true, data: { id } };
-}
+});
 
-export async function updateOpportunity(id: string, form: FormData): Promise<ActionResult> {
+export const updateOpportunity = safeAction("updateOpportunity", async function updateOpportunity(id: string, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const before = await loadEditable(user, id).catch(() => null);
   if (!before) return { ok: false, error: "Opportunity not found." };
@@ -339,16 +349,20 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
     oemId: before.oemId,
   };
 
+  // The form carries the version it was opened at. Someone else's save in between bumps it, and this save is refused
+  // rather than silently overwriting their change.
+  const expected = Number(form.get("version"));
   await db.$transaction(async (tx) => {
     const data = toData(v, derived);
     const now = new Date();
     // Slip tracking: pushing the close date out counts as a slip.
     let slip = before.closeDateSlipCount;
     if (data.expectedCloseDate.getTime() - before.expectedCloseDate.getTime() > DAY) slip++;
-    await tx.opportunity.update({
-      where: { id },
-      data: { ...data, closeDateSlipCount: slip, updatedById: user.id },
+    const saved = await tx.opportunity.updateMany({
+      where: { id, version: Number.isInteger(expected) ? expected : before.version },
+      data: { ...data, closeDateSlipCount: slip, updatedById: user.id, version: { increment: 1 } },
     });
+    if (!saved.count) throw new UserError(await conflictMessage(id));
     await recordChanges(tx, {
       entityType: "Opportunity",
       entityId: id,
@@ -383,9 +397,9 @@ export async function updateOpportunity(id: string, form: FormData): Promise<Act
   revalidatePath(`/opportunities/${id}`);
   revalidatePath("/dashboard");
   return { ok: true };
-}
+});
 
-export async function changeStage(id: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const changeStage = safeAction("changeStage", async function changeStage(id: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const opp = await loadEditable(user, id).catch(() => null);
   if (!opp) return { ok: false, error: "Opportunity not found." };
@@ -407,13 +421,13 @@ export async function changeStage(id: string, input: Record<string, unknown>): P
     if (e instanceof UserError) return { ok: false, error: e.message };
     throw e;
   }
-}
+});
 
 /**
  * Skip the stage the deal is in (today only BOQ: presales turned out not to be needed). The deal becomes a resale
  * deal, any open BOQ request is cancelled with the reason, and the deal moves to Pricing.
  */
-export async function skipStage(id: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const skipStage = safeAction("skipStage", async function skipStage(id: string, input: Record<string, unknown>): Promise<ActionResult> {
   const user = await requireUser();
   const opp = await loadEditable(user, id).catch(() => null);
   if (!opp) return { ok: false, error: "Opportunity not found." };
@@ -429,7 +443,7 @@ export async function skipStage(id: string, input: Record<string, unknown>): Pro
         await tx.presalesRequest.update({ where: { id: r.id }, data: { status: "CANCELLED", cancelReason: `BOQ skipped: ${note}` } });
         await notify(tx, [r.assignedToId], { type: "WORKFLOW", title: `BOQ no longer needed: ${opp.name}`, body: `${user.name}: ${note}`, link: `/opportunities/${id}`, exclude: user.id });
       }
-      await tx.opportunity.update({ where: { id }, data: { presalesRequired: false, updatedById: user.id } });
+      await tx.opportunity.update({ where: { id }, data: { presalesRequired: false, updatedById: user.id, version: { increment: 1 } } });
       await recordChanges(tx, { entityType: "Opportunity", entityId: id, before: opp, after: { presalesRequired: false }, fields: ["presalesRequired"], userId: user.id });
       await applyStageChange(tx, user, id, skip.to, { note: `Skipped ${STAGE_META[facts.stage].label}: ${note}` }, { keepForecast: true, source: "system" });
       await recomputeOpportunity(tx, id);
@@ -441,9 +455,9 @@ export async function skipStage(id: string, input: Record<string, unknown>): Pro
   revalidatePath(`/opportunities/${id}`);
   revalidatePath("/pipeline");
   return { ok: true };
-}
+});
 
-export async function deleteOpportunity(id: string): Promise<ActionResult> {
+export const deleteOpportunity = safeAction("deleteOpportunity", async function deleteOpportunity(id: string): Promise<ActionResult> {
   const user = await requireUser();
   if (!can.deleteRecords(user)) return { ok: false, error: "Only managers can delete opportunities." };
   await db.$transaction(async (tx) => {
@@ -452,20 +466,27 @@ export async function deleteOpportunity(id: string): Promise<ActionResult> {
   });
   revalidatePath("/opportunities");
   return { ok: true };
-}
+});
 
-export async function setOpportunityContacts(
+export const setOpportunityContacts = safeAction("setOpportunityContacts", async function setOpportunityContacts(
   id: string,
   contacts: { contactId: string; role: string }[],
 ): Promise<ActionResult> {
   const user = await requireUser();
   const opp = await loadEditable(user, id).catch(() => null);
   if (!opp || !can.editOpportunity(user, opp)) return { ok: false, error: "Not allowed." };
+  const parsed = z.array(z.object({ contactId: z.string().min(1).max(40), role: z.nativeEnum(ContactRole) })).max(50).safeParse(contacts);
+  if (!parsed.success) return { ok: false, error: "Check the contact roles." };
+  contacts = parsed.data;
+  const ids = [...new Set(contacts.map((c) => c.contactId))];
+  if (ids.length && (await db.contact.count({ where: { id: { in: ids }, accountId: opp.accountId, deletedAt: null } })) !== ids.length) {
+    return { ok: false, error: "A selected contact is not on this deal's account. Reload and try again." };
+  }
   await db.$transaction(async (tx) => {
     await tx.opportunityContact.deleteMany({ where: { opportunityId: id } });
     if (contacts.length) {
       await tx.opportunityContact.createMany({
-        data: contacts.map((c) => ({ opportunityId: id, contactId: c.contactId, role: c.role as never })),
+        data: contacts.map((c) => ({ opportunityId: id, contactId: c.contactId, role: c.role as ContactRole })),
       });
     }
     await recordEvent(tx, {
@@ -479,4 +500,4 @@ export async function setOpportunityContacts(
   });
   revalidatePath(`/opportunities/${id}`);
   return { ok: true };
-}
+});

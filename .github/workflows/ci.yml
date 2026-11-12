@@ -24,7 +24,7 @@ jobs:
           --health-cmd "pg_isready -U crm -d crm" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       DATABASE_URL: postgresql://crm:crm@localhost:5432/crm?schema=public
-      SESSION_SECRET: ci-only-secret-ci-only-secret-ci-only-secret
+      SESSION_SECRET: ci-only-Zq8vN3xK7pR2mW9tY4bH6jL1cF5gD0sA
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,13 +32,21 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Data safety: shipped migrations unchanged, new ones additive, and the schema fully covered by migrations
+      - run: npm run check:migrations
       - run: npx prisma migrate deploy
+      - name: Schema matches migrations
+        run: npm run check:drift
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - run: npm run db:seed
+        env:
+          SEED_DEMO_DATA: "true"
       - name: Start app
+        env:
+          DEMO_LOGINS: "true"
         run: |
           npx next start -p 3000 &
           curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://localhost:3000/api/health
@@ -59,6 +67,7 @@ jobs:
         with:
           context: .
           push: false
+          build-args: GIT_SHA=${{ github.sha }}
           tags: progression-crm:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

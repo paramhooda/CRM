@@ -7,10 +7,11 @@ import { accountScope, can, isManager } from "@/lib/authz";
 import { recordChanges, recordEvent } from "@/lib/audit";
 import { nextCode } from "@/lib/sequence";
 import { accountSchema, contactSchema, zodErrors, type ActionResult } from "@/lib/validation";
+import { safeAction } from "@/server/action-error";
 
 const ACCOUNT_FIELDS = ["name", "industry", "segment", "status", "website", "phone", "gstin", "pan", "addressLine", "city", "state", "pincode", "annualRevenueCr", "employees", "ownerId", "description"];
 
-export async function saveAccount(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
+export const saveAccount = safeAction("saveAccount", async function saveAccount(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   if (!can.manageAccounts(user)) return { ok: false, error: "You do not have permission to manage accounts." };
   const parsed = accountSchema.safeParse(input);
@@ -49,11 +50,11 @@ export async function saveAccount(id: string | null, input: Record<string, unkno
   });
   revalidatePath("/accounts");
   return { ok: true, data: { id: created.id } };
-}
+});
 
 const CONTACT_FIELDS = ["firstName", "lastName", "title", "department", "email", "phone", "mobile", "role", "isPrimary"];
 
-export async function saveContact(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
+export const saveContact = safeAction("saveContact", async function saveContact(id: string | null, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   if (!can.manageAccounts(user)) return { ok: false, error: "You do not have permission to manage contacts." };
   const parsed = contactSchema.safeParse(input);
@@ -61,6 +62,11 @@ export async function saveContact(id: string | null, input: Record<string, unkno
   const v = parsed.data;
   const acc = await db.account.findFirst({ where: { AND: [{ id: v.accountId }, accountScope(user)] } });
   if (!acc) return { ok: false, error: "Account not found." };
+  if (id) {
+    // Editing: the contact must sit on an account this user can see (they may move it only between such accounts)
+    const cur = await db.contact.findFirst({ where: { id, deletedAt: null, account: accountScope(user) } });
+    if (!cur) return { ok: false, error: "Contact not found, or it belongs to an account you can't see." };
+  }
   if (v.email) {
     const dupe = await db.contact.findFirst({ where: { email: { equals: v.email, mode: "insensitive" }, deletedAt: null, ...(id ? { NOT: { id } } : {}) } });
     if (dupe) return { ok: false, error: `${v.email} already belongs to ${dupe.firstName} ${dupe.lastName}.`, fieldErrors: { email: "Duplicate email" } };
@@ -85,13 +91,16 @@ export async function saveContact(id: string | null, input: Record<string, unkno
   revalidatePath(`/accounts/${v.accountId}`);
   revalidatePath("/contacts");
   return { ok: true, data: { id: result } };
-}
+});
 
-export async function deleteContact(id: string): Promise<ActionResult> {
+export const deleteContact = safeAction("deleteContact", async function deleteContact(id: string): Promise<ActionResult> {
   const user = await requireUser();
   if (!can.manageAccounts(user)) return { ok: false, error: "Not allowed." };
-  const c = await db.contact.findUnique({ where: { id } });
+  const c = await db.contact.findFirst({ where: { id, deletedAt: null, account: accountScope(user) }, include: { account: { select: { ownerId: true } } } });
   if (!c) return { ok: false, error: "Contact not found." };
+  if (!isManager(user) && c.account.ownerId !== user.id && c.createdById !== user.id) {
+    return { ok: false, error: "Only the account owner, whoever added the contact, or a manager can delete it." };
+  }
   await db.$transaction(async (tx) => {
     await tx.contact.update({ where: { id }, data: { deletedAt: new Date(), isPrimary: false } });
     await recordEvent(tx, { entityType: "Contact", entityId: id, action: "DELETE", userId: user.id });
@@ -99,4 +108,4 @@ export async function deleteContact(id: string): Promise<ActionResult> {
   revalidatePath(`/accounts/${c.accountId}`);
   revalidatePath("/contacts");
   return { ok: true };
-}
+});

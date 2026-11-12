@@ -7,6 +7,7 @@ import { recordChanges } from "@/lib/audit";
 import { boqTotals, lineMultiplier } from "@/lib/boq";
 import { toNumber } from "@/lib/format";
 import { resolveCostSource, type SourceFacts } from "@/lib/costing";
+import { UserError } from "./errors";
 
 export const HSN_SAC = /^\d{4,8}$/;
 
@@ -49,7 +50,7 @@ export type LineInput = z.infer<typeof lineInputSchema>;
 /** Specification fields for a line. Catalogue products are authoritative for classification and tax codes. */
 export async function resolveSpec(tx: Tx, l: LineInput, fallbackTerm: number | null) {
   const product = l.productId ? await tx.product.findUnique({ where: { id: l.productId } }) : null;
-  if (l.productId && !product) throw new Error("Selected product no longer exists.");
+  if (l.productId && !product) throw new UserError("A selected product no longer exists.");
   const term = l.billingFrequency === "ONE_TIME" ? null : l.termMonths ?? fallbackTerm ?? product?.defaultTermMonths ?? 12;
   return {
     productId: product?.id ?? null,

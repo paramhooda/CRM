@@ -1,10 +1,12 @@
 // Stateless signed session (HS256 JWT in an HttpOnly cookie). Edge-safe: used by middleware and server.
+// The token carries the user's session version; changing the password, deactivating or changing role bumps it,
+// which signs that user out everywhere (checked in src/lib/auth.ts).
 import { SignJWT, jwtVerify } from "jose";
 
 export const SESSION_COOKIE = "crm_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 10; // 10 hours, one working day
 
-export type SessionPayload = { sub: string; role: string; name: string };
+export type SessionPayload = { sub: string; role: string; name: string; sv: number };
 
 function secretKey() {
   const secret = process.env.SESSION_SECRET;
@@ -15,7 +17,7 @@ function secretKey() {
 }
 
 export async function signSession(payload: SessionPayload): Promise<string> {
-  return new SignJWT({ role: payload.role, name: payload.name })
+  return new SignJWT({ role: payload.role, name: payload.name, sv: payload.sv })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.sub)
     .setIssuedAt()
@@ -29,17 +31,30 @@ export async function verifySession(token: string | undefined): Promise<SessionP
   try {
     const { payload } = await jwtVerify(token, secretKey(), { issuer: "progression-crm", algorithms: ["HS256"] });
     if (!payload.sub) return null;
-    return { sub: payload.sub, role: String(payload.role), name: String(payload.name) };
+    return { sub: payload.sub, role: String(payload.role), name: String(payload.name), sv: Number(payload.sv ?? 0) };
   } catch {
     return null;
   }
 }
 
-export function cookieOptions() {
+/**
+ * Whether the browser reached us over HTTPS. COOKIE_SECURE=auto (default) follows the request: behind the optional
+ * HTTPS proxy the cookie is Secure, on a plain http://IP it is not, so one build works both ways.
+ */
+export function isSecureRequest(h: { get(name: string): string | null }, env: Record<string, string | undefined> = process.env) {
+  const mode = (env.COOKIE_SECURE ?? "auto").toLowerCase();
+  if (mode === "true") return true;
+  if (mode === "false") return false;
+  const proto = h.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  if (proto) return proto === "https";
+  return (env.APP_URL ?? "").startsWith("https://");
+}
+
+export function cookieOptions(secure: boolean) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.COOKIE_SECURE === "true",
+    secure,
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   };

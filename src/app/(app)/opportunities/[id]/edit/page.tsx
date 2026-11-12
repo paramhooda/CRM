@@ -40,7 +40,7 @@ export default async function EditOpportunityPage({ params }: { params: Promise<
     nextStep: s(o.nextStep), nextStepDate: isoDate(o.nextStepDate), submissionDueDate: isoDate(o.submissionDueDate),
     dealRegStatus: o.dealRegStatus, dealRegNumber: s(o.dealRegNumber), dealRegExpiry: isoDate(o.dealRegExpiry),
     lossReason: s(o.lossReason), lossNotes: s(o.lossNotes), poNumber: s(o.poNumber), poDate: isoDate(o.poDate),
-    description: s(o.description), presalesRequired: String(o.presalesRequired),
+    description: s(o.description), presalesRequired: String(o.presalesRequired), version: String(o.version),
   };
   return (
     <>

@@ -16,7 +16,7 @@ import { recomputeAll } from "../src/lib/opportunity-service";
 import { fiscalPeriod, quarterRange } from "../src/lib/fiscal";
 
 const db = new PrismaClient();
-const DEMO_PASSWORD = "Progression@123";
+import { DEMO_PASSWORD } from "../src/lib/demo";
 
 // ── deterministic PRNG ──
 let s = 20261021;
