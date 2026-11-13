@@ -253,7 +253,7 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
               ? a.expired
                 ? `The ${a.expired} line${a.expired > 1 ? "s" : ""} whose supplier price lapsed go${a.expired > 1 ? "" : "es"} back to purchase to re-confirm.`
                 : "Purchase re-confirms the supplier price of every purchase line."
-              : `${a.toPrice} line${a.toPrice > 1 ? "s" : ""} go to purchase for a supplier price. The deal moves to Pricing.`
+              : `${a.toPrice} line${a.toPrice > 1 ? "s" : ""}${a.toPrice > 1 ? " go" : " goes"} to purchase for a supplier price. The deal moves to Pricing.`
           }
         >
           <form className={form} onSubmit={submit((f) => () => withFiles(a.oppId, files, () => setFiles([]), () => requestPricing(a.oppId, f), (d) => ({ pricingRequestId: d?.requestId })), "Purchase notified")}>
@@ -541,7 +541,7 @@ function CompletePricingForm({ a, close }: { a: Extract<DealAction, { kind: "com
         }}
       >
         {a.quoteLines.length > 0 && (
-          <div className="flex flex-col gap-2 rounded-lg border border-border p-3" aria-label="Supplier quotes">
+          <div className="flex flex-col gap-2 rounded-lg border border-border p-3" aria-label="Quote coverage">
             <p className="text-[13px] font-medium">Supplier quotes <span className="font-normal text-ink-3">· one quote can cover several lines</span></p>
             <ul className="flex flex-col gap-0.5 text-xs">
               {a.quoteLines.map((l) => (

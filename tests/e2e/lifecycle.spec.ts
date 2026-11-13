@@ -82,7 +82,6 @@ test.describe.serial("Lead to closure", () => {
     await dlg.getByRole("button", { name: /More options/ }).click();
     await dlg.getByLabel("Attach documents").setInputFiles(pdf("Laptop spec sheet.pdf"));
     await expect(dlg.getByText("Laptop spec sheet.pdf")).toBeVisible();
-    await dlg.getByLabel("Kind of Laptop spec sheet.pdf").selectOption("OTHER"); // the BOQ itself is the line items
     await dlg.getByRole("button", { name: "Send to purchase" }).click();
     await expect(page.getByText("Purchase notified")).toBeVisible();
     await expect(currentStage(page)).toHaveText("Pricing");
@@ -99,11 +98,11 @@ test.describe.serial("Lead to closure", () => {
     await page.getByLabel("Deal status").getByRole("button", { name: "Pricing complete" }).click();
     const done = page.getByRole("dialog");
     // The priced line needs a supplier quote; a quote picked here covers the open lines
-    await expect(done.getByLabel("Supplier quotes")).toContainText("○ Line 1");
+    await expect(done.getByLabel("Quote coverage")).toContainText("○ Line 1");
     await done.getByRole("button", { name: "Send to sales" }).click();
     await expect(done.getByText(/Attach the supplier quote for line 1/)).toBeVisible();
     await done.getByLabel("Add supplier quotes").setInputFiles(pdf("Redington quote R-2231.pdf"));
-    await expect(done.getByLabel("Supplier quotes")).toContainText("✓ Line 1");
+    await expect(done.getByLabel("Quote coverage")).toContainText("✓ Line 1");
     await done.getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
     await page.goto(`${dealUrl}?tab=documents`);
@@ -170,7 +169,7 @@ test.describe.serial("Lead to closure", () => {
     await login(page, SALES);
     await page.goto(dealUrl);
     await expect(page.getByLabel("Deal status")).toContainText("Revised pricing ready");
-    await page.getByLabel("Deal status").getByRole("button", { name: "Send revised quote" }).click();
+    await page.getByRole("button", { name: "Advance to Proposal" }).click(); // back in Pricing, the revised quote is the next step
     dlg = page.getByRole("dialog");
     await expect(dlg.getByText(/Changed since quote v1: qty was 40/)).toBeVisible();
     const popup2 = page.waitForEvent("popup");
@@ -217,11 +216,12 @@ test.describe.serial("Lead to closure", () => {
   test("reopening a won deal forgets its PO; closing as lost needs a reason", async ({ page }) => {
     await login(page, HEAD);
     await page.goto(dealUrl);
-    await stageMenu(page, "Reopen to Negotiation");
+    // It was won from Proposal Submitted (the revised quote brought it back there): reopening returns it there
+    await stageMenu(page, "Reopen to Proposal Submitted");
     let dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=note]").fill("PO was cancelled by the customer");
     await dlg.getByRole("button", { name: "Reopen" }).click();
-    await expect(page.getByText("Moved to Negotiation")).toBeVisible();
+    await expect(page.getByText("Moved to Proposal Submitted")).toBeVisible();
     await page.goto(`${dealUrl}?tab=history`);
     await expect(page.getByText(PO).first()).toBeVisible(); // the history keeps what happened
     await page.goto(dealUrl);

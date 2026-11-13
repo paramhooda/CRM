@@ -95,6 +95,8 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Request BOQ from presales")).toBeVisible();
     await pickPresales(dlg, PRESALES.name);
+    // Sales asks for a solution document too: presales can't submit the BOQ without it
+    await dlg.getByRole("button", { name: "Solution document", exact: true }).click();
     await dlg.locator("textarea[name=scope]").fill("SD-WAN for 40 branches with dual ISP links and central orchestration.");
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
@@ -134,8 +136,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(row).toBeVisible();
     await row.getByRole("link", { name: /Open BOQ/ }).click();
     await page.waitForURL(/tab=boq/);
-    // Presales can see cost (nothing hidden) but cannot change it
-    await expect(page.getByRole("columnheader", { name: "Purchase price" })).toBeVisible();
+    // Presales' edit mode is products, quantities and billing; third-party lines are priced by purchase
+    await expect(page.getByRole("columnheader", { name: "Cost" })).toBeVisible();
+    await expect(page.getByText("Priced by purchase").first()).toBeVisible();
     await expect(page.getByLabel("Line 1 unit cost")).toHaveCount(0);
     await page.getByRole("button", { name: "Add line" }).click();
     await pickProduct(page, 2, "PRG-NOC-02");
@@ -168,6 +171,10 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(dlg.getByText("Submit BOQ")).toBeVisible();
     await expect(dlg.getByText("2 of 3 lines go to purchase")).toBeVisible();
     await dlg.locator("textarea[name=solutionSummary]").fill("Cisco SD-WAN edge with Fortinet NGFW at hub, sized for 40 branches.");
+    await expect(dlg.getByLabel("Required documents")).toContainText("Solution document");
+    await dlg.getByRole("button", { name: "Submit" }).click();
+    await expect(dlg.getByText(/Attach the solution document/)).toBeVisible();
+    await dlg.getByLabel("Attach documents").setInputFiles({ name: "Solution - SD-WAN.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 design") });
     // The BOQ is the line items (no upload), and purchase is assigned automatically
     await expect(dlg.getByRole("link", { name: "view or print it" })).toHaveAttribute("href", `${oppUrl}/boq`);
     await dlg.getByRole("button", { name: /More options/ }).click();
@@ -217,9 +224,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     // Every priced line needs a supplier quote: the one attached covers line 1 only, so line 2 is still open
     await page.getByRole("button", { name: "Pricing complete" }).click();
     const done = page.getByRole("dialog");
-    await expect(done.getByLabel("Supplier quotes")).toContainText("Line 1");
-    await expect(done.getByLabel("Supplier quotes")).toContainText("Line 2");
-    await expect(done.getByLabel("Supplier quotes")).not.toContainText("Line 3"); // rate card: no quote
+    await expect(done.getByLabel("Quote coverage")).toContainText("Line 1");
+    await expect(done.getByLabel("Quote coverage")).toContainText("Line 2");
+    await expect(done.getByLabel("Quote coverage")).not.toContainText("Line 3"); // rate card: no quote
     await done.getByRole("button", { name: "Ingram quote Q-7781.pdf covers line 1" }).click();
     await done.getByRole("button", { name: "Send to sales" }).click();
     await expect(done.getByText(/Attach the supplier quote for line 2/)).toBeVisible();
@@ -247,9 +254,6 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     let dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Request BOQ change (revision 2)")).toBeVisible();
     await dlg.locator("textarea[name=reason]").fill("Customer wants 12 Cisco edge devices instead of 10.");
-    // Sales asks for a solution document with the revision: presales can't submit without it
-    await dlg.getByRole("button", { name: /More options/ }).click();
-    await dlg.getByRole("button", { name: "Solution document", exact: true }).click();
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
     await expect(page.getByLabel("Deal status")).toContainText("BOQ revision 2 with presales");
@@ -290,10 +294,6 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     dlg = page.getByRole("dialog");
     await expect(dlg.getByText("1 of 3 lines go to purchase")).toBeVisible(); // unchanged and own-brand lines keep their cost
     await dlg.locator("textarea[name=solutionSummary]").fill("Revision 2: 12 edge devices with licences.");
-    await expect(dlg.getByLabel("Required documents")).toContainText("Solution document");
-    await dlg.getByRole("button", { name: "Submit" }).click();
-    await expect(dlg.getByText(/Attach the solution document/)).toBeVisible();
-    await dlg.getByLabel("Attach documents").setInputFiles({ name: "Solution - SD-WAN r2.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 design") });
     await dlg.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
   });
@@ -333,8 +333,8 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Pricing complete" }).click();
     dlg = page.getByRole("dialog");
     // Only the re-priced line needs a new quote; a newly attached quote covers what is still open
-    await expect(dlg.getByLabel("Supplier quotes")).toContainText("Line 1");
-    await expect(dlg.getByLabel("Supplier quotes")).not.toContainText("Line 2");
+    await expect(dlg.getByLabel("Quote coverage")).toContainText("Line 1");
+    await expect(dlg.getByLabel("Quote coverage")).not.toContainText("Line 2");
     await dlg.getByLabel("Add supplier quotes").setInputFiles({ name: "Ingram quote Q-7790.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 quote 2") });
     await dlg.getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
@@ -351,7 +351,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await dlg.getByLabel("GM threshold %").fill("20");
     await dlg.getByLabel("Deal value threshold").fill("4000000");
     await dlg.getByRole("button", { name: "Add approver" }).click();
-    await dlg.getByLabel("Approver 2").selectOption({ label: "Any Admin" });
+    await dlg.getByLabel("Approver 2", { exact: true }).selectOption({ label: "Any Admin" });
     await dlg.getByRole("button", { name: "Save rule" }).click();
     await expect(page.getByText("Rule saved")).toBeVisible();
     await expect(page.getByLabel("Approval rules")).toContainText("Deal owner's manager → Any Admin");
@@ -376,7 +376,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     // The stale tab cannot save over the newer prices
     await other.getByRole("button", { name: "Advance to Proposal" }).click();
     for (const price of await other.getByRole("dialog").getByLabel(/^Line \d+ sales price$/).all()) await price.fill("1");
-    await other.getByRole("dialog").getByRole("button", { name: "Ask for approval" }).click();
+    await other.getByRole("dialog").getByRole("button", { name: /^(Ask for approval|Create & send quote)$/ }).click();
     await expect(other.getByText(/The line items changed after you opened this/)).toBeVisible();
     await other.close();
 
@@ -406,7 +406,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await login(page, SALES);
     await page.goto(oppUrl);
     await expect(page.getByLabel("Deal status")).toContainText("Prices not approved");
-    await page.getByLabel("Deal status").getByRole("button", { name: "Create & send quote" }).click();
+    await page.getByRole("button", { name: "Advance to Proposal" }).click();
     dlg = page.getByRole("dialog");
     for (const gm of await dlg.getByLabel(/^Line \d+ GM %$/).all()) await gm.fill("19");
     await dlg.getByRole("button", { name: "Ask for approval" }).click();
@@ -571,7 +571,7 @@ test.describe("Bringing presales into a resale deal", () => {
     await statusMenu(page, "Involve presales");
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByText(/pricing request is stopped/)).toBeVisible();
-    await expect(dlg.getByText("The deal moves back to the BOQ stage.")).toBeVisible();
+    await expect(dlg.getByText(/moves back to the BOQ stage/)).toBeVisible();
     await expect(dlg.getByText(/Presales starts from your 1 line item/)).toBeVisible();
     await pickPresales(dlg, PRESALES.name);
     await dlg.locator("textarea[name=scope]").fill("40 laptops with imaging, asset tagging and on-site deployment.");
