@@ -35,7 +35,10 @@ while (i < lines.length) {
   pendingComment = [];
   i++;
   const body: string[] = [];
-  while (i < lines.length && lines[i]!.trim() !== "}") body.push(lines[i]!), i++;
+  while (i < lines.length && lines[i]!.trim() !== "}") {
+    body.push(lines[i]!);
+    i++;
+  }
   i++;
   if (kind === "enum") {
     const e: Enum = { name, comment, values: [] };

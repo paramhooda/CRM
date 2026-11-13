@@ -63,7 +63,8 @@ export async function createAccount(page: Page, name = `Acme ${uid()}`) {
   return { ...a, contactId: c.id };
 }
 
-export const isoDay = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000).toISOString().slice(0, 10);
+/** A yyyy-mm-dd some days from now, on the business day in India (the app counts "today" in IST). */
+export const isoDay = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000 + 330 * 60_000).toISOString().slice(0, 10);
 
 /** A deal with one third-party line (priced) owned by the signed-in rep; add `needsPresales` for the BOQ path. */
 export async function createDeal(page: Page, opts: { name?: string; needsPresales?: boolean; lines?: Json[]; accountId?: string; contactId?: string } = {}) {

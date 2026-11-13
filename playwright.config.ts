@@ -15,6 +15,6 @@ export default defineConfig({
   use: { baseURL, trace: "off", screenshot: "only-on-failure", video: "off", viewport: { width: 1440, height: 900 }, locale: "en-IN", timezoneId: "Asia/Kolkata" },
   projects: [
     { name: "flows", testIgnore: /screenshots\.spec\.ts/, use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
-    { name: "screenshots", testMatch: /screenshots\.spec\.ts/, dependencies: ["flows"], use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 } },
+    { name: "screenshots", testMatch: /screenshots\.spec\.ts/, use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 } },
   ],
 });

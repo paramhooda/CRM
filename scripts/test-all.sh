@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The whole proof, from an empty database:
 #   recreate the test database → migrate → seed → lint → typecheck → unit tests → build → start the built app
-#   → API tests → browser tests (every core flow per role) → screenshots of every main screen.
+#   → API tests → screenshots of every main screen (clean demo data) → browser tests (every core flow per role).
 #
 # Needs a Postgres server. The test database comes from TEST_DATABASE_URL, or from DATABASE_URL (.env) with the
 # database name replaced by crm_test. Nothing in the development database is touched.
@@ -15,7 +15,7 @@ PORT="${TEST_PORT:-3100}"
 BASE="http://localhost:${PORT}"
 export DATABASE_URL="$TEST_DATABASE_URL"
 export SESSION_SECRET="${SESSION_SECRET:-test-only-secret-test-only-secret-test-only}"
-export NODE_ENV=production
+# NODE_ENV is left to next (build and start set production themselves); the reset script refuses to run in production
 
 step() { printf '\n\033[1;34m▶ %s\033[0m\n' "$*"; }
 PASSED=(); FAILED=()
@@ -48,8 +48,8 @@ done
 curl -fs "$BASE/api/v1/health" > /dev/null || { echo "Server did not come up"; cat .next/test-server.log; exit 1; }
 
 run "API tests" env API_BASE_URL="$BASE" npx vitest run --config vitest.api.config.mts || true
+run "Screenshots of every main screen, on clean demo data (docs/screenshots)" env E2E_BASE_URL="$BASE" npx playwright test --project=screenshots --trace off || true
 run "Browser tests: every core flow per role" env E2E_BASE_URL="$BASE" npx playwright test --project=flows --trace off || true
-run "Screenshots of every main screen (docs/screenshots)" env E2E_BASE_URL="$BASE" npx playwright test --project=screenshots --trace off || true
 
 printf '\n\033[1mSummary\033[0m\n'
 for p in "${PASSED[@]}"; do printf '  ✓ %s\n' "$p"; done

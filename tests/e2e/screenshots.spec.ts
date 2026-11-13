@@ -49,7 +49,7 @@ test("sales head", async ({ page }) => {
   const lead = (await api<{ rows: { id: string }[] }>(page, "GET", "/leads?pageSize=1")).rows[0];
   if (lead) await shoot(page, "sales-head", "lead", `/leads/${lead.id}`);
   await shoot(page, "sales-head", "approvals", "/approvals");
-  await shoot(page, "sales-head", "pipeline-review", "/reviews?since=30d", { full: true });
+  await shoot(page, "sales-head", "pipeline-review", "/reviews?since=30d");
   await shoot(page, "sales-head", "targets", "/admin/targets");
   await shoot(page, "sales-head", "account-settings", "/account");
 });
@@ -89,11 +89,16 @@ test("admin", async ({ page }) => {
 
 test("dark mode and a narrow screen", async ({ page }) => {
   await login(page, "salesHead");
-  await page.goto("/home", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: /theme|dark/i }).click();
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: path.join(OUT, "sales-head--home-dark.png") });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/deals", { waitUntil: "networkidle" });
   await page.screenshot({ path: path.join(OUT, "sales-head--deals-phone.png"), fullPage: false });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/home", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Toggle dark mode" }).click();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(OUT, "sales-head--home-dark.png") });
+  await page.goto("/deals", { waitUntil: "networkidle" });
+  const d = await dealIn(page, "NEGOTIATION");
+  if (d) await page.goto(`/deals/${d.id}`, { waitUntil: "networkidle" });
+  await page.screenshot({ path: path.join(OUT, "sales-head--deal-dark.png") });
 });

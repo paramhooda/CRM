@@ -21,10 +21,16 @@ if (!/^[a-zA-Z0-9_]+$/.test(dbName)) {
 const admin = new URL(url);
 admin.pathname = "/postgres";
 
-const client = new Client({ connectionString: admin.toString() });
-await client.connect();
-await client.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, [dbName]);
-await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
-await client.query(`CREATE DATABASE "${dbName}"`);
-await client.end();
-console.log(`Database ${dbName} recreated (empty).`);
+async function main() {
+  const client = new Client({ connectionString: admin.toString() });
+  await client.connect();
+  await client.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, [dbName]);
+  await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
+  await client.query(`CREATE DATABASE "${dbName}"`);
+  await client.end();
+  console.log(`Database ${dbName} recreated (empty).`);
+}
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

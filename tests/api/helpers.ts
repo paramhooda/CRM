@@ -90,4 +90,5 @@ export function expectError(r: ApiResponse, status: number, code?: string) {
 }
 
 export const uniq = (prefix: string) => `${prefix} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-export const isoDate = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000).toISOString().slice(0, 10);
+/** A yyyy-mm-dd some days from now, on the business day in India (the app counts "today" in IST). */
+export const isoDate = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000 + 330 * 60_000).toISOString().slice(0, 10);
