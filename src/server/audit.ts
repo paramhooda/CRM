@@ -8,8 +8,10 @@ type Prismaish = Pick<Tx, "auditLog">;
 export function auditValue(v: unknown, field?: string): string | null {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return field && /Date$/.test(field) ? v.toISOString().slice(0, 10) : v.toISOString();
-  if (typeof v === "object") return String(v);
-  return String(v);
+  const s = String(v);
+  // Amounts arrive as "700000", "700000.00" or Decimal objects: store one canonical form so comparisons hold
+  if (/^-?\d+\.\d+$/.test(s)) return s.replace(/\.?0+$/, "");
+  return s;
 }
 
 export type AuditEvent = {
