@@ -12,6 +12,7 @@ import { reviewChanges } from "./reviews";
 import { rollup, rollupWithId, type AttrSlice } from "@/lib/attribution";
 import { attributeDeal, attributionLineSelect } from "./attributed";
 import { buildInsights } from "./insights";
+import { actionItems } from "@/lib/action-items";
 
 const DAY = 86_400_000;
 
@@ -370,3 +371,33 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
 }
 
 export type Dashboard = Awaited<ReturnType<typeof getDashboard>>;
+
+/**
+ * "Needs your action" for the home page: open deals waiting on sales (the person's own, a manager's team), one item
+ * each. Not filtered by the analytics filters: it is a to-do list.
+ */
+export async function getActionItems(user: CurrentUser) {
+  const now = new Date();
+  const deals = await db.opportunity.findMany({
+    where: { AND: [opportunityScope(user), { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED", "HOLD"] } }] },
+    select: {
+      id: true, name: true, stage: true, expectedCloseDate: true, nextStep: true, nextStepDate: true, healthLabel: true,
+      account: { select: { name: true } },
+      salesOwner: { select: { name: true } },
+      quotes: { orderBy: { version: "desc" }, take: 1, select: { status: true, validTill: true, createdAt: true } },
+      presalesRequests: { where: { status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } }, select: { status: true, infoRequestedAt: true } },
+      pricingRequests: { orderBy: { createdAt: "desc" }, take: 3, select: { status: true, quotedAt: true } },
+    },
+  });
+  return actionItems(
+    deals.map((d) => ({
+      id: d.id, name: d.name, account: d.account.name, owner: d.salesOwner.name, stage: d.stage,
+      expectedCloseDate: d.expectedCloseDate, nextStep: d.nextStep, nextStepDate: d.nextStepDate, healthLabel: d.healthLabel,
+      questionAskedAt: d.presalesRequests.find((r) => r.status === "NEEDS_INFO")?.infoRequestedAt ?? null,
+      quote: d.quotes[0] ?? null,
+      pricedAt: d.pricingRequests.find((r) => r.status === "QUOTED")?.quotedAt ?? null,
+      workOpen: d.presalesRequests.length > 0 || d.pricingRequests.some((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS"),
+    })),
+    now,
+  );
+}

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { ActionDialog, type DealAction } from "@/components/opportunities/deal-actions";
+import { MoreOptions } from "@/components/ui/more-options";
 import type { Advance } from "@/components/opportunities/deal-status";
 import { STAGE_META, type StageKey } from "@/lib/constants";
 import type { Move } from "@/lib/stage-rules";
@@ -247,9 +248,9 @@ export function StagePath({
                       {(lossReasons.length ? lossReasons : ["Other"]).map((r) => <option key={r}>{r}</option>)}
                     </Select>
                   </Field>
-                  <Field label="Notes">
-                    <Textarea name="lossNotes" placeholder="Who won, at what price, what we learned…" />
-                  </Field>
+                  <MoreOptions label="Add notes">
+                    <Textarea name="lossNotes" aria-label="Loss notes" placeholder="Who won, at what price, what we learned…" />
+                  </MoreOptions>
                 </>
               )}
               {dialog.move.needs === "reason" && (

@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { Pencil, Building2, CalendarClock, User, FileText, ExternalLink, ArrowRight, History as HistoryIcon } from "lucide-react";
+import { Pencil, Building2, User, FileText, ExternalLink, History as HistoryIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getOpportunityDetail, type OppDetail } from "@/server/queries/opportunity-detail";
 import { getOptions } from "@/server/queries/options";
-import { PageHeader, PageBody, DescList } from "@/components/crm/page";
+import { PageHeader, PageBody } from "@/components/crm/page";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { StageBadge, HealthBadge, ForecastBadge, PersonCell, healthColor } from "@/components/crm/badges";
+import { StageBadge } from "@/components/crm/badges";
 import { SeverityIcon } from "@/components/crm/flag-chips";
 import { StagePath } from "@/components/opportunities/stage-path";
 import { LineItemsEditor } from "@/components/opportunities/line-items-editor";
@@ -17,7 +17,7 @@ import { DealStatus, RequestHistory, QUOTE_STATUS_LABEL, dealActions } from "@/c
 import { DocumentsPanel } from "@/components/opportunities/documents-panel";
 import { inr, pct, fmtDate, fmtDateTime, relativeDays } from "@/lib/format";
 import {
-  STAGE_META, ACCOUNT_TYPE_LABEL, REVENUE_MODEL_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL, DEAL_REG_LABEL, FORECAST_LABEL, type StageKey,
+  STAGE_META, PROCUREMENT_LABEL, DEAL_REG_LABEL, FORECAST_LABEL, type StageKey,
 } from "@/lib/constants";
 import { FLAG_META, sortFlags } from "@/lib/rules/flags";
 
@@ -25,15 +25,14 @@ export async function generateMetadata() {
   return { title: "Opportunity" };
 }
 
+/** Four tabs for sales. Activity, contacts and history are one click away from Overview (and still open by URL). */
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "boq", label: "Line items" },
-  { key: "documents", label: "Documents" },
   { key: "quotes", label: "Quotes" },
-  { key: "activity", label: "Activity" },
-  { key: "contacts", label: "Contacts" },
-  { key: "history", label: "History" },
+  { key: "documents", label: "Documents" },
 ];
+const LINKED_TABS = ["activity", "contacts", "history"];
 /** Presales and purchase see their part of the deal: the BOQ, documents and their requests (presales: the customer's contacts too) */
 const SUPPORT_TABS = (role: string) => [
   { key: "boq", label: "Line items" },
@@ -49,7 +48,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
   const [d, options] = await Promise.all([getOpportunityDetail(user, id), getOptions()]);
   const sales = d.perms.sales;
   const tabs = sales ? TABS : SUPPORT_TABS(user.role);
-  const tab = tabs.some((t) => t.key === tabParam) ? tabParam! : sales ? "overview" : "boq";
+  const tab = tabs.some((t) => t.key === tabParam) || (sales && LINKED_TABS.includes(tabParam ?? "")) ? tabParam! : sales ? "overview" : "boq";
   const o = d.opp;
   const stage = o.stage as StageKey;
   const closed = ["WON", "LOST", "DROPPED"].includes(stage);
@@ -71,21 +70,18 @@ export default async function OpportunityPage({ params, searchParams }: { params
             ? [{ href: "/opportunities", label: "Opportunities" }, { href: `/accounts/${o.account.id}`, label: o.account.name }]
             : [{ href: "/requests", label: user.role === "PRESALES" ? "BOQ requests" : "Pricing requests" }]
         }
-        tabs={tabs.map((t) => ({ href: `/opportunities/${o.id}${t.key === (sales ? "overview" : "boq") ? "" : `?tab=${t.key}`}`, label: t.label, active: tab === t.key, count: counts[t.key] }))}
+        tabs={tabs.map((t) => ({
+          href: `/opportunities/${o.id}${t.key === (sales ? "overview" : "boq") ? "" : `?tab=${t.key}`}`, label: t.label,
+          // The linked views (activity, contacts, history) belong to Overview
+          active: tab === t.key || (t.key === "overview" && LINKED_TABS.includes(tab)), count: t.key === "overview" ? undefined : counts[t.key] || undefined,
+        }))}
         title={o.name}
         description={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="font-mono text-xs text-ink-3">{o.code}</span>
-            <span className="text-ink-3">·</span>
-            {sales ? (
-              <Link href={`/accounts/${o.account.id}`} className="inline-flex items-center gap-1 hover:text-primary"><Building2 className="size-3.5" />{o.account.name}</Link>
-            ) : (
-              <span className="inline-flex items-center gap-1"><Building2 className="size-3.5" />{o.account.name}</span>
-            )}
-            <span className="text-ink-3">·</span>
-            <span>{o.businessUnit.name} / {o.category.name}</span>
-            {o.oem && <><span className="text-ink-3">·</span><span>{o.oem.name}</span></>}
-          </span>
+          sales ? (
+            <Link href={`/accounts/${o.account.id}`} className="inline-flex items-center gap-1 hover:text-primary"><Building2 className="size-3.5" />{o.account.name}</Link>
+          ) : (
+            <span className="inline-flex items-center gap-1"><Building2 className="size-3.5" />{o.account.name}</span>
+          )
         }
         actions={
           d.perms.edit && (!closed || user.role === "ADMIN" || user.role === "SALES_HEAD") && (
@@ -109,21 +105,28 @@ export default async function OpportunityPage({ params, searchParams }: { params
           <DealStatus d={d} options={options} />
         </div>
         {!sales && <SupportFacts d={d} role={user.role} />}
-        {sales && <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
-          <Metric
-            label="Deal value"
-            value={<span className="text-lg font-semibold">{inr(o.amount)}</span>}
-            sub={o.revenueModel === "ARR" && o.arrAmount ? `${inr(o.arrAmount)} ARR · ${o.contractTermMonths} mo` : `${inr((o.amount * o.probability) / 100)} weighted at ${o.probability}%`}
-          />
-          <Metric
-            label="Expected close"
-            value={<span style={{ color: !closed && o.expectedCloseDate < new Date() ? "var(--t-red)" : undefined }}>{fmtDate(o.expectedCloseDate)}</span>}
-            sub={closed ? `Closed ${fmtDate(o.closedAt)}` : `${relativeDays(o.expectedCloseDate)}${o.closeDateSlipCount ? ` · slipped ${o.closeDateSlipCount}×` : ""}`}
-          />
-          <Metric label="Forecast" value={<ForecastBadge value={o.forecastCategory} />} sub={`${STAGE_META[stage].label} for ${Math.max(0, Math.round((Date.now() - o.stageEnteredAt.getTime()) / 86_400_000))}d`} />
-          <Metric label="Health" value={<HealthBadge label={o.healthLabel} score={o.healthScore} />} sub={`Last activity ${relativeDays(o.lastActivityAt)}`} />
-          <Metric label="Margin" value={d.perms.viewCost ? (d.totals.marginPct !== null ? pct(d.totals.marginPct, 1) : o.expectedMarginPct !== null ? `${pct(o.expectedMarginPct, 1)} est.` : "—") : "Restricted"} sub={d.totals.marginPct !== null ? "From priced lines" : "Expected"} />
-        </div>}
+        {sales && (
+          // Three facts: what it's worth, when it closes, what happens next
+          <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3">
+            <Metric
+              label="Value"
+              value={<span className="text-lg font-semibold">{inr(o.amount)}</span>}
+              sub={o.revenueModel === "ARR" && o.arrAmount ? `${inr(o.arrAmount)} a year` : undefined}
+            />
+            <Metric
+              label={closed ? "Closed" : "Expected close"}
+              value={closed ? fmtDate(o.closedAt) : <span style={{ color: o.expectedCloseDate < new Date() ? "var(--t-red)" : undefined }}>{fmtDate(o.expectedCloseDate)}</span>}
+              sub={closed ? undefined : relativeDays(o.expectedCloseDate)}
+            />
+            {!closed && (
+              <Metric
+                label="Next step"
+                value={o.nextStep ? <span className="block truncate text-[14px]" title={o.nextStep}>{o.nextStep}</span> : d.perms.edit ? <Link href={`/opportunities/${o.id}/edit`} className="text-[13px] font-normal text-primary hover:underline">Set next step</Link> : "—"}
+                sub={o.nextStepDate ? <span style={{ color: o.nextStepDate < new Date() ? "var(--t-red)" : undefined }}>{fmtDate(o.nextStepDate)} · {relativeDays(o.nextStepDate)}</span> : undefined}
+              />
+            )}
+          </div>
+        )}
       </PageHeader>
       <PageBody>
         {tab === "overview" && sales && <Overview d={d} />}
@@ -152,6 +155,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
             <CardContent className="px-0 pb-0"><RequestHistory d={d} /></CardContent>
           </Card>
         )}
+        {sales && LINKED_TABS.includes(tab) && <BackToOverview id={o.id} title={tab === "activity" ? "Activity & notes" : tab === "contacts" ? "Buying group" : "History"} />}
         {tab === "activity" && sales && (
           <div className="grid gap-6 lg:grid-cols-5">
             <div className="lg:col-span-2"><ActivityComposer opportunityId={o.id} contacts={o.contacts.map((c) => c.contact)} /></div>
@@ -203,130 +207,70 @@ function Metric({ label, value, sub }: { label: string; value: React.ReactNode; 
   );
 }
 
-/** The essentials only: why the deal is healthy or not, the facts that matter, next step and who is involved. */
+/** Only what matters: a row appears when it has something to say. */
 function Overview({ d }: { d: OppDetail }) {
   const o = d.opp;
   const flags = sortFlags(o.flags);
   const tasks = o.activities.filter((a) => a.type === "TASK" && !a.completedAt);
-  const details = [
-    { label: "Account type", value: ACCOUNT_TYPE_LABEL[o.accountType] },
-    { label: "Deal type", value: DEAL_TYPE_LABEL[o.dealType] },
-    { label: "Revenue", value: REVENUE_MODEL_LABEL[o.revenueModel] + (o.contractTermMonths ? ` · ${o.contractTermMonths} months` : "") },
-    { label: "Procurement", value: PROCUREMENT_LABEL[o.procurementMode] + (o.submissionDueDate ? ` · bid due ${fmtDate(o.submissionDueDate)}` : "") },
-    { label: "Path", value: o.presalesRequired ? "Solution · needs presales" : "Resale · no presales" },
-    ...(o.dealRegStatus !== "NOT_REQUIRED"
-      ? [{ label: "OEM deal registration", value: DEAL_REG_LABEL[o.dealRegStatus] + (o.dealRegNumber ? ` · ${o.dealRegNumber}` : "") + (o.dealRegExpiry ? ` · expires ${fmtDate(o.dealRegExpiry)}` : "") }]
-      : []),
-    { label: "Competition", value: o.competitors || "—" },
-    { label: "Lead source", value: o.leadSource || "—" },
-    { label: "Created", value: `${fmtDate(o.createdAt)} (${relativeDays(o.createdAt)})` },
-    ...(o.contractStartDate ? [{ label: "Contract period", value: `${fmtDate(o.contractStartDate)} – ${fmtDate(o.contractEndDate)}` }] : []),
-    ...(o.stage === "WON" ? [{ label: "Customer PO", value: `${o.poNumber} · ${fmtDate(o.poDate)}` }] : []),
-    ...(o.lossReason ? [{ label: "Loss reason", value: o.lossReason }] : []),
-  ];
+  const team = [
+    ["Sales", o.salesOwner.name],
+    ["Presales", o.presalesOwner?.name],
+    ["Purchase", o.purchaseOwner?.name],
+  ].filter((x): x is [string, string] => !!x[1]);
+  const c = o.primaryContact;
+  const rows: [string, React.ReactNode][] = [];
+  if (o.nextStep || tasks.length)
+    rows.push(["Next step", (
+      <span key="ns">
+        {o.nextStep ?? <span className="text-ink-3">None set</span>}
+        {o.nextStepDate && <span className="text-ink-3"> · {fmtDate(o.nextStepDate)}</span>}
+        {tasks.length > 0 && <Link href={`/opportunities/${o.id}?tab=activity`} className="ml-2 text-xs text-primary hover:underline">{tasks.length} open task{tasks.length > 1 ? "s" : ""}</Link>}
+      </span>
+    )]);
+  rows.push(["Customer", c ? (
+    <span key="c">
+      {c.firstName} {c.lastName}{c.title && <span className="text-ink-3">, {c.title}</span>}
+      {(c.phone || c.email) && <span className="block text-xs text-ink-3">{[c.phone, c.email].filter(Boolean).join(" · ")}</span>}
+    </span>
+  ) : <span className="text-ink-3">No contact yet</span>]);
+  rows.push(["Team", team.map(([role, name]) => `${name} (${role.toLowerCase()})`).join(" · ")]);
+  if (flags.length) rows.push(["Needs attention", (
+    <ul key="flags" className="flex flex-col gap-1">
+      {flags.map((f) => <li key={f} className="flex items-center gap-1.5"><SeverityIcon severity={FLAG_META[f].severity} />{FLAG_META[f].label}</li>)}
+    </ul>
+  )]);
+  if (o.submissionDueDate) rows.push(["Bid due", `${fmtDate(o.submissionDueDate)} · ${PROCUREMENT_LABEL[o.procurementMode]}`]);
+  if (o.dealRegStatus !== "NOT_REQUIRED") rows.push(["Deal registration", [DEAL_REG_LABEL[o.dealRegStatus], o.dealRegNumber, o.dealRegExpiry && `expires ${fmtDate(o.dealRegExpiry)}`].filter(Boolean).join(" · ")]);
+  if (o.competitors) rows.push(["Competition", o.competitors]);
+  if (o.stage === "WON" && o.poNumber) rows.push(["Customer PO", `${o.poNumber}${o.poDate ? ` · ${fmtDate(o.poDate)}` : ""}`]);
+  if (o.lossReason) rows.push([o.stage === "DROPPED" ? "Dropped" : "Lost", <span key="l">{o.lossReason}{o.lossNotes && <span className="block text-xs text-ink-3">{o.lossNotes}</span>}</span>]);
+  if (o.description) rows.push(["Notes", <span key="n" className="whitespace-pre-line">{o.description}</span>]);
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
-      <div className="flex flex-col gap-6 lg:col-span-2">
-        {o.healthLabel !== "CLOSED" && (
-          <Card>
-            <CardContent className="flex flex-col gap-3 pt-5">
-              <div className="flex items-center gap-4">
-                <div className="relative size-14 shrink-0">
-                  <svg viewBox="0 0 36 36" className="size-14 -rotate-90">
-                    <circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--surface-2)" strokeWidth="3.5" />
-                    <circle cx="18" cy="18" r="15.5" fill="none" stroke={healthColor(o.healthLabel)} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(o.healthScore / 100) * 97.4} 97.4`} />
-                  </svg>
-                  <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold tabular">{o.healthScore}</span>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">Health <HealthBadge label={o.healthLabel} /></p>
-                  <p className="mt-0.5 text-xs text-ink-2">
-                    {(d.evaluation?.reasons.length ? d.evaluation.reasons : ["On track: recent activity and within expected stage duration"]).join(" · ")}
-                  </p>
-                </div>
-              </div>
-              {flags.length > 0 && (
-                <ul className="flex flex-col gap-1.5 border-t border-border pt-3">
-                  {flags.map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-[13px]">
-                      <SeverityIcon severity={FLAG_META[f].severity} className="mt-0.5" />
-                      <span><span className="font-medium">{FLAG_META[f].label}.</span> <span className="text-ink-2">{FLAG_META[f].hint}</span></span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        )}
-        <Card>
-          <CardHeader title="Details" />
-          <CardContent className="flex flex-col gap-4">
-            <DescList cols={3} items={details} />
-            {(o.description || o.lossNotes) && (
-              <div className="whitespace-pre-line border-t border-border pt-4 text-[13px] text-ink-2">
-                {o.description}
-                {o.lossNotes && <p className="mt-2"><span className="font-medium text-ink">Loss notes: </span>{o.lossNotes}</p>}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+    <Card className="max-w-3xl">
+      <dl className="divide-y divide-border">
+        {rows.map(([label, value]) => (
+          <div key={label} className="grid grid-cols-1 gap-1 px-5 py-3 sm:grid-cols-[150px_1fr] sm:gap-4">
+            <dt className="text-xs text-ink-3 sm:pt-0.5">{label}</dt>
+            <dd className="min-w-0 text-[13px]">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border px-5 py-3 text-xs">
+        <Link href={`/opportunities/${o.id}?tab=activity`} className="text-primary hover:underline">Activity & notes</Link>
+        <Link href={`/opportunities/${o.id}?tab=contacts`} className="text-primary hover:underline">Buying group ({o.contacts.length})</Link>
+        <Link href={`/opportunities/${o.id}?tab=history`} className="text-primary hover:underline">History</Link>
       </div>
-      <div className="flex flex-col gap-6">
-        <Card>
-          <CardHeader title="Next step" />
-          <CardContent>
-            {o.nextStep ? (
-              <div>
-                <p className="text-[13px] font-medium">{o.nextStep}</p>
-                <p className="mt-0.5 text-xs" style={{ color: o.nextStepDate && o.nextStepDate < new Date() ? "var(--t-red)" : "var(--ink-3)" }}>
-                  <CalendarClock className="mr-1 inline size-3.5" />
-                  {o.nextStepDate ? `${fmtDate(o.nextStepDate)} (${relativeDays(o.nextStepDate)})` : "No date set"}
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-ink-3">No next step recorded.</p>
-            )}
-            {tasks.length > 0 && (
-              <div className="mt-3 border-t border-border pt-3">
-                <p className="mb-1 text-xs text-ink-3">{tasks.length} open task{tasks.length > 1 ? "s" : ""}</p>
-                {tasks.slice(0, 3).map((t) => <p key={t.id} className="truncate text-xs">• {t.subject}</p>)}
-                <Link href={`/opportunities/${o.id}?tab=activity`} className="mt-1 inline-block text-xs text-primary hover:underline">Manage tasks</Link>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader title="People" />
-          <CardContent className="flex flex-col gap-2.5">
-            <TeamRow role="Sales" name={o.salesOwner.name} />
-            <TeamRow role="Presales" name={o.presalesOwner?.name} />
-            <TeamRow role="Purchase" name={o.purchaseOwner?.name} />
-            <div className="border-t border-border pt-2.5">
-              <p className="text-xs text-ink-3">Customer contact</p>
-              {o.primaryContact ? (
-                <div className="mt-1">
-                  <PersonCell name={`${o.primaryContact.firstName} ${o.primaryContact.lastName}`} sub={o.primaryContact.title} />
-                  <p className="mt-1 text-xs text-ink-3">{o.primaryContact.email} · {o.primaryContact.phone}</p>
-                </div>
-              ) : (
-                <p className="text-xs text-ink-3">None</p>
-              )}
-              <Link href={`/opportunities/${o.id}?tab=contacts`} className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                Buying group ({o.contacts.length}) <ArrowRight className="size-3" />
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+    </Card>
   );
 }
 
-function TeamRow({ role, name }: { role: string; name?: string | null }) {
+/** Activity, contacts and history open from Overview; this takes the person back */
+function BackToOverview({ id, title }: { id: string; title: string }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-xs text-ink-3">{role}</span>
-      {name ? <PersonCell name={name} /> : <span className="text-xs text-ink-3">Not assigned</span>}
+    <div className="mb-4 flex items-center gap-2 text-[13px]">
+      <Link href={`/opportunities/${id}`} className="text-primary hover:underline">Overview</Link>
+      <span className="text-ink-3">/</span>
+      <span className="font-medium">{title}</span>
     </div>
   );
 }
@@ -334,7 +278,7 @@ function TeamRow({ role, name }: { role: string; name?: string | null }) {
 function Quotes({ d }: { d: OppDetail }) {
   const qs = d.opp.quotes;
   if (!qs.length) {
-    return <Card className="p-8 text-center text-sm text-ink-3">No quotes yet. Quotes are generated from a fully priced BOQ on the BOQ tab.</Card>;
+    return <Card className="p-8 text-center text-sm text-ink-3">No quotes yet. Once the line items are costed, send one from the deal status above.</Card>;
   }
   return (
     <Card>
@@ -344,20 +288,22 @@ function Quotes({ d }: { d: OppDetail }) {
             <th className="px-4 py-2 font-medium">Quote</th><th className="px-4 py-2 font-medium">Status</th>
             <th className="px-4 py-2 text-right font-medium">Value</th>
             {d.perms.viewCost && <th className="px-4 py-2 text-right font-medium">Margin</th>}
-            <th className="px-4 py-2 font-medium">Issued</th><th className="px-4 py-2 font-medium">Valid till</th><th />
+            <th className="px-4 py-2 font-medium">Valid till</th><th />
           </tr>
         </thead>
         <tbody>
           {qs.map((q) => (
             <tr key={q.id} className="border-b border-border last:border-0">
-              <td className="px-4 py-2.5"><span className="font-mono text-xs">{q.code}</span> <span className="text-ink-3">v{q.version}</span></td>
+              <td className="px-4 py-2.5">
+                <span className="font-medium">v{q.version}</span> <span className="font-mono text-xs text-ink-3">{q.code}</span>
+                <span className="block text-xs text-ink-3">Sent {fmtDate(q.submittedAt ?? q.createdAt)}</span>
+              </td>
               <td className="px-4 py-2.5">
                 <Badge tone={q.status === "ACCEPTED" ? "green" : q.status === "REJECTED" ? "red" : q.status === "SUBMITTED" ? "blue" : q.status === "CHANGES_REQUESTED" ? "amber" : "slate"}>{QUOTE_STATUS_LABEL[q.status]}</Badge>
                 {q.responseNote && <p className="mt-1 max-w-64 text-xs text-ink-3">{q.responseNote}</p>}
               </td>
               <td className="px-4 py-2.5 text-right font-medium tabular">{inr(q.totalPrice)}</td>
               {d.perms.viewCost && <td className="px-4 py-2.5 text-right tabular">{q.marginPct !== null ? pct(q.marginPct, 1) : "—"}</td>}
-              <td className="px-4 py-2.5 text-xs">{fmtDate(q.submittedAt ?? q.createdAt)}</td>
               <td className="px-4 py-2.5 text-xs">{fmtDate(q.validTill)}</td>
               <td className="px-4 py-2.5 text-right">
                 <Link href={`/opportunities/${d.opp.id}/quotes/${q.id}`} target="_blank" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">

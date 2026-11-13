@@ -102,6 +102,20 @@ async function purchaseFor(tx: Tx, preferred: string | null | undefined) {
   return id;
 }
 
+/** Presales for a request: the one chosen, else the deal's presales owner if still active, else the least loaded. */
+async function presalesFor(preferred: string | null | undefined) {
+  if (preferred) {
+    const u = await db.user.findFirst({ where: { id: preferred, role: "PRESALES", active: true } });
+    if (u) return u;
+  }
+  const users = await db.user.findMany({
+    where: { role: "PRESALES", active: true },
+    select: { id: true, name: true, _count: { select: { presalesAssigned: { where: { status: openPresales } } } } },
+  });
+  users.sort((a, b) => a._count.presalesAssigned - b._count.presalesAssigned);
+  return users[0] ? await db.user.findUnique({ where: { id: users[0].id } }) : null;
+}
+
 async function placeholderOemIds(tx: Tx) {
   return new Set((await tx.oem.findMany({ where: { isPlaceholder: true }, select: { id: true } })).map((o) => o.id));
 }
@@ -128,7 +142,8 @@ async function assertRealBoq(tx: Tx, oppId: string, what: string) {
 // ───────────── Presales: BOQ and revisions ─────────────
 
 const presalesSchema = z.object({
-  assignedToId: z.string().min(1, "Select a presales owner"),
+  /** Empty: the deal's presales owner, or whoever has the least open work */
+  assignedToId: z.string().optional(),
   dueDate: day,
   scope: z.string().trim().min(10, "Describe the scope in a sentence or two").max(4000),
   reason: z.string().trim().max(2000).optional(),
@@ -162,8 +177,10 @@ export const requestPresales = safeAction("requestPresales", async function requ
   if (v.deliverables.includes("SITE_SURVEY") && (!v.siteDetails || v.siteDetails.length < 3))
     return { ok: false, error: "Say which sites to survey.", fieldErrors: { siteDetails: "Which sites, and where" } };
   if (isPast(v.dueDate)) return { ok: false, error: "Due date is in the past.", fieldErrors: { dueDate: "Due date is in the past" } };
-  const assignee = await db.user.findFirst({ where: { id: v.assignedToId, role: "PRESALES", active: true } });
-  if (!assignee) return { ok: false, error: "Selected user is not an active presales engineer." };
+  const assignee = v.assignedToId
+    ? await db.user.findFirst({ where: { id: v.assignedToId, role: "PRESALES", active: true } })
+    : await presalesFor(opp.presalesOwnerId);
+  if (!assignee) return { ok: false, error: v.assignedToId ? "Selected user is not an active presales engineer." : "There is no active presales engineer to assign this to." };
   const previous = await db.presalesRequest.findMany({ where: { opportunityId: oppId }, orderBy: { revision: "desc" } });
   if (previous.some((p) => (OPEN_PRESALES as readonly string[]).includes(p.status)))
     return { ok: false, error: "A presales request is already open on this deal." };
@@ -195,15 +212,15 @@ export const requestPresales = safeAction("requestPresales", async function requ
       }
       const created = await tx.presalesRequest.create({
         data: {
-          opportunityId: oppId, requestedById: user.id, assignedToId: v.assignedToId, dueDate: v.dueDate, scope: v.scope, priority: v.priority,
+          opportunityId: oppId, requestedById: user.id, assignedToId: assignee.id, dueDate: v.dueDate, scope: v.scope, priority: v.priority,
           revision, source, reason: v.reason || null, involved: involving,
           deliverables: v.deliverables, siteDetails: v.deliverables.includes("SITE_SURVEY") ? v.siteDetails || null : null,
         },
       });
       // Pulling in presales makes it a solution deal
-      await tx.opportunity.update({ where: { id: oppId }, data: { presalesOwnerId: v.assignedToId, presalesRequired: true, updatedById: user.id, version: { increment: 1 } } });
+      await tx.opportunity.update({ where: { id: oppId }, data: { presalesOwnerId: assignee.id, presalesRequired: true, updatedById: user.id, version: { increment: 1 } } });
       await recordChanges(tx, {
-        entityType: "Opportunity", entityId: oppId, before: opp, after: { presalesOwnerId: v.assignedToId, presalesRequired: true },
+        entityType: "Opportunity", entityId: oppId, before: opp, after: { presalesOwnerId: assignee.id, presalesRequired: true },
         fields: ["presalesOwnerId", "presalesRequired"], userId: user.id,
       });
       await recordEvent(tx, {
@@ -212,7 +229,7 @@ export const requestPresales = safeAction("requestPresales", async function requ
         newValue: involving ? `${assignee.name} · resale deal now needs presales · ${v.reason}` : changesBoq ? `Revision ${revision} · ${assignee.name} · ${v.reason}` : assignee.name,
       });
       const startFrom = involving && lineCount ? ` Start from the ${lineCount} line${lineCount > 1 ? "s" : ""} sales added.` : "";
-      await notify(tx, [v.assignedToId], {
+      await notify(tx, [assignee.id], {
         type: "PRESALES_REQUEST",
         title: involving ? `Presales needed: ${opp.name}` : changesBoq ? `BOQ revision ${revision}: ${opp.name}` : `BOQ requested: ${opp.name}`,
         body: `${user.name} ${involving ? `brought you in: ${v.reason}` : changesBoq ? `needs changes: ${v.reason}` : "pulled you in"}${v.priority !== "NORMAL" ? ` (${v.priority.toLowerCase()} priority)` : ""}. Due ${fmtDate(v.dueDate)}.${startFrom}`,

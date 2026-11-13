@@ -27,7 +27,7 @@ const COLS: Col[] = [
   },
   { id: "amount", label: "Deal value", sort: "amount", align: "right", def: true, render: (o) => <span className="font-medium tabular">{inr(o.amount)}</span> },
   { id: "stage", label: "Stage", sort: "stage", def: true, render: (o) => <StageBadge stage={o.stage} /> },
-  { id: "health", label: "Health", sort: "health", def: true, render: (o) => <HealthBadge label={o.healthLabel} score={o.healthScore} /> },
+  { id: "health", label: "Health", sort: "health", def: false, render: (o) => <HealthBadge label={o.healthLabel} score={o.healthScore} /> },
   { id: "flags", label: "Concerns", def: false, className: "min-w-[180px]", render: (o) => <FlagChips flags={o.flags} max={2} /> },
   { id: "close", label: "Close date", sort: "close", def: true, render: (o) => (
       <span className={cn("tabular", o.expectedCloseDate < new Date() && !["WON", "LOST", "DROPPED"].includes(o.stage) && "text-[var(--t-red)] font-medium")}>

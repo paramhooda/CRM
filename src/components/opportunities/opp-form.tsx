@@ -3,11 +3,11 @@
 // the process. Fields depend on earlier answers: contacts follow the account, deal types follow the account type,
 // categories follow the business unit, OEMs follow the category, the bid date follows the procurement mode, deal
 // registration follows the OEMs, and the contract term follows recurring billing.
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
-import { Save, Loader2, Plus, Trash2, ArrowRight, ChevronDown, Package, Wrench, ShoppingCart } from "lucide-react";
+import { Save, Loader2, Plus, Trash2, ArrowRight, ChevronDown, Package } from "lucide-react";
 import { ProductPicker } from "@/components/opportunities/product-picker";
 import type { ProductOption } from "@/server/queries/options";
 import { billingPeriods, type BillingFrequencyKey } from "@/lib/boq";
@@ -80,7 +80,13 @@ export function OppForm({
     billingFrequency: "ONE_TIME", termMonths: null,
   });
   const [drafts, setDrafts] = useState<Draft[]>(() => (mode === "create" ? [newDraft("estimate")] : []));
-  const [showMore, setShowMore] = useState(mode === "edit" && !!(v.leadSource || v.competitors || v.description));
+  const [showMore, setShowMore] = useState(false);
+  // Problems with a field under More details open it, so nobody hunts for the error
+  const MORE_FIELDS = ["submissionDueDate", "dealRegNumber", "dealRegExpiry", "dealRegStatus", "forecastCategory", "expectedMarginPct", "leadSource", "competitors", "salesOwnerId", "description", "lossReason", "lossNotes", "poNumber", "poDate", "dealType", ...(mode === "create" ? ["nextStep", "nextStepDate"] : [])];
+  const moreHasError = Object.keys(errors).some((k) => MORE_FIELDS.includes(k));
+  useEffect(() => {
+    if (moreHasError) setShowMore(true);
+  }, [moreHasError]);
   // Presales: suggested from the categories until the person chooses
   const [presalesChosen, setPresalesChosen] = useState(mode === "edit");
 
@@ -176,7 +182,7 @@ export function OppForm({
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
-      <Section title="Customer">
+      <Section title="Deal">
         <Field htmlFor="accountId" error={errors.accountId} label="Account" required>
           <Select
             id="accountId"
@@ -190,52 +196,28 @@ export function OppForm({
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </Select>
         </Field>
-        <Field htmlFor="primaryContactId" error={errors.primaryContactId} label="Customer contact" hint={account && !account.contacts.length ? "No contacts on this account yet" : "Needed before the deal is qualified"}>
+        <Field htmlFor="primaryContactId" error={errors.primaryContactId} label="Customer contact" hint={account && !account.contacts.length ? "No contacts on this account yet" : "Needed to qualify the deal"}>
           <Select id="primaryContactId" value={v.primaryContactId} onChange={(e) => set("primaryContactId", e.target.value)} disabled={!account}>
             <option value="">{account ? "None yet" : "Choose the account first"}</option>
             {account?.contacts.map((c) => <option key={c.id} value={c.id}>{c.name}{c.title ? ` · ${c.title}` : ""}</option>)}
           </Select>
         </Field>
-        <Field label="Deal type" hint={accountType === "NEW_LOGO" ? "A new customer is always new business" : "Existing customer"}>
-          {accountType === "NEW_LOGO" ? (
-            <p className="flex h-9 items-center text-[13px]">New logo · New business</p>
-          ) : (
-            <Segmented
-              label="Deal type"
-              value={dealTypeFor(accountType, v.dealType)}
-              onChange={(t) => set("dealType", t)}
-              options={dealTypesFor(accountType).map((t) => ({ value: t, label: DEAL_TYPE_LABEL[t] }))}
-              className="h-9 w-fit max-w-full items-center overflow-x-auto [&_button]:whitespace-nowrap [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-[13px]"
-            />
-          )}
-        </Field>
-      </Section>
-
-      <Section title="Opportunity">
-        <Field htmlFor="name" error={errors.name} label="Opportunity name" required className="sm:col-span-2">
-          {text("name", { placeholder: account ? `${account.name.split(" ")[0]} - Solution, e.g. DC Server Refresh` : "Account - Solution", autoFocus: mode === "create" })}
-        </Field>
-        <Field htmlFor="expectedCloseDate" error={errors.expectedCloseDate} label="Expected close" required hint={mode === "edit" ? "Pushing it out counts as a slip" : undefined}>
+        <Field htmlFor="expectedCloseDate" error={errors.expectedCloseDate} label="Expected close" required>
           {text("expectedCloseDate", { type: "date", min: today })}
         </Field>
-        <Field htmlFor="nextStep" error={errors.nextStep} label="Next step" className="sm:col-span-2">{text("nextStep", { placeholder: "e.g. Requirement call with the IT head" })}</Field>
-        <Field htmlFor="nextStepDate" error={errors.nextStepDate} label="Next step date">{text("nextStepDate", { type: "date", min: today })}</Field>
+        <Field htmlFor="name" error={errors.name} label="Opportunity name" required className="sm:col-span-3">
+          {text("name", { placeholder: account ? `${account.name.split(" ")[0]} - Solution, e.g. DC Server Refresh` : "Account - Solution", autoFocus: mode === "create" })}
+        </Field>
         {mode === "edit" && (
           <>
-            <Field label="Stage" hint="Moves through the stage bar on the deal">
-              <p className="flex h-9 items-center text-[13px]">{STAGE_META[stage].label} · {v.probability}%</p>
-            </Field>
-            <Field htmlFor="forecastCategory" error={errors.forecastCategory} label="Forecast" hint={commitAllowed ? undefined : "Commit needs a quote with the customer"}>
-              <Select id="forecastCategory" value={v.forecastCategory} onChange={(e) => set("forecastCategory", e.target.value)}>
-                {Object.entries(FORECAST_LABEL).map(([k, l]) => <option key={k} value={k} disabled={k === "COMMIT" && !commitAllowed && v.forecastCategory !== "COMMIT"}>{l}</option>)}
-              </Select>
-            </Field>
+            <Field htmlFor="nextStep" error={errors.nextStep} label="Next step" className="sm:col-span-2">{text("nextStep", { placeholder: "e.g. Requirement call with the IT head" })}</Field>
+            <Field htmlFor="nextStepDate" error={errors.nextStepDate} label="Next step date">{text("nextStepDate", { type: "date", min: today })}</Field>
           </>
         )}
       </Section>
 
       {mode === "create" ? (
-        <Section stacked title="What's being sold" description="A rough split by business unit, category and OEM is enough. Exact products come later from presales or the catalogue.">
+        <Section stacked title="What's being sold" description="A rough business unit, category, OEM and value is enough. Exact products come later.">
           <div className="flex flex-col gap-2 sm:col-span-3">
             {drafts.map((d, i) => {
               const remove = drafts.length > 1 && (
@@ -300,7 +282,7 @@ export function OppForm({
           </div>
         </Section>
       ) : (
-        <Section title="What's being sold" description="Business unit, OEM and value come from the line items.">
+        <Section title="What's being sold">
           <div className="flex flex-wrap items-center justify-between gap-3 sm:col-span-3">
             <p className="text-[13px] text-ink-2">
               {existingLineCount} line item{existingLineCount === 1 ? "" : "s"} · <span className="font-semibold tabular text-ink">{inr(v.amount)}</span>
@@ -310,138 +292,145 @@ export function OppForm({
         </Section>
       )}
 
-      <Section title="Presales" description="Decides the path: BOQ by presales, or straight to pricing.">
-        <div role="radiogroup" aria-label="Presales" className="grid gap-2 sm:col-span-3 sm:grid-cols-2">
+      <Card className="flex flex-wrap items-center gap-x-4 gap-y-2 p-5">
+        <span className="text-[13px] font-semibold">Needs presales?</span>
+        <div role="radiogroup" aria-label="Presales" className="inline-flex rounded-lg border border-border p-0.5">
           {[
-            { on: true, icon: <Wrench className="size-4" />, title: "Needs presales", body: "Solution deal: presales designs it and prepares the BOQ, then purchase prices it." },
-            { on: false, icon: <ShoppingCart className="size-4" />, title: "No presales", body: "Resale deal: you pick catalogue products. Purchase prices the third-party ones; own brands use the rate card." },
+            { on: true, label: "Yes", name: "Needs presales", title: "Solution deal: presales designs it and prepares the BOQ" },
+            { on: false, label: "No", name: "No presales", title: "Resale deal: you pick catalogue products and go straight to pricing" },
           ].map((o) => {
-            // Switching to resale needs presales to have stopped; switching to presales goes through Involve presales,
-            // which assigns an engineer and a due date
+            // Switching to resale needs presales to have stopped; switching to presales goes through Involve presales
             const locked = mode === "edit" && ((openPresales && !o.on) || (o.on && involveOnly));
             return (
               <button
-                key={o.title}
-                type="button"
-                role="radio"
-                aria-checked={presalesRequired === o.on}
-                disabled={locked}
-                title={locked ? (o.on ? "Use Involve presales on the deal page" : "Presales is working on this deal") : undefined}
+                key={o.label} type="button" role="radio" aria-label={o.name} aria-checked={presalesRequired === o.on} disabled={locked}
+                title={locked ? (o.on ? "Use Involve presales on the deal page" : "Presales is working on this deal") : o.title}
                 onClick={() => { setPresalesChosen(true); set("presalesRequired", String(o.on)); }}
                 className={cn(
-                  "flex gap-3 rounded-lg border p-3 text-left transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
-                  presalesRequired === o.on ? "border-primary bg-primary-soft" : "border-border hover:border-border-strong",
+                  "rounded-md px-3 py-1 text-[13px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
+                  presalesRequired === o.on ? "bg-primary-soft font-medium text-ink" : "text-ink-2 hover:text-ink",
                 )}
               >
-                <span className={cn("mt-0.5", presalesRequired === o.on ? "text-primary" : "text-ink-3")}>{o.icon}</span>
-                <span>
-                  <span className="block text-[13px] font-medium">{o.title}</span>
-                  <span className="block text-xs text-ink-3">{o.body}</span>
-                </span>
+                {o.label}
               </button>
             );
           })}
-          {mode === "create" && !presalesChosen && draftCategoryIds.length > 0 && (
-            <p className="text-xs text-ink-3 sm:col-span-2">
-              Suggested from the categories: {suggested ? `${solutionCats.join(", ")} need${solutionCats.length === 1 ? "s" : ""} a solution design.` : "resale items can be quoted from the catalogue."} You can change it.
-            </p>
-          )}
-          {involveOnly && (
-            <p className="text-xs text-ink-3 sm:col-span-2">
-              To bring presales in, use <Link href={`/opportunities/${id}`} className="text-primary hover:underline">Involve presales</Link> on the deal. It assigns an engineer and a due date, at any stage until the deal closes.
-            </p>
-          )}
-          {errors.presalesRequired && <p className="text-xs text-[var(--t-red)] sm:col-span-2">{errors.presalesRequired}</p>}
         </div>
-      </Section>
-
-      <Section title="Bid" description={regOems.length ? "Procurement and OEM deal registration" : "How the customer buys"}>
-        <Field label="Procurement" className="sm:col-span-2">
-          <Segmented
-            label="Procurement"
-            value={v.procurementMode as keyof typeof PROCUREMENT_LABEL}
-            onChange={(m) => set("procurementMode", m)}
-            options={Object.entries(PROCUREMENT_LABEL).map(([k, l]) => ({ value: k as keyof typeof PROCUREMENT_LABEL, label: l }))}
-            className="h-9 w-fit max-w-full items-center overflow-x-auto [&_button]:whitespace-nowrap [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-[13px]"
-          />
-        </Field>
-        {needsBidDate(v.procurementMode) && (
-          <Field htmlFor="submissionDueDate" error={errors.submissionDueDate} label="Bid submission due" required>{text("submissionDueDate", { type: "date", min: today })}</Field>
-        )}
-        {regOems.length > 0 && (
-          <>
-            <Field htmlFor="dealRegStatus" error={errors.dealRegStatus} label="Deal registration" hint={`${regOems.map((o) => o.name).join(", ")} ${regOems.length === 1 ? "runs" : "run"} deal registration`} className="sm:col-start-1">
-              <Select id="dealRegStatus" value={v.dealRegStatus} onChange={(e) => set("dealRegStatus", e.target.value)}>
-                {Object.entries(DEAL_REG_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </Select>
-            </Field>
-            {(v.dealRegStatus === "PENDING" || v.dealRegStatus === "APPROVED") && (
-              <>
-                <Field htmlFor="dealRegNumber" error={errors.dealRegNumber} label="Registration number" required={v.dealRegStatus === "APPROVED"}>{text("dealRegNumber")}</Field>
-                <Field htmlFor="dealRegExpiry" error={errors.dealRegExpiry} label="Registration expiry">{text("dealRegExpiry", { type: "date" })}</Field>
-              </>
-            )}
-          </>
-        )}
-      </Section>
+        <span className="text-xs text-ink-3">
+          {involveOnly
+            ? <>To bring presales in, use <Link href={`/opportunities/${id}`} className="text-primary hover:underline">Involve presales</Link> on the deal.</>
+            : presalesRequired ? "Presales designs the solution and prepares the BOQ." : "You pick catalogue products; purchase prices them."}
+          {mode === "create" && !presalesChosen && draftCategoryIds.length > 0 && (solutionCats.length ? ` Suggested: ${solutionCats.join(", ")} need${solutionCats.length === 1 ? "s" : ""} a design.` : " Suggested: resale items.")}
+        </span>
+        {errors.presalesRequired && <p className="w-full text-xs text-[var(--t-red)]">{errors.presalesRequired}</p>}
+      </Card>
 
       <Card className="p-0">
         <button type="button" onClick={() => setShowMore((x) => !x)} className="flex w-full items-center gap-2 px-5 py-3.5 text-left cursor-pointer" aria-expanded={showMore}>
           <span className="text-[13px] font-semibold">More details</span>
-          <span className="text-xs text-ink-3">Optional · lead source, competition, notes{canReassign ? ", owner" : ""}</span>
+          <span className="text-xs text-ink-3">Optional</span>
           <ChevronDown className={cn("ml-auto size-4 text-ink-3 transition-transform", showMore && "rotate-180")} />
         </button>
-        {showMore && (
-          <div className="grid gap-4 border-t border-border p-5 sm:grid-cols-3">
-            <Field htmlFor="leadSource" error={errors.leadSource} label="Lead source">
-              <Select id="leadSource" value={v.leadSource} onChange={(e) => set("leadSource", e.target.value)}>
-                <option value="">Select</option>
-                {options.leadSources.map((s) => <option key={s}>{s}</option>)}
-              </Select>
+        <div hidden={!showMore} className="grid gap-4 border-t border-border p-5 sm:grid-cols-3">
+          {mode === "create" && (
+            <>
+              <Field htmlFor="nextStep" error={errors.nextStep} label="Next step" className="sm:col-span-2">{text("nextStep", { placeholder: "e.g. Requirement call with the IT head" })}</Field>
+              <Field htmlFor="nextStepDate" error={errors.nextStepDate} label="Next step date">{text("nextStepDate", { type: "date", min: today })}</Field>
+            </>
+          )}
+          {accountType === "EXISTING" && (
+            <Field label="Deal type" className="sm:col-span-3">
+              <Segmented
+                label="Deal type"
+                value={dealTypeFor(accountType, v.dealType)}
+                onChange={(t) => set("dealType", t)}
+                options={dealTypesFor(accountType).map((t) => ({ value: t, label: DEAL_TYPE_LABEL[t] }))}
+                className="h-9 w-fit max-w-full items-center overflow-x-auto [&_button]:whitespace-nowrap [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-[13px]"
+              />
             </Field>
-            <Field htmlFor="competitors" error={errors.competitors} label="Competition">
-              <Select id="competitors" value={v.competitors} onChange={(e) => set("competitors", e.target.value)}>
-                <option value="">Unknown / none</option>
-                {options.competitors.map((s) => <option key={s}>{s}</option>)}
-              </Select>
-            </Field>
-            {canReassign ? (
-              <Field htmlFor="salesOwnerId" error={errors.salesOwnerId} label="Sales person">
-                <Select id="salesOwnerId" value={ownerValue} onChange={(e) => set("salesOwnerId", e.target.value)}>
-                  {mode === "edit" && v.salesOwnerId && !options.sales.some((u) => u.id === v.salesOwnerId) && <option value={v.salesOwnerId}>Current owner (no longer in sales)</option>}
-                  {options.sales.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          )}
+          <Field label="Procurement" className="sm:col-span-2">
+            <Segmented
+              label="Procurement"
+              value={v.procurementMode as keyof typeof PROCUREMENT_LABEL}
+              onChange={(m) => set("procurementMode", m)}
+              options={Object.entries(PROCUREMENT_LABEL).map(([k, l]) => ({ value: k as keyof typeof PROCUREMENT_LABEL, label: l }))}
+              className="h-9 w-fit max-w-full items-center overflow-x-auto [&_button]:whitespace-nowrap [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-[13px]"
+            />
+          </Field>
+          {needsBidDate(v.procurementMode) ? (
+            <Field htmlFor="submissionDueDate" error={errors.submissionDueDate} label="Bid submission due" required>{text("submissionDueDate", { type: "date", min: today })}</Field>
+          ) : <span className="hidden sm:block" />}
+          {regOems.length > 0 && (
+            <>
+              <Field htmlFor="dealRegStatus" error={errors.dealRegStatus} label="Deal registration" hint={`${regOems.map((o) => o.name).join(", ")} ${regOems.length === 1 ? "runs" : "run"} deal registration`}>
+                <Select id="dealRegStatus" value={v.dealRegStatus} onChange={(e) => set("dealRegStatus", e.target.value)}>
+                  {Object.entries(DEAL_REG_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </Select>
               </Field>
-            ) : <span className="hidden sm:block" />}
-            {mode === "edit" && STAGE_META[stage].order < STAGE_META.PRICING.order && (
-              <Field htmlFor="expectedMarginPct" error={errors.expectedMarginPct} label="Expected margin %" hint="Until purchase prices the lines">
-                {text("expectedMarginPct", { type: "number", step: 0.5, min: 0, max: 90 })}
-              </Field>
-            )}
-            <Field htmlFor="description" error={errors.description} label="Notes" className="sm:col-span-3">
-              <Textarea id="description" value={v.description ?? ""} onChange={(e) => set("description", e.target.value)} placeholder="Customer context, pain points, how they decide" />
+              {v.dealRegStatus === "PENDING" || v.dealRegStatus === "APPROVED" ? (
+                <>
+                  <Field htmlFor="dealRegNumber" error={errors.dealRegNumber} label="Registration number" required={v.dealRegStatus === "APPROVED"}>{text("dealRegNumber")}</Field>
+                  <Field htmlFor="dealRegExpiry" error={errors.dealRegExpiry} label="Registration expiry">{text("dealRegExpiry", { type: "date" })}</Field>
+                </>
+              ) : <span className="hidden sm:col-span-2 sm:block" />}
+            </>
+          )}
+          {mode === "edit" && (
+            <Field htmlFor="forecastCategory" error={errors.forecastCategory} label="Forecast" hint={commitAllowed ? `${STAGE_META[stage].label} · ${v.probability}%` : "Commit needs a quote with the customer"}>
+              <Select id="forecastCategory" value={v.forecastCategory} onChange={(e) => set("forecastCategory", e.target.value)}>
+                {Object.entries(FORECAST_LABEL).map(([k, l]) => <option key={k} value={k} disabled={k === "COMMIT" && !commitAllowed && v.forecastCategory !== "COMMIT"}>{l}</option>)}
+              </Select>
             </Field>
-            {(stage === "LOST" || stage === "DROPPED") && (
-              <>
-                <Field htmlFor="lossReason" error={errors.lossReason} label="Reason">
-                  <Select id="lossReason" value={v.lossReason ?? ""} onChange={(e) => set("lossReason", e.target.value)}>
-                    {v.lossReason && !options.lossReasons.includes(v.lossReason) && <option value={v.lossReason}>{v.lossReason}</option>}
-                    {!v.lossReason && <option value="">Not recorded</option>}
-                    {options.lossReasons.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </Select>
-                </Field>
-                <Field htmlFor="lossNotes" error={errors.lossNotes} label="Loss notes" className="sm:col-span-2">{text("lossNotes")}</Field>
-              </>
-            )}
-            {stage === "WON" && (
-              // A manager correcting a typo in the PO, without reopening the deal
-              <>
-                <Field htmlFor="poNumber" error={errors.poNumber} label="Customer PO number">{text("poNumber")}</Field>
-                <Field htmlFor="poDate" error={errors.poDate} label="PO date">{text("poDate", { type: "date" })}</Field>
-              </>
-            )}
-          </div>
-        )}
+          )}
+          {mode === "edit" && STAGE_META[stage].order < STAGE_META.PRICING.order && (
+            <Field htmlFor="expectedMarginPct" error={errors.expectedMarginPct} label="Expected margin %" hint="Until purchase prices the lines">
+              {text("expectedMarginPct", { type: "number", step: 0.5, min: 0, max: 90 })}
+            </Field>
+          )}
+          <Field htmlFor="leadSource" error={errors.leadSource} label="Lead source">
+            <Select id="leadSource" value={v.leadSource} onChange={(e) => set("leadSource", e.target.value)}>
+              <option value="">Select</option>
+              {options.leadSources.map((x) => <option key={x}>{x}</option>)}
+            </Select>
+          </Field>
+          <Field htmlFor="competitors" error={errors.competitors} label="Competition">
+            <Select id="competitors" value={v.competitors} onChange={(e) => set("competitors", e.target.value)}>
+              <option value="">Unknown / none</option>
+              {options.competitors.map((x) => <option key={x}>{x}</option>)}
+            </Select>
+          </Field>
+          {canReassign && (
+            <Field htmlFor="salesOwnerId" error={errors.salesOwnerId} label="Sales person">
+              <Select id="salesOwnerId" value={ownerValue} onChange={(e) => set("salesOwnerId", e.target.value)}>
+                {mode === "edit" && v.salesOwnerId && !options.sales.some((u) => u.id === v.salesOwnerId) && <option value={v.salesOwnerId}>Current owner (no longer in sales)</option>}
+                {options.sales.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </Select>
+            </Field>
+          )}
+          <Field htmlFor="description" error={errors.description} label="Notes" className="sm:col-span-3">
+            <Textarea id="description" value={v.description ?? ""} onChange={(e) => set("description", e.target.value)} placeholder="Customer context, pain points, how they decide" />
+          </Field>
+          {(stage === "LOST" || stage === "DROPPED") && (
+            <>
+              <Field htmlFor="lossReason" error={errors.lossReason} label="Reason">
+                <Select id="lossReason" value={v.lossReason ?? ""} onChange={(e) => set("lossReason", e.target.value)}>
+                  {v.lossReason && !options.lossReasons.includes(v.lossReason) && <option value={v.lossReason}>{v.lossReason}</option>}
+                  {!v.lossReason && <option value="">Not recorded</option>}
+                  {options.lossReasons.map((r) => <option key={r} value={r}>{r}</option>)}
+                </Select>
+              </Field>
+              <Field htmlFor="lossNotes" error={errors.lossNotes} label="Loss notes" className="sm:col-span-2">{text("lossNotes")}</Field>
+            </>
+          )}
+          {stage === "WON" && (
+            // A manager correcting a typo in the PO, without reopening the deal
+            <>
+              <Field htmlFor="poNumber" error={errors.poNumber} label="Customer PO number">{text("poNumber")}</Field>
+              <Field htmlFor="poDate" error={errors.poDate} label="PO date">{text("poDate", { type: "date" })}</Field>
+            </>
+          )}
+        </div>
       </Card>
 
       <div className="sticky bottom-0 -mx-4 flex justify-end gap-2 border-t border-border bg-surface/90 px-4 py-3 backdrop-blur md:-mx-6 md:px-6">

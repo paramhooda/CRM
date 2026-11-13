@@ -61,7 +61,10 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       break;
     case "WITH_PURCHASE":
       headline = openPq && openPq.kind !== "FULL" ? (openPq.kind === "REPRICE" ? "Re-pricing with purchase" : "Re-validation with purchase") : "Pricing with purchase";
-      detail = `${openPq?.assignedTo.name} is getting OEM and distributor costs for ${w.needsCost || purchaseLines.length} line${(w.needsCost || purchaseLines.length) > 1 ? "s" : ""}.`;
+      {
+        const n = w.needsCost || purchaseLines.length;
+        detail = n ? `${openPq?.assignedTo.name} is getting supplier costs for ${n} line${n > 1 ? "s" : ""}.` : `${openPq?.assignedTo.name} is re-confirming the supplier prices.`;
+      }
       who = { name: openPq!.assignedTo.name, role: "Purchase" };
       break;
     case "NEEDS_COSTING":

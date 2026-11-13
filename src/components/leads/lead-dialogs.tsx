@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
+import { MoreOptions } from "@/components/ui/more-options";
 import { saveLead, convertLead } from "@/server/actions/leads";
 import { LEAD_STATUS_LABEL } from "@/lib/constants";
 import { isoDate } from "@/lib/format";
@@ -28,7 +29,7 @@ export function LeadDialog({
       <DialogTrigger asChild>
         {id ? <Button size="icon-sm" variant="ghost" aria-label="Edit lead"><Pencil /></Button> : <Button variant="primary"><Plus /> New lead</Button>}
       </DialogTrigger>
-      <DialogContent title={id ? "Edit lead" : "New lead"} wide>
+      <DialogContent title={id ? "Edit lead" : "New lead"}>
         <form
           className="grid gap-3 sm:grid-cols-2"
           onSubmit={(e) => {
@@ -39,31 +40,35 @@ export function LeadDialog({
         >
           <Field label="First name" required error={errors.firstName}><Input name="firstName" defaultValue={v.firstName} /></Field>
           <Field label="Last name" required error={errors.lastName}><Input name="lastName" defaultValue={v.lastName} /></Field>
-          <Field label="Company" required error={errors.company}><Input name="company" defaultValue={v.company} /></Field>
-          <Field label="Title"><Input name="title" defaultValue={v.title} /></Field>
+          <Field label="Company" required error={errors.company} className="sm:col-span-2"><Input name="company" defaultValue={v.company} /></Field>
           <Field label="Email" error={errors.email}><Input name="email" type="email" defaultValue={v.email} /></Field>
           <Field label="Phone"><Input name="phone" defaultValue={v.phone} /></Field>
-          <Field label="City"><Input name="city" defaultValue={v.city} /></Field>
-          <Field label="Source">
-            <Select name="source" defaultValue={v.source ?? ""}><option value="">Select</option>{sources.map((s) => <option key={s}>{s}</option>)}</Select>
-          </Field>
-          <Field label="Business unit interest">
-            <Select name="businessUnitId" defaultValue={v.businessUnitId ?? ""}><option value="">Not sure</option>{bus.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</Select>
-          </Field>
-          <Field label="Estimated value (INR)"><Input name="estimatedValue" type="number" defaultValue={v.estimatedValue} /></Field>
-          <Field label="Status">
-            <Select name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
-              {Object.entries(LEAD_STATUS_LABEL).filter(([k]) => k !== "CONVERTED").map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </Select>
-          </Field>
-          <Field label="Owner">
-            <Select name="ownerId" defaultValue={v.ownerId ?? currentUserId} disabled={!canReassign}>{ownerList.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
-            {!canReassign && <input type="hidden" name="ownerId" value={v.ownerId ?? currentUserId} />}
-          </Field>
-          {status === "UNQUALIFIED" && (
-            <Field label="Disqualify reason" required error={errors.disqualifyReason} className="sm:col-span-2"><Input name="disqualifyReason" defaultValue={v.disqualifyReason} /></Field>
-          )}
-          <Field label="Requirement" className="sm:col-span-2"><Textarea name="requirement" defaultValue={v.requirement} className="min-h-16" /></Field>
+          <Field label="Requirement" className="sm:col-span-2"><Textarea name="requirement" defaultValue={v.requirement} className="min-h-16" placeholder="What they are looking for" /></Field>
+          <MoreOptions label="More details" className="sm:col-span-2" forceOpen={status === "UNQUALIFIED" || !!errors.disqualifyReason || !!errors.ownerId}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Status">
+                <Select name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
+                  {Object.entries(LEAD_STATUS_LABEL).filter(([k]) => k !== "CONVERTED").map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </Select>
+              </Field>
+              <Field label="Owner" error={errors.ownerId}>
+                <Select name="ownerId" defaultValue={v.ownerId ?? currentUserId} disabled={!canReassign}>{ownerList.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
+                {!canReassign && <input type="hidden" name="ownerId" value={v.ownerId ?? currentUserId} />}
+              </Field>
+              {status === "UNQUALIFIED" && (
+                <Field label="Disqualify reason" required error={errors.disqualifyReason} className="sm:col-span-2"><Input name="disqualifyReason" defaultValue={v.disqualifyReason} /></Field>
+              )}
+              <Field label="Title"><Input name="title" defaultValue={v.title} /></Field>
+              <Field label="City"><Input name="city" defaultValue={v.city} /></Field>
+              <Field label="Source">
+                <Select name="source" defaultValue={v.source ?? ""}><option value="">Select</option>{sources.map((s) => <option key={s}>{s}</option>)}</Select>
+              </Field>
+              <Field label="Business unit interest">
+                <Select name="businessUnitId" defaultValue={v.businessUnitId ?? ""}><option value="">Not sure</option>{bus.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</Select>
+              </Field>
+              <Field label="Estimated value (INR)"><Input name="estimatedValue" type="number" defaultValue={v.estimatedValue} /></Field>
+            </div>
+          </MoreOptions>
           <div className="flex justify-end gap-2 sm:col-span-2">
             <Button type="button" onClick={() => setOpen(false)}>Cancel</Button>
             <Button type="submit" variant="primary" disabled={pending}>Save</Button>

@@ -17,6 +17,7 @@ import {
 } from "@/server/actions/workflow";
 import { fmtDate, inr, isoDate, pct } from "@/lib/format";
 import { AttachFiles, uploadAll, type ExistingDoc, type PickedFile } from "@/components/opportunities/attach-files";
+import { MoreOptions } from "@/components/ui/more-options";
 import type { ActionResult } from "@/lib/validation";
 import { PRESALES_DELIVERABLES } from "@/lib/deal-setup";
 import { cn } from "@/lib/utils";
@@ -135,10 +136,14 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<PickedFile[]>([]);
   const { pending, run } = useAction();
-  const attach = (kind: keyof typeof ATTACH, docs: ExistingDoc[] = [], hint?: string | null) => {
+  const attach = (kind: keyof typeof ATTACH, docs: ExistingDoc[] = []) => {
     const kinds = ATTACH[kind].filter((k) => !("canAdd" in a) || !a.canAdd || a.canAdd.includes(k));
-    return kinds.length ? <AttachFiles kinds={kinds} files={files} onChange={setFiles} existing={docs} hint={hint} /> : null;
+    return kinds.length ? <AttachFiles kinds={kinds} files={files} onChange={setFiles} existing={docs} /> : null;
   };
+  // A gentle reminder stays in view even when the attachments are tucked under More options
+  const reminder = (text: string | null | undefined) =>
+    text && !files.length ? <p className="text-xs text-[var(--t-amber)]">{text} Add it under More options, or carry on without.</p> : null;
+  const filesHint = files.length ? `${files.length} file${files.length > 1 ? "s" : ""} attached` : undefined;
   const submit = (fn: (f: Record<string, FormDataEntryValue>) => Parameters<typeof run>[0], success: string, onOk?: (data: unknown) => void) =>
     (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
@@ -161,23 +166,26 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
             <Field label="Solution summary" required error={errors.solutionSummary}>
               <Textarea name="solutionSummary" placeholder="What was designed and how it was sized" />
             </Field>
-            <Field label="Assumptions and exclusions" error={errors.assumptions}>
-              <Textarea name="assumptions" className="min-h-14" placeholder="e.g. Customer provides rack space and power; cabling excluded" />
-            </Field>
-            {attach("submitBoq", a.docs, a.missingDocs?.length ? `Asked for but not attached yet: ${a.missingDocs.join(", ")}. Attach ${a.missingDocs.length > 1 ? "them" : "it"} here, or submit without.` : null)}
-            {a.toPrice > 0 && (
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Purchase owner">
-                  <Select name="purchaseUserId" defaultValue="">
-                    <option value="">Auto-assign</option>
-                    {a.purchase.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </Select>
-                </Field>
-                <Field label="Pricing needed by">
-                  <Input name="dueDate" type="date" defaultValue={plusDays(5)} min={isoDate(new Date())} />
-                </Field>
-              </div>
-            )}
+            {reminder(a.missingDocs?.length ? `Asked for but not attached yet: ${a.missingDocs.join(", ")}.` : null)}
+            <MoreOptions hint={filesHint} forceOpen={!!errors.assumptions || !!errors.dueDate}>
+              <Field label="Assumptions and exclusions" error={errors.assumptions}>
+                <Textarea name="assumptions" className="min-h-14" placeholder="e.g. Customer provides rack space and power; cabling excluded" />
+              </Field>
+              {a.toPrice > 0 && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Purchase owner">
+                    <Select name="purchaseUserId" defaultValue="">
+                      <option value="">Auto-assign</option>
+                      {a.purchase.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="Pricing needed by" error={errors.dueDate}>
+                    <Input name="dueDate" type="date" defaultValue={plusDays(5)} min={isoDate(new Date())} />
+                  </Field>
+                </div>
+              )}
+              {attach("submitBoq", a.docs)}
+            </MoreOptions>
             <Footer onCancel={close} pending={pending} label="Submit" icon={<Send />} />
           </form>
         </DialogContent>
@@ -224,18 +232,18 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
                 <Textarea name="reason" className="min-h-14" placeholder={revalidate ? "e.g. Supplier pricing expired" : "e.g. Switch quantity changed from 8 to 12"} />
               </Field>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <Field label="Needed by" required error={errors.dueDate}>
+              <Input name="dueDate" type="date" defaultValue={plusDays(5)} min={isoDate(new Date())} className="w-44" />
+            </Field>
+            <MoreOptions hint={filesHint ?? "auto-assigned"}>
               <Field label="Purchase owner">
                 <Select name="assignedToId" defaultValue="">
                   <option value="">Auto-assign</option>
                   {a.purchase.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </Select>
               </Field>
-              <Field label="Needed by" required error={errors.dueDate}>
-                <Input name="dueDate" type="date" defaultValue={plusDays(5)} min={isoDate(new Date())} />
-              </Field>
-            </div>
-            {attach("requestPricing", a.docs, a.docHint)}
+              {attach("requestPricing", a.docs)}
+            </MoreOptions>
             <Footer onCancel={close} pending={pending} label="Send to purchase" icon={<Send />} />
           </form>
         </DialogContent>
@@ -248,11 +256,14 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
             {!!a.quotesAttached && (
               <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">{a.quotesAttached} supplier or OEM quote{a.quotesAttached > 1 ? "s" : ""} attached to this request.</p>
             )}
-            {attach("completePricing", [], a.quotesAttached ? null : "No supplier quote attached yet. Attach the quotes behind these costs, or send without.")}
             <Field label="Valid till, for lines without their own date" required error={errors.quoteValidTill}>
-              <Input name="quoteValidTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} />
+              <Input name="quoteValidTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} className="w-44" />
             </Field>
-            <Field label="Notes for sales"><Textarea name="responseNotes" className="min-h-14" placeholder="Stock, price hold, lead times" /></Field>
+            {reminder(a.quotesAttached ? null : "No supplier quote attached yet.")}
+            <MoreOptions hint={filesHint}>
+              {attach("completePricing", [])}
+              <Field label="Notes for sales"><Textarea name="responseNotes" className="min-h-14" placeholder="Stock, price hold, lead times" /></Field>
+            </MoreOptions>
             <Footer onCancel={close} pending={pending} label="Send to sales" icon={<Send />} />
           </form>
         </DialogContent>
@@ -392,9 +403,9 @@ function QuoteForm({ a, close }: { a: Extract<DealAction, { kind: "quote" }>; cl
             defaultValue={a.maxValidTill && a.maxValidTill < new Date(Date.now() + 30 * 86_400_000) ? isoDate(a.maxValidTill) : plusDays(30)}
           />
         </Field>
-        <Field label="Terms">
-          <Textarea name="terms" className="min-h-20" defaultValue={"Prices in INR, exclusive of GST.\nPayment: 30 days from invoice.\nDelivery: 3–4 weeks from PO, subject to OEM stock.\nWarranty and support as per OEM terms."} />
-        </Field>
+        <MoreOptions label="Terms" hint="standard terms">
+          <Textarea name="terms" aria-label="Terms" className="min-h-20" defaultValue={"Prices in INR, exclusive of GST.\nPayment: 30 days from invoice.\nDelivery: 3–4 weeks from PO, subject to OEM stock.\nWarranty and support as per OEM terms."} />
+        </MoreOptions>
         <Footer onCancel={close} pending={pending} label={a.version > 1 ? "Send revised quote" : "Create & send quote"} icon={<Send />} />
       </form>
     </DialogContent>
@@ -505,42 +516,46 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
             <Textarea name="reason" defaultValue={revision.note ?? ""} placeholder="e.g. Customer wants 5 nodes instead of 3" />
           </Field>
         )}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Presales engineer" required error={errors.assignedToId}>
-            <Select name="assignedToId" defaultValue={a.revision?.assigneeId ?? ""}>
-              <option value="" disabled>Select</option>
-              {a.presales.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </Select>
-          </Field>
-          <Field label="Needed by" required error={errors.dueDate}>
-            <Input name="dueDate" type="date" defaultValue={plusDays(revision ? 3 : 7)} min={isoDate(new Date())} />
-          </Field>
-        </div>
         <Field label="Customer requirement" required error={errors.scope}>
           <Textarea name="scope" defaultValue={a.revision?.scope} placeholder="e.g. 3-node HCI cluster for 120 VMs with 3-year support" />
         </Field>
-        {!revision && (
-          <Field label="What presales should deliver" error={errors.deliverables}>
-            <div role="group" aria-label="Deliverables" className="flex flex-wrap gap-1.5">
-              {PRESALES_DELIVERABLES.map((d) => (
-                <button
-                  key={d.key} type="button" aria-pressed={asked.includes(d.key)} onClick={() => toggle(d.key)}
-                  className={cn("rounded-full border px-2.5 py-1 text-xs cursor-pointer", asked.includes(d.key) ? "border-primary bg-primary-soft font-medium text-ink" : "border-border text-ink-2 hover:border-border-strong")}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
+        <Field label="Needed by" required error={errors.dueDate}>
+          <Input name="dueDate" type="date" defaultValue={plusDays(revision ? 3 : 7)} min={isoDate(new Date())} className="w-44" />
+        </Field>
+        {a.docHint && !files.length && <p className="text-xs text-[var(--t-amber)]">{a.docHint} Add it under More options.</p>}
+        <MoreOptions
+          hint={[a.revision?.assigneeId ? a.presales.find((u) => u.id === a.revision!.assigneeId)?.name ?? "auto-assigned" : "auto-assigned", files.length ? `${files.length} file${files.length > 1 ? "s" : ""}` : null].filter(Boolean).join(" · ")}
+          forceOpen={!!errors.assignedToId || !!errors.siteDetails || !!errors.deliverables}
+        >
+          <Field label="Presales engineer" error={errors.assignedToId}>
+            <Select name="assignedToId" defaultValue={a.revision?.assigneeId ?? ""} aria-label="Presales engineer">
+              <option value="">Auto-assign</option>
+              {a.presales.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </Select>
           </Field>
-        )}
-        {asked.includes("SITE_SURVEY") && !revision && (
-          <Field label="Sites to survey" required error={errors.siteDetails}>
-            <Textarea name="siteDetails" className="min-h-14" placeholder="e.g. Mumbai DC (Andheri) and Pune DR site" />
-          </Field>
-        )}
-        {ATTACH.pullPresales.some((k) => !a.canAdd || a.canAdd.includes(k)) && (
-          <AttachFiles label="Customer documents (RFP, SoW…)" kinds={ATTACH.pullPresales.filter((k) => !a.canAdd || a.canAdd.includes(k))} files={files} onChange={setFiles} existing={a.docs} hint={a.docHint} />
-        )}
+          {!revision && (
+            <Field label="What presales should deliver" error={errors.deliverables}>
+              <div role="group" aria-label="Deliverables" className="flex flex-wrap gap-1.5">
+                {PRESALES_DELIVERABLES.map((d) => (
+                  <button
+                    key={d.key} type="button" aria-pressed={asked.includes(d.key)} onClick={() => toggle(d.key)}
+                    className={cn("rounded-full border px-2.5 py-1 text-xs cursor-pointer", asked.includes(d.key) ? "border-primary bg-primary-soft font-medium text-ink" : "border-border text-ink-2 hover:border-border-strong")}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          )}
+          {asked.includes("SITE_SURVEY") && !revision && (
+            <Field label="Sites to survey" required error={errors.siteDetails}>
+              <Textarea name="siteDetails" className="min-h-14" placeholder="e.g. Mumbai DC (Andheri) and Pune DR site" />
+            </Field>
+          )}
+          {ATTACH.pullPresales.some((k) => !a.canAdd || a.canAdd.includes(k)) && (
+            <AttachFiles label="Customer documents (RFP, SoW…)" kinds={ATTACH.pullPresales.filter((k) => !a.canAdd || a.canAdd.includes(k))} files={files} onChange={setFiles} existing={a.docs} />
+          )}
+        </MoreOptions>
         <input type="hidden" name="priority" value="NORMAL" />
         <Footer onCancel={close} pending={pending} label="Send to presales" icon={<Send />} />
       </form>
