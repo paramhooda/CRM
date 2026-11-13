@@ -1,3 +1,5 @@
+import type { z } from "zod";
+
 /** Filters live in the URL so every view can be bookmarked and shared. */
 export type Query = Record<string, string | string[] | undefined>;
 
@@ -14,3 +16,9 @@ export function queryString(current: URLSearchParams | Query, patch: Record<stri
 }
 
 export const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+/** Parse list filters from the URL; an invalid URL falls back to the defaults instead of an error page. */
+export function parseListQuery<S extends z.ZodType>(schema: S, q: Query): z.output<S> {
+  const r = schema.safeParse(q);
+  return r.success ? r.data : schema.parse({});
+}
