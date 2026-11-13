@@ -115,6 +115,11 @@ Defects the suite found and that were fixed before this report: the line dialog'
 when an Advance landed on Closed-Won; the fields a stage move sets (hold reason, loss reason, PO number, presales
 owner) were not audited; test dates were computed in UTC while the app counts "today" in IST.
 
+**Not verified in the build environment:** the Docker image. The sandbox this was built in does not let a container
+reach the npm registry (TLS is intercepted), so `docker build` could not complete here. The Dockerfile uses only the
+official `node:22-alpine` image and `npm ci`; the CI workflow's `docker` job builds it, and the first
+`docker compose up --build` on a normal machine is the check.
+
 Screenshots of every main screen, per role, are in `docs/screenshots/` (light, dark and a phone-width view of the
 deals list). They were checked against the look-and-feel rules: coloured primary, tinted sidebar and tiles, stage and
 forecast pills that always carry text, one colour per business unit in tags and charts, loading and empty states.
