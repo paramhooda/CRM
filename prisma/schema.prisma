@@ -1,0 +1,998 @@
+// Progression CRM data model.
+// Every model and field carries a /// comment: scripts/data-dictionary.ts turns them into docs/DATA_DICTIONARY.md.
+// Conventions: snake_case table and column names, uuid primary keys, timestamps in UTC (timestamptz),
+// money as numeric(16,2) with a currency, soft deletes (deleted_at) on business records, enums for values the
+// code branches on, lookup tables for values an admin may extend.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── Enums (fixed: the code branches on them) ─────────────────────────
+
+/// What a person may do in the CRM. ADMIN manages everything; SALES_HEAD manages a team; SALES owns deals;
+/// PRESALES builds BOQs; PURCHASE prices lines.
+enum UserRole {
+  ADMIN
+  SALES_HEAD
+  SALES
+  PRESALES
+  PURCHASE
+
+  @@map("user_role")
+}
+
+/// How a person signs in. PASSWORD today; MICROSOFT_365 is reserved for single sign-on later.
+enum AuthProvider {
+  PASSWORD
+  MICROSOFT_365
+
+  @@map("auth_provider")
+}
+
+/// Stage and status of a deal in one field. Open: QUALIFIED, BOQ, PROPOSAL_SUBMITTED, NEGOTIATION, HOLD.
+/// Closed: CLOSED_WON, CLOSED_LOST, DROPPED.
+enum DealStage {
+  QUALIFIED
+  BOQ
+  PROPOSAL_SUBMITTED
+  NEGOTIATION
+  HOLD
+  CLOSED_WON
+  CLOSED_LOST
+  DROPPED
+
+  @@map("deal_stage")
+}
+
+/// Sales person's confidence: COMMIT (will close this quarter), UPSIDE (could), PIPELINE (working it).
+enum ForecastCategory {
+  COMMIT
+  UPSIDE
+  PIPELINE
+
+  @@map("forecast_category")
+}
+
+/// ONE_TIME is billed once; ARR is billed annually over a term in months.
+enum RevenueModel {
+  ONE_TIME
+  ARR
+
+  @@map("revenue_model")
+}
+
+/// Lead lifecycle. CONVERTED and DISQUALIFIED are final.
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  DISQUALIFIED
+
+  @@map("lead_status")
+}
+
+/// Presales request lifecycle.
+enum PresalesRequestStatus {
+  REQUESTED
+  IN_PROGRESS
+  SUBMITTED
+  CANCELLED
+
+  @@map("presales_request_status")
+}
+
+/// Pricing request lifecycle.
+enum PricingRequestStatus {
+  REQUESTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+
+  @@map("pricing_request_status")
+}
+
+/// Price approval lifecycle. SUPERSEDED: the lines or prices changed after the request, so it no longer applies.
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUPERSEDED
+
+  @@map("approval_status")
+}
+
+/// Who approves a step of an approval rule: the deal owner's manager, anyone with a role, or a named person.
+enum ApproverKind {
+  OWNER_MANAGER
+  ROLE
+  USER
+
+  @@map("approver_kind")
+}
+
+/// Decision on one step of an approval.
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+
+  @@map("approval_decision")
+}
+
+/// What an audit row records.
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  RESTORE
+  STAGE_CHANGE
+  LOGIN
+  LOGOUT
+
+  @@map("audit_action")
+}
+
+/// Who a pipeline review covered: one sales person, a manager's team, or everyone.
+enum ReviewScope {
+  REP
+  TEAM
+  EVERYONE
+
+  @@map("review_scope")
+}
+
+/// Which closing outcome a loss reason may be used for.
+enum LossReasonAppliesTo {
+  LOST
+  DROPPED
+  BOTH
+
+  @@map("loss_reason_applies_to")
+}
+
+// ───────────────────────── Lookups (admin-editable; deactivate, never delete) ─────────────────────────
+
+/// A business unit (practice): IT Infrastructure, Cloud, Services, Cybersecurity. Top of the product hierarchy.
+model BusinessUnit {
+  /// Permanent identifier.
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Display name, unique.
+  name        String   @unique
+  /// Short code used in reports (ITI, CLD, SVC, CYB), unique.
+  code        String   @unique
+  /// Theme token that gives this unit its colour on tags and charts (bu-iti, bu-cloud, bu-services, bu-cyber).
+  colourToken String   @default("bu-iti") @map("colour_token")
+  /// Inactive values are hidden from new records but kept on old ones.
+  isActive    Boolean  @default(true) @map("is_active")
+  /// Order in dropdowns and charts.
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  subBusinessUnits SubBusinessUnit[]
+  products         Product[]
+  dealLines        DealLine[]
+  leads            Lead[]
+  primaryOfDeals   Deal[]           @relation("DealPrimaryBusinessUnit")
+  approvalRules    ApprovalRule[]
+
+  @@map("business_units")
+}
+
+/// A Sub BU (category) inside a business unit, for example Server under IT Infrastructure.
+model SubBusinessUnit {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The business unit this Sub BU belongs to.
+  businessUnitId String   @map("business_unit_id") @db.Uuid
+  /// Display name, unique within its business unit.
+  name           String
+  /// Whether deals selling this Sub BU usually need presales (suggests the deal's "needs presales" flag).
+  needsPresales  Boolean  @default(false) @map("needs_presales")
+  isActive       Boolean  @default(true) @map("is_active")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id])
+  products     Product[]
+  dealLines    DealLine[]
+
+  @@unique([businessUnitId, name])
+  @@map("sub_business_units")
+}
+
+/// A vendor whose products are sold. Not mapped to a business unit.
+model Oem {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Display name, unique.
+  name      String   @unique
+  /// Own IP: the OEM is Progression itself or Neon Cloud. Own-IP lines have no sales method and may be costed
+  /// by presales.
+  isOwnIp   Boolean  @default(false) @map("is_own_ip")
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  products       Product[]
+  dealLines      DealLine[]
+  primaryOfDeals Deal[]     @relation("DealPrimaryOem")
+
+  @@map("oems")
+}
+
+/// Where a lead or deal came from (OEM Referral, Distributor Referral, Existing Customer, Inbound, Outbound,
+/// Tender, Event).
+model LeadSource {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  leads Lead[]
+  deals Deal[]
+
+  @@map("lead_sources")
+}
+
+/// Customer segment (Enterprise, Mid-market, SMB, Government/PSU).
+model Segment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  accounts Account[]
+  leads    Lead[]
+
+  @@map("segments")
+}
+
+/// Customer industry (BFSI, Manufacturing, …).
+model Industry {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  accounts Account[]
+  leads    Lead[]
+
+  @@map("industries")
+}
+
+/// Why a deal was lost or dropped. Required when closing as lost or dropped.
+model LossReason {
+  id        String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String              @unique
+  /// Whether the reason is offered for Closed-Lost, Dropped, or both.
+  appliesTo LossReasonAppliesTo @default(BOTH) @map("applies_to")
+  isActive  Boolean             @default(true) @map("is_active")
+  sortOrder Int                 @default(0) @map("sort_order")
+  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  deals Deal[]
+
+  @@map("loss_reasons")
+}
+
+/// Kind of file attached to a deal (Customer RFP, SoW, Solution document, Supplier quote, Customer PO, Proposal,
+/// Other).
+model DocumentKind {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String   @unique
+  /// Only sales roles may see documents of this kind (they carry sales prices): Customer PO, Proposal.
+  restrictedToSales  Boolean  @default(false) @map("restricted_to_sales")
+  /// A document of this kind must be attached before a deal can be closed as won: Customer PO.
+  requiredAtWon      Boolean  @default(false) @map("required_at_won")
+  isActive           Boolean  @default(true) @map("is_active")
+  sortOrder          Int      @default(0) @map("sort_order")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  documents DealDocument[]
+
+  @@map("document_kinds")
+}
+
+/// How a third-party line is bought: B2B, MoQ or Stock. Not used for own-IP lines.
+model SalesMethod {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  dealLines DealLine[]
+
+  @@map("sales_methods")
+}
+
+/// The product catalogue. A product fixes the business unit, Sub BU and OEM of a deal line.
+model Product {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Product code (PRD-0001), unique.
+  code              String       @unique
+  /// Product name, unique per OEM.
+  name              String
+  businessUnitId    String       @map("business_unit_id") @db.Uuid
+  subBusinessUnitId String       @map("sub_business_unit_id") @db.Uuid
+  oemId             String       @map("oem_id") @db.Uuid
+  /// Unit of measure (Nos, Licence, Month, Pool…).
+  unit              String       @default("Nos")
+  /// Default revenue model for lines of this product.
+  revenueModel      RevenueModel @default(ONE_TIME) @map("revenue_model")
+  /// Default term in months for ARR products.
+  defaultTermMonths Int?         @map("default_term_months")
+  /// Indicative list price per unit (annual for ARR), INR.
+  listPrice         Decimal?     @map("list_price") @db.Decimal(16, 2)
+  /// Standard cost per unit, used as the default purchase cost of own-IP lines, INR.
+  standardCost      Decimal?     @map("standard_cost") @db.Decimal(16, 2)
+  /// GST classification code.
+  hsnSac            String?      @map("hsn_sac")
+  isActive          Boolean      @default(true) @map("is_active")
+  createdById       String?      @map("created_by_id") @db.Uuid
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete: when set, the product is hidden everywhere until restored.
+  deletedAt         DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  deletedById       String?      @map("deleted_by_id") @db.Uuid
+
+  businessUnit    BusinessUnit    @relation(fields: [businessUnitId], references: [id])
+  subBusinessUnit SubBusinessUnit @relation(fields: [subBusinessUnitId], references: [id])
+  oem             Oem             @relation(fields: [oemId], references: [id])
+  createdBy       User?           @relation("ProductCreatedBy", fields: [createdById], references: [id])
+  dealLines       DealLine[]
+
+  @@unique([oemId, name])
+  @@index([businessUnitId, subBusinessUnitId])
+  @@index([deletedAt])
+  @@map("products")
+}
+
+// ───────────────────────── Identity ─────────────────────────
+
+/// A person who uses the CRM. Users are deactivated, never deleted.
+model User {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Full name as shown in the application.
+  fullName           String    @map("full_name")
+  /// Sign-in email, stored lower-case, unique.
+  email              String    @unique
+  role               UserRole
+  /// The person this user reports to. Managers see the deals of everyone who reports to them.
+  managerId          String?   @map("manager_id") @db.Uuid
+  /// Job title, for display.
+  title              String?
+  /// Inactive users cannot sign in and their sessions are revoked.
+  isActive           Boolean   @default(true) @map("is_active")
+  /// Set when an admin gives a temporary password; the user must choose a new one at next sign-in.
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  /// Sign-in is refused until this time after too many failed attempts.
+  lockedUntil        DateTime? @map("locked_until") @db.Timestamptz(6)
+  lastLoginAt        DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  manager          User?             @relation("UserManager", fields: [managerId], references: [id])
+  reports          User[]            @relation("UserManager")
+  identities       AuthIdentity[]
+  sessions         Session[]
+  ownedAccounts    Account[]         @relation("AccountOwner")
+  ownedLeads       Lead[]            @relation("LeadOwner")
+  ownedDeals       Deal[]            @relation("DealOwner")
+  presalesDeals    Deal[]            @relation("DealPresalesOwner")
+  createdProducts  Product[]         @relation("ProductCreatedBy")
+  stageChanges     DealStageHistory[]
+  auditRows        AuditLog[]
+  presalesAssigned PresalesRequest[] @relation("PresalesAssignee")
+  presalesRaised   PresalesRequest[] @relation("PresalesRequester")
+  pricingAssigned  PricingRequest[]  @relation("PricingAssignee")
+  pricingRaised    PricingRequest[]  @relation("PricingRequester")
+  documents        DealDocument[]
+  approvalsRaised  DealApproval[]
+  reviews          PipelineReview[]
+  targets          SalesTarget[]
+
+  @@index([role, isActive])
+  @@index([managerId])
+  @@map("users")
+}
+
+/// A way a user signs in. One row per provider; the password hash lives here for PASSWORD.
+model AuthIdentity {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String       @map("user_id") @db.Uuid
+  provider        AuthProvider
+  /// The identifier at the provider: the email for PASSWORD, the directory object id for MICROSOFT_365.
+  providerSubject String       @map("provider_subject")
+  /// bcrypt hash; only for PASSWORD.
+  passwordHash    String?      @map("password_hash")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt      DateTime?    @map("last_used_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerSubject])
+  @@unique([userId, provider])
+  @@map("auth_identities")
+}
+
+/// A signed-in browser session. The cookie holds a random token; only its hash is stored.
+model Session {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// SHA-256 of the cookie token, unique.
+  tokenHash         String    @unique @map("token_hash")
+  userId            String    @map("user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt        DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  /// Idle expiry, extended on use (12 hours).
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  /// Hard expiry, never extended (72 hours).
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(6)
+  /// Set when the session is signed out or revoked.
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  ip                String?
+  userAgent         String?   @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Every sign-in attempt, for rate limiting and lockout. Rows older than 30 days are pruned.
+model LoginAttempt {
+  id          BigInt   @id @default(autoincrement())
+  email       String
+  ip          String?
+  succeeded   Boolean
+  attemptedAt DateTime @default(now()) @map("attempted_at") @db.Timestamptz(6)
+
+  @@index([email, attemptedAt])
+  @@index([ip, attemptedAt])
+  @@map("login_attempts")
+}
+
+/// Counters behind record codes (ACC, LEAD, PRD, OPP-FY27).
+model Sequence {
+  /// The counter's name.
+  key       String @id
+  /// The next number to hand out.
+  nextValue BigInt @default(1) @map("next_value")
+
+  @@map("sequences")
+}
+
+// ───────────────────────── Customers ─────────────────────────
+
+/// A customer or prospect company.
+model Account {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Account code (ACC-0001), unique.
+  code        String    @unique
+  /// Legal or trading name. Unique among non-deleted accounts (checked by the application).
+  name        String
+  /// GST identification number, 15 characters, unique.
+  gstin       String?   @unique @db.Char(15)
+  industryId  String?   @map("industry_id") @db.Uuid
+  segmentId   String?   @map("segment_id") @db.Uuid
+  website     String?
+  phone       String?
+  addressLine String?   @map("address_line")
+  city        String?
+  state       String?
+  pincode     String?   @db.Char(6)
+  /// The sales person who owns the relationship.
+  ownerId     String    @map("owner_id") @db.Uuid
+  notes       String?
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete: when set, the account is hidden until an admin restores it.
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedById String?   @map("deleted_by_id") @db.Uuid
+
+  industry Industry? @relation(fields: [industryId], references: [id])
+  segment  Segment?  @relation(fields: [segmentId], references: [id])
+  owner    User      @relation("AccountOwner", fields: [ownerId], references: [id])
+  contacts Contact[]
+  deals    Deal[]
+  leads    Lead[]    @relation("LeadConvertedAccount")
+
+  @@index([ownerId])
+  @@index([name])
+  @@index([deletedAt])
+  @@map("accounts")
+}
+
+/// A person at an account.
+model Contact {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId   String    @map("account_id") @db.Uuid
+  firstName   String    @map("first_name")
+  lastName    String    @map("last_name")
+  /// Email, stored lower-case, unique across contacts.
+  email       String?   @unique
+  phone       String?
+  mobile      String?
+  designation String?
+  department  String?
+  /// The main contact at the account.
+  isPrimary   Boolean   @default(false) @map("is_primary")
+  notes       String?
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedById String?   @map("deleted_by_id") @db.Uuid
+
+  account        Account @relation(fields: [accountId], references: [id])
+  primaryOfDeals Deal[]  @relation("DealPrimaryContact")
+  leads          Lead[]  @relation("LeadConvertedContact")
+
+  @@index([accountId])
+  @@index([deletedAt])
+  @@map("contacts")
+}
+
+/// An unqualified enquiry. Converted once into an account, a contact and a deal.
+model Lead {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lead code (LEAD-0001), unique.
+  code               String     @unique
+  companyName        String     @map("company_name")
+  contactName        String     @map("contact_name")
+  contactEmail       String?    @map("contact_email")
+  contactPhone       String?    @map("contact_phone")
+  designation        String?
+  leadSourceId       String     @map("lead_source_id") @db.Uuid
+  industryId         String?    @map("industry_id") @db.Uuid
+  segmentId          String?    @map("segment_id") @db.Uuid
+  /// Business unit of interest.
+  businessUnitId     String?    @map("business_unit_id") @db.Uuid
+  /// Rough value, INR.
+  estimatedValue     Decimal?   @map("estimated_value") @db.Decimal(16, 2)
+  currency           String     @default("INR") @db.Char(3)
+  notes              String?
+  status             LeadStatus @default(NEW)
+  ownerId            String     @map("owner_id") @db.Uuid
+  /// Why the lead was disqualified.
+  disqualifyReason   String?    @map("disqualify_reason")
+  convertedAt        DateTime?  @map("converted_at") @db.Timestamptz(6)
+  convertedAccountId String?    @map("converted_account_id") @db.Uuid
+  convertedContactId String?    @map("converted_contact_id") @db.Uuid
+  convertedDealId    String?    @map("converted_deal_id") @db.Uuid
+  createdById        String?    @map("created_by_id") @db.Uuid
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?  @map("deleted_at") @db.Timestamptz(6)
+  deletedById        String?    @map("deleted_by_id") @db.Uuid
+
+  leadSource       LeadSource    @relation(fields: [leadSourceId], references: [id])
+  industry         Industry?     @relation(fields: [industryId], references: [id])
+  segment          Segment?      @relation(fields: [segmentId], references: [id])
+  businessUnit     BusinessUnit? @relation(fields: [businessUnitId], references: [id])
+  owner            User          @relation("LeadOwner", fields: [ownerId], references: [id])
+  convertedAccount Account?      @relation("LeadConvertedAccount", fields: [convertedAccountId], references: [id])
+  convertedContact Contact?      @relation("LeadConvertedContact", fields: [convertedContactId], references: [id])
+  convertedDeal    Deal?         @relation("LeadConvertedDeal", fields: [convertedDealId], references: [id])
+
+  @@index([ownerId, status])
+  @@index([deletedAt])
+  @@map("leads")
+}
+
+// ───────────────────────── Deals ─────────────────────────
+
+/// A sale being pursued at an account. Value, cost, margin and the primary BU/OEM are derived from its lines.
+model Deal {
+  id                    String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Deal code numbered per fiscal year (OPP-FY27-0042), unique.
+  code                  String           @unique
+  name                  String
+  accountId             String           @map("account_id") @db.Uuid
+  /// The customer contact for this deal; required to leave Qualified.
+  primaryContactId      String?          @map("primary_contact_id") @db.Uuid
+  /// The sales person who owns the deal.
+  ownerId               String           @map("owner_id") @db.Uuid
+  /// The presales engineer on the latest presales request.
+  presalesOwnerId       String?          @map("presales_owner_id") @db.Uuid
+  stage                 DealStage        @default(QUALIFIED)
+  /// When the deal entered its current stage; the basis of time-in-stage.
+  stageEnteredAt        DateTime         @default(now()) @map("stage_entered_at") @db.Timestamptz(6)
+  /// The open stage the deal was in when it was put on hold; Resume returns it there.
+  heldFromStage         DealStage?       @map("held_from_stage")
+  /// The last open stage before closing; Reopen returns the deal there.
+  lastOpenStage         DealStage?       @map("last_open_stage")
+  forecastCategory      ForecastCategory @default(PIPELINE) @map("forecast_category")
+  expectedCloseDate     DateTime         @map("expected_close_date") @db.Date
+  /// Whether presales builds a BOQ before the proposal. Suggested from the lines' Sub BUs.
+  needsPresales         Boolean          @default(false) @map("needs_presales")
+  leadSourceId          String?          @map("lead_source_id") @db.Uuid
+  description           String?
+  /// What happens next on the deal, and when.
+  nextStep              String?          @map("next_step")
+  nextStepDate          DateTime?        @map("next_step_date") @db.Date
+  /// Why the deal is on hold.
+  holdReason            String?          @map("hold_reason")
+  lossReasonId          String?          @map("loss_reason_id") @db.Uuid
+  lossNotes             String?          @map("loss_notes")
+  closedAt              DateTime?        @map("closed_at") @db.Timestamptz(6)
+  /// Customer purchase order number, recorded at Closed-Won.
+  poNumber              String?          @map("po_number")
+  currency              String           @default("INR") @db.Char(3)
+  /// Derived: total value of all lines (one-time plus ARR over its term), INR.
+  dealValue             Decimal          @default(0) @map("deal_value") @db.Decimal(16, 2)
+  /// Derived: value of the one-time lines.
+  oneTimeValue          Decimal          @default(0) @map("one_time_value") @db.Decimal(16, 2)
+  /// Derived: annual value of the ARR lines.
+  annualRecurringValue  Decimal          @default(0) @map("annual_recurring_value") @db.Decimal(16, 2)
+  /// Derived: total purchase cost of the priced lines; null while any priced line has no cost.
+  totalCost             Decimal?         @map("total_cost") @db.Decimal(16, 2)
+  /// Derived: expected gross margin, (value - cost) / value, percent; null while the cost is unknown.
+  expectedGmPct         Decimal?         @map("expected_gm_pct") @db.Decimal(5, 2)
+  /// Derived: business unit of the largest line.
+  primaryBusinessUnitId String?          @map("primary_business_unit_id") @db.Uuid
+  /// Derived: OEM of the largest line.
+  primaryOemId          String?          @map("primary_oem_id") @db.Uuid
+  /// Hash of the lines' quantities, prices, costs and terms; an approval is valid only while it matches.
+  priceFingerprint      String?          @map("price_fingerprint")
+  /// Optimistic lock: a write must carry the version it read.
+  version               Int              @default(1)
+  createdById           String?          @map("created_by_id") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt             DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  deletedById           String?          @map("deleted_by_id") @db.Uuid
+
+  account             Account            @relation(fields: [accountId], references: [id])
+  primaryContact      Contact?           @relation("DealPrimaryContact", fields: [primaryContactId], references: [id])
+  owner               User               @relation("DealOwner", fields: [ownerId], references: [id])
+  presalesOwner       User?              @relation("DealPresalesOwner", fields: [presalesOwnerId], references: [id])
+  leadSource          LeadSource?        @relation(fields: [leadSourceId], references: [id])
+  lossReason          LossReason?        @relation(fields: [lossReasonId], references: [id])
+  primaryBusinessUnit BusinessUnit?      @relation("DealPrimaryBusinessUnit", fields: [primaryBusinessUnitId], references: [id])
+  primaryOem          Oem?               @relation("DealPrimaryOem", fields: [primaryOemId], references: [id])
+  lines               DealLine[]
+  stageHistory        DealStageHistory[]
+  presalesRequests    PresalesRequest[]
+  pricingRequests     PricingRequest[]
+  documents           DealDocument[]
+  approvals           DealApproval[]
+  convertedFromLeads  Lead[]             @relation("LeadConvertedDeal")
+
+  @@index([ownerId, stage])
+  @@index([stage, expectedCloseDate])
+  @@index([accountId])
+  @@index([primaryBusinessUnitId])
+  @@index([primaryOemId])
+  @@index([presalesOwnerId])
+  @@index([deletedAt])
+  @@map("deals")
+}
+
+/// One item sold on a deal: a catalogue product or a custom item, with quantity, price and cost.
+model DealLine {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId            String       @map("deal_id") @db.Uuid
+  /// Position on the deal, 1-based, unique per deal.
+  lineNo            Int          @map("line_no")
+  /// The catalogue product, or null for a custom item.
+  productId         String?      @map("product_id") @db.Uuid
+  description       String
+  businessUnitId    String       @map("business_unit_id") @db.Uuid
+  subBusinessUnitId String       @map("sub_business_unit_id") @db.Uuid
+  oemId             String       @map("oem_id") @db.Uuid
+  quantity          Decimal      @default(1) @db.Decimal(12, 2)
+  unit              String       @default("Nos")
+  revenueModel      RevenueModel @default(ONE_TIME) @map("revenue_model")
+  /// Term in months; required for ARR lines.
+  termMonths        Int?         @map("term_months")
+  /// Sales price per unit (annual for ARR), INR. Set by sales.
+  unitSalesPrice    Decimal?     @map("unit_sales_price") @db.Decimal(16, 2)
+  /// Purchase cost per unit (annual for ARR), INR. Set by purchase, or presales for own-IP lines.
+  unitPurchaseCost  Decimal?     @map("unit_purchase_cost") @db.Decimal(16, 2)
+  costSetById       String?      @map("cost_set_by_id") @db.Uuid
+  costSetAt         DateTime?    @map("cost_set_at") @db.Timestamptz(6)
+  /// B2B, MoQ or Stock; null for own-IP lines.
+  salesMethodId     String?      @map("sales_method_id") @db.Uuid
+  /// Derived: quantity × unit price for ARR lines (per year).
+  annualValue       Decimal?     @map("annual_value") @db.Decimal(16, 2)
+  /// Derived: quantity × unit price, times term/12 for ARR lines.
+  lineValue         Decimal?     @map("line_value") @db.Decimal(16, 2)
+  /// Derived: quantity × unit cost, times term/12 for ARR lines.
+  lineCost          Decimal?     @map("line_cost") @db.Decimal(16, 2)
+  /// Derived: (price - cost) / price, percent.
+  expectedGmPct     Decimal?     @map("expected_gm_pct") @db.Decimal(5, 2)
+  updatedById       String?      @map("updated_by_id") @db.Uuid
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Last updated.
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  deal            Deal            @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  product         Product?        @relation(fields: [productId], references: [id])
+  businessUnit    BusinessUnit    @relation(fields: [businessUnitId], references: [id])
+  subBusinessUnit SubBusinessUnit @relation(fields: [subBusinessUnitId], references: [id])
+  oem             Oem             @relation(fields: [oemId], references: [id])
+  salesMethod     SalesMethod?    @relation(fields: [salesMethodId], references: [id])
+
+  @@unique([dealId, lineNo])
+  @@index([productId])
+  @@index([oemId])
+  @@index([businessUnitId, subBusinessUnitId])
+  @@map("deal_lines")
+}
+
+/// Every stage change of a deal, for time-in-stage reporting.
+model DealStageHistory {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId              String     @map("deal_id") @db.Uuid
+  /// Null for the first row (creation).
+  fromStage           DealStage? @map("from_stage")
+  toStage             DealStage  @map("to_stage")
+  changedById         String     @map("changed_by_id") @db.Uuid
+  changedAt           DateTime   @default(now()) @map("changed_at") @db.Timestamptz(6)
+  /// Days the deal spent in the previous stage.
+  daysInPreviousStage Decimal?   @map("days_in_previous_stage") @db.Decimal(8, 2)
+  /// The deal's value when the stage changed.
+  dealValueAtChange   Decimal    @map("deal_value_at_change") @db.Decimal(16, 2)
+  /// The reason given (hold, back, reopen), the loss reason, or the PO number.
+  note                String?
+
+  deal      Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  changedBy User @relation(fields: [changedById], references: [id])
+
+  @@index([dealId, changedAt])
+  @@map("deal_stage_history")
+}
+
+/// Who changed what and when, with the old and new value.
+model AuditLog {
+  id          BigInt      @id @default(autoincrement())
+  /// The kind of record (deal, deal_line, account, contact, lead, user, product, lookup:<table>, …).
+  entityType  String      @map("entity_type")
+  entityId    String      @map("entity_id") @db.Uuid
+  /// The deal a change belongs to, so a deal's history includes its lines, requests and documents.
+  dealId      String?     @map("deal_id") @db.Uuid
+  action      AuditAction
+  /// The field changed, for UPDATE rows.
+  field       String?
+  oldValue    String?     @map("old_value")
+  newValue    String?     @map("new_value")
+  changedById String?     @map("changed_by_id") @db.Uuid
+  changedAt   DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+  /// Groups the rows written by one request.
+  requestId   String?     @map("request_id") @db.Uuid
+
+  changedBy User? @relation(fields: [changedById], references: [id])
+
+  @@index([entityType, entityId, changedAt])
+  @@index([dealId, changedAt])
+  @@index([changedAt])
+  @@index([changedById, changedAt])
+  @@map("audit_log")
+}
+
+/// Sales asking presales to build the BOQ for a deal.
+model PresalesRequest {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId        String                @map("deal_id") @db.Uuid
+  requestedById String                @map("requested_by_id") @db.Uuid
+  /// The presales engineer.
+  assignedToId  String                @map("assigned_to_id") @db.Uuid
+  dueDate       DateTime              @map("due_date") @db.Date
+  status        PresalesRequestStatus @default(REQUESTED)
+  /// What sales needs from presales.
+  scope         String
+  /// Presales' summary when submitting.
+  summary       String?
+  requestedAt   DateTime              @default(now()) @map("requested_at") @db.Timestamptz(6)
+  startedAt     DateTime?             @map("started_at") @db.Timestamptz(6)
+  submittedAt   DateTime?             @map("submitted_at") @db.Timestamptz(6)
+  cancelledAt   DateTime?             @map("cancelled_at") @db.Timestamptz(6)
+  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  deal        Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  requestedBy User @relation("PresalesRequester", fields: [requestedById], references: [id])
+  assignedTo  User @relation("PresalesAssignee", fields: [assignedToId], references: [id])
+
+  @@index([assignedToId, status])
+  @@index([dealId, status])
+  @@map("presales_requests")
+}
+
+/// Sales or presales asking purchase to price the lines of a deal.
+model PricingRequest {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId          String               @map("deal_id") @db.Uuid
+  requestedById   String               @map("requested_by_id") @db.Uuid
+  /// The buyer.
+  assignedToId    String               @map("assigned_to_id") @db.Uuid
+  dueDate         DateTime             @map("due_date") @db.Date
+  status          PricingRequestStatus @default(REQUESTED)
+  notes           String?
+  /// Purchase's notes when completing.
+  completionNotes String?              @map("completion_notes")
+  requestedAt     DateTime             @default(now()) @map("requested_at") @db.Timestamptz(6)
+  startedAt       DateTime?            @map("started_at") @db.Timestamptz(6)
+  completedAt     DateTime?            @map("completed_at") @db.Timestamptz(6)
+  cancelledAt     DateTime?            @map("cancelled_at") @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  deal        Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  requestedBy User @relation("PricingRequester", fields: [requestedById], references: [id])
+  assignedTo  User @relation("PricingAssignee", fields: [assignedToId], references: [id])
+
+  @@index([assignedToId, status])
+  @@index([dealId, status])
+  @@map("pricing_requests")
+}
+
+/// A file attached to a deal. The content is stored in the database.
+model DealDocument {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId         String    @map("deal_id") @db.Uuid
+  documentKindId String    @map("document_kind_id") @db.Uuid
+  fileName       String    @map("file_name")
+  contentType    String    @map("content_type")
+  /// Size in bytes (at most 20 MB).
+  sizeBytes      Int       @map("size_bytes")
+  content        Bytes
+  description    String?
+  uploadedById   String    @map("uploaded_by_id") @db.Uuid
+  uploadedAt     DateTime  @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedById    String?   @map("deleted_by_id") @db.Uuid
+
+  deal       Deal         @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  kind       DocumentKind @relation(fields: [documentKindId], references: [id])
+  uploadedBy User         @relation(fields: [uploadedById], references: [id])
+
+  @@index([dealId])
+  @@map("deal_documents")
+}
+
+// ───────────────────────── Approvals ─────────────────────────
+
+/// An admin-defined rule saying when a deal's prices need approval, and by whom. Every condition set must hold.
+model ApprovalRule {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String    @unique
+  isActive         Boolean   @default(true) @map("is_active")
+  /// Applies when the deal's expected GM is below this percentage.
+  gmBelowPct       Decimal?  @map("gm_below_pct") @db.Decimal(5, 2)
+  /// Applies when the deal value is at or above this amount, INR.
+  dealValueAtLeast Decimal?  @map("deal_value_at_least") @db.Decimal(16, 2)
+  /// Applies only to deals with a line in this business unit; null means any.
+  businessUnitId   String?   @map("business_unit_id") @db.Uuid
+  sortOrder        Int       @default(0) @map("sort_order")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedById      String?   @map("deleted_by_id") @db.Uuid
+
+  businessUnit BusinessUnit?      @relation(fields: [businessUnitId], references: [id])
+  steps        ApprovalRuleStep[]
+
+  @@map("approval_rules")
+}
+
+/// One approver in a rule's chain, in order.
+model ApprovalRuleStep {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  approvalRuleId String       @map("approval_rule_id") @db.Uuid
+  stepNo         Int          @map("step_no")
+  approverKind   ApproverKind @map("approver_kind")
+  /// For ROLE: anyone with this role may approve.
+  approverRole   UserRole?    @map("approver_role")
+  /// For USER: this person.
+  approverUserId String?      @map("approver_user_id") @db.Uuid
+
+  rule ApprovalRule @relation(fields: [approvalRuleId], references: [id], onDelete: Cascade)
+
+  @@unique([approvalRuleId, stepNo])
+  @@map("approval_rule_steps")
+}
+
+/// A request to approve a deal's prices, with its resolved chain of steps.
+model DealApproval {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId           String         @map("deal_id") @db.Uuid
+  requestedById    String         @map("requested_by_id") @db.Uuid
+  requestedAt      DateTime       @default(now()) @map("requested_at") @db.Timestamptz(6)
+  status           ApprovalStatus @default(PENDING)
+  /// The deal's price fingerprint when approval was requested.
+  priceFingerprint String         @map("price_fingerprint")
+  dealValue        Decimal        @map("deal_value") @db.Decimal(16, 2)
+  gmPct            Decimal?       @map("gm_pct") @db.Decimal(5, 2)
+  /// The rule conditions that matched, in words.
+  reasons          String[]
+  /// The step waiting for a decision, 1-based.
+  currentStep      Int            @default(1) @map("current_step")
+  decidedAt        DateTime?      @map("decided_at") @db.Timestamptz(6)
+
+  deal        Deal               @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  requestedBy User               @relation(fields: [requestedById], references: [id])
+  steps       DealApprovalStep[]
+
+  @@index([dealId, status])
+  @@map("deal_approvals")
+}
+
+/// One step of a deal approval and its decision.
+model DealApprovalStep {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealApprovalId  String            @map("deal_approval_id") @db.Uuid
+  stepNo          Int               @map("step_no")
+  /// Who this step is for, in words ("Vivek Malhotra (manager)", "Any Sales Head").
+  label           String
+  /// The users who may decide this step.
+  approverUserIds String[]          @map("approver_user_ids") @db.Uuid
+  decision        ApprovalDecision?
+  decidedById     String?           @map("decided_by_id") @db.Uuid
+  decidedAt       DateTime?         @map("decided_at") @db.Timestamptz(6)
+  note            String?
+  /// True when the step passed on its own because its only approver was the requester.
+  autoPassed      Boolean           @default(false) @map("auto_passed")
+
+  approval DealApproval @relation(fields: [dealApprovalId], references: [id], onDelete: Cascade)
+
+  @@unique([dealApprovalId, stepNo])
+  @@map("deal_approval_steps")
+}
+
+// ───────────────────────── Reviews and targets ─────────────────────────
+
+/// A pipeline review that was carried out, so "since last review" can be worked out per person.
+model PipelineReview {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewedById   String      @map("reviewed_by_id") @db.Uuid
+  reviewedAt     DateTime    @default(now()) @map("reviewed_at") @db.Timestamptz(6)
+  scope          ReviewScope
+  /// The sales person (REP) or manager (TEAM) the scope refers to.
+  scopeUserId    String?     @map("scope_user_id") @db.Uuid
+  /// The sales people the review covered.
+  subjectUserIds String[]    @map("subject_user_ids") @db.Uuid
+  /// The start of the window the review looked at.
+  sinceDate      DateTime    @map("since_date") @db.Timestamptz(6)
+  notes          String?
+
+  reviewedBy User @relation(fields: [reviewedById], references: [id])
+
+  @@index([reviewedAt])
+  @@map("pipeline_reviews")
+}
+
+/// A sales person's quarterly target.
+model SalesTarget {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  /// Fiscal year by its end year: FY27 = 2027 (April 2026 to March 2027).
+  fiscalYear  Int      @map("fiscal_year")
+  /// Quarter 1–4 of the fiscal year (Q1 = April–June).
+  quarter     Int
+  targetValue Decimal  @map("target_value") @db.Decimal(16, 2)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fiscalYear, quarter])
+  @@map("sales_targets")
+}
