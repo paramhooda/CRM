@@ -21,7 +21,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            variant={destructive ? "destructive" : "default"}
+            className={destructive ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
             disabled={pending}
             onClick={async (e) => {
               e.preventDefault();

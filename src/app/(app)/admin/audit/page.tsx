@@ -13,6 +13,7 @@ import { AuditFilters } from "./audit-filters";
 import { fmtDateTime } from "@/lib/format";
 import { ACTION_LABEL, entityLabel, fieldLabel } from "@/lib/labels";
 import { parseListQuery, type Query } from "@/lib/url-state";
+import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "Audit log" };
 
@@ -33,7 +34,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
     { key: "when", header: "When", cell: (r) => <span className="whitespace-nowrap text-xs">{fmtDateTime(r.changedAt)}</span> },
     { key: "who", header: "Who", cell: (r) => r.changedBy?.fullName ?? "System" },
     { key: "action", header: "Action", cell: (r) => ACTION_LABEL[r.action] ?? r.action, hideBelow: "md" },
-    { key: "entity", header: "Record", cell: (r) => { const href = linkFor(r); const label = <span>{entityLabel(r.entityType)}<span className="block font-mono text-[11px] text-muted-foreground">{r.entityId.slice(0, 8)}</span></span>; return href ? <Link href={href} className="hover:text-primary">{label}</Link> : label; } },
+    { key: "entity", header: "Record", cell: (r) => { const href = linkFor(r); const label = <span>{entityLabel(r.entityType)}<RecordCode className="block text-[11px]">{r.entityId.slice(0, 8)}</RecordCode></span>; return href ? <Link href={href} className="hover:text-link">{label}</Link> : label; } },
     { key: "field", header: "Field", cell: (r) => (r.field ? fieldLabel(r.field) : "—"), hideBelow: "md" },
     { key: "old", header: "From", cell: (r) => <span className="block max-w-56 truncate text-xs text-muted-foreground" title={r.oldValue ?? ""}>{r.oldValue ?? "—"}</span>, hideBelow: "lg" },
     { key: "new", header: "To", cell: (r) => <span className="block max-w-56 truncate text-xs" title={r.newValue ?? ""}>{r.newValue ?? "—"}</span> },

@@ -40,12 +40,12 @@ export function FilterBar({ filters, search, className, children }: { filters: F
           }}
         >
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={search.placeholder} aria-label="Search" className="h-8 w-56 pl-8" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={search.placeholder} aria-label="Search" className="w-64 pl-8" />
         </form>
       )}
       {filters.map((f) => (
         <Select key={f.key} value={params.get(f.key) ?? "__all"} onValueChange={(v) => apply({ [f.key]: v === "__all" ? null : v })}>
-          <SelectTrigger size="sm" aria-label={f.label} className={cn("h-8", f.width ?? "w-auto min-w-36")}>
+          <SelectTrigger aria-label={f.label} className={cn(f.width ?? "w-auto min-w-36")}>
             <SelectValue placeholder={f.label} />
           </SelectTrigger>
           <SelectContent>
@@ -58,7 +58,7 @@ export function FilterBar({ filters, search, className, children }: { filters: F
       ))}
       {children}
       {active > 0 && (
-        <Button variant="ghost" size="sm" onClick={() => apply(Object.fromEntries([...filters.map((f) => [f.key, null]), ["q", null]]))}>
+        <Button variant="ghost" onClick={() => apply(Object.fromEntries([...filters.map((f) => [f.key, null]), ["q", null]]))}>
           <X /> Clear
         </Button>
       )}

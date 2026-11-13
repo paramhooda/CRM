@@ -20,6 +20,7 @@ import { fmtDate, inr } from "@/lib/format";
 import { fieldLabel } from "@/lib/labels";
 import { STAGE_META, type Stage } from "@/domain/stages";
 import { cn } from "@/lib/utils";
+import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "Pipeline review" };
 
@@ -63,7 +64,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {r.people.map((p) => (
-                  <div key={p.user.id} className="rounded-xl border border-border bg-card-tint p-4 text-sm">
+                  <div key={p.user.id} className="rounded-xl border border-border bg-card p-4 text-sm shadow-card">
                     <div className="flex items-baseline justify-between">
                       <div className="font-semibold">{p.user.fullName}</div>
                       <div className="text-xs text-muted-foreground">{p.deals} deals · since {fmtDate(p.since)}</div>
@@ -85,15 +86,15 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
           <section className="mt-6" aria-label="Deals">
             <div className="mb-2 flex items-baseline justify-between">
               <h2 className="text-sm font-semibold">{showAll ? "All deals" : "Deals that changed or need raising"}</h2>
-              <Link href={`/reviews?${new URLSearchParams({ ...(q.scope ? { scope: q.scope } : {}), ...(q.scope_user_id ? { scope_user_id: q.scope_user_id } : {}), ...(q.since ? { since: q.since } : {}), ...(showAll ? {} : { show: "all" }) }).toString()}`} className="text-xs text-primary hover:underline">{showAll ? "Show only changed or flagged" : `Show all ${r.deals.length} deals`}</Link>
+              <Link href={`/reviews?${new URLSearchParams({ ...(q.scope ? { scope: q.scope } : {}), ...(q.scope_user_id ? { scope_user_id: q.scope_user_id } : {}), ...(q.since ? { since: q.since } : {}), ...(showAll ? {} : { show: "all" }) }).toString()}`} className="text-xs text-link hover:underline">{showAll ? "Show only changed or flagged" : `Show all ${r.deals.length} deals`}</Link>
             </div>
             {shown.length === 0 ? (
               <EmptyState title={r.deals.length === 0 ? "No deals in scope" : "Nothing changed and nothing is flagged"} description={r.deals.length ? "Use the link above to see every deal." : undefined} className="py-8" />
             ) : (
-              <div className="overflow-hidden rounded-xl border border-border bg-card">
+              <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
+                    <thead className="border-b border-border bg-background text-left text-xs text-muted-foreground">
                       <tr><th className="px-3 py-2 font-medium">Deal</th><th className="px-3 py-2 font-medium">Owner</th><th className="px-3 py-2 font-medium">Stage</th><th className="px-3 py-2 text-right font-medium">Value</th><th className="px-3 py-2 text-right font-medium">GM</th><th className="px-3 py-2 font-medium">Close</th><th className="px-3 py-2 font-medium">Changes</th><th className="px-3 py-2 font-medium">Flags</th></tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -101,7 +102,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
                         const changes = Object.entries(d.changes.changes);
                         return (
                           <tr key={d.id} className={cn("align-top", d.flags.length && "bg-warning/5")}>
-                            <td className="px-3 py-2"><Link href={`/deals/${d.id}`} className="font-medium hover:text-primary">{d.name}</Link><div className="text-xs text-muted-foreground">{d.code} · {d.account.name}</div></td>
+                            <td className="px-3 py-2"><Link href={`/deals/${d.id}`} className="font-medium hover:text-link">{d.name}</Link><div className="text-xs text-muted-foreground"><RecordCode>{d.code}</RecordCode> · {d.account.name}</div></td>
                             <td className="whitespace-nowrap px-3 py-2 text-xs">{d.owner.fullName}</td>
                             <td className="px-3 py-2"><StagePill stage={d.stage} /><div className="mt-1 text-[11px] text-muted-foreground">{d.daysInStage}d</div></td>
                             <td className="whitespace-nowrap px-3 py-2 text-right"><Money value={d.dealValue} /><div className="mt-1"><ForecastPill forecast={d.forecastCategory} /></div></td>
@@ -114,7 +115,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
                                 <div key={f}><span className="text-muted-foreground">{fieldLabel(f)}:</span> {show(f, c.from)} → <span className="font-medium">{show(f, c.to)}</span></div>
                               ))}
                             </td>
-                            <td className="px-3 py-2"><div className="flex flex-wrap gap-1">{d.flags.map((f) => <NeutralPill key={f} className="bg-warning/15 text-warning-foreground">{FLAG_LABEL[f]}</NeutralPill>)}</div></td>
+                            <td className="px-3 py-2"><div className="flex flex-wrap gap-1">{d.flags.map((f) => <NeutralPill key={f} className="bg-stage-proposal text-stage-proposal-foreground">{FLAG_LABEL[f]}</NeutralPill>)}</div></td>
                           </tr>
                         );
                       })}

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { AccountFilters } from "./account-filters";
 import { fmtDate } from "@/lib/format";
 import { parseListQuery, type Query } from "@/lib/url-state";
+import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "Accounts" };
 
@@ -24,7 +25,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const [result, owners] = await Promise.all([listAccounts(actor, { q: query.q, industryId: query.industry, segmentId: query.segment, ownerId: query.owner, includeDeleted: query.includeDeleted }, query), salesPeopleFor(actor)]);
   const columns: Column<AccountListRow>[] = [
     { key: "name", header: "Account", sort: "name", cell: (r) => <span>{r.name}{r.deletedAt && <span className="ml-2 text-xs text-destructive">(deleted)</span>}</span> },
-    { key: "code", header: "Code", sort: "code", cell: (r) => <span className="font-mono text-xs text-muted-foreground">{r.code}</span>, hideBelow: "md" },
+    { key: "code", header: "Code", sort: "code", cell: (r) => <RecordCode>{r.code}</RecordCode>, hideBelow: "md" },
     { key: "industry", header: "Industry", cell: (r) => r.industry?.name ?? "—", hideBelow: "lg" },
     { key: "segment", header: "Segment", cell: (r) => r.segment?.name ?? "—", hideBelow: "lg" },
     { key: "city", header: "City", sort: "city", cell: (r) => r.city ?? "—", hideBelow: "md" },

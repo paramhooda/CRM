@@ -16,6 +16,7 @@ import { ContactsPanel } from "./contacts-panel";
 import { fmtDate } from "@/lib/format";
 import { can } from "@/domain/permissions";
 import type { Stage } from "@/domain/stages";
+import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "Account" };
 
@@ -36,7 +37,7 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
       <PageHeader
         title={a.name}
         crumbs={[{ href: "/accounts", label: "Accounts" }]}
-        description={<span className="flex flex-wrap items-center gap-x-3 gap-y-1"><span className="font-mono text-xs">{a.code}</span>{facts.map((f) => <span key={String(f)}>{f}</span>)}<span>Owner: {a.owner.fullName}</span>{a.gstin && <span className="font-mono text-xs">GSTIN {a.gstin}</span>}</span>}
+        description={<span className="flex flex-wrap items-center gap-x-3 gap-y-1"><RecordCode>{a.code}</RecordCode>{facts.map((f) => <span key={String(f)}>{f}</span>)}<span>Owner: {a.owner.fullName}</span>{a.gstin && <RecordCode>GSTIN {a.gstin}</RecordCode>}</span>}
         meta={a.deletedAt ? <NeutralPill className="bg-destructive/10 text-destructive">Deleted {fmtDate(a.deletedAt)}</NeutralPill> : null}
         actions={
           <>
@@ -48,7 +49,7 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
         }
       />
       {(a.website || a.phone || a.addressLine || a.notes) && (
-        <div className="mb-5 grid gap-3 rounded-xl border border-border bg-card-tint p-4 text-sm sm:grid-cols-3">
+        <div className="mb-5 grid gap-3 rounded-xl border border-border bg-card p-4 text-sm shadow-card sm:grid-cols-3">
           {a.website && <div><div className="text-xs text-muted-foreground">Website</div><a href={a.website} target="_blank" rel="noreferrer" className="text-primary hover:underline">{a.website.replace(/^https?:\/\//, "")}</a></div>}
           {a.phone && <div><div className="text-xs text-muted-foreground">Phone</div>{a.phone}</div>}
           {a.addressLine && <div><div className="text-xs text-muted-foreground">Address</div>{[a.addressLine, a.city, a.state, a.pincode].filter(Boolean).join(", ")}</div>}
@@ -70,7 +71,7 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
             <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
               {a.deals.map((d) => (
                 <Link key={d.id} href={`/deals/${d.id}`} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50">
-                  <span className="w-28 shrink-0 font-mono text-xs text-muted-foreground">{d.code}</span>
+                  <RecordCode className="w-28 shrink-0">{d.code}</RecordCode>
                   <span className="min-w-0 flex-1 truncate font-medium">{d.name}</span>
                   <span className="text-xs text-muted-foreground">{d.owner.fullName}</span>
                   <StagePill stage={d.stage as Stage} />

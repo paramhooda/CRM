@@ -29,7 +29,7 @@ export function LoginForm({ next }: { next?: string }) {
         <Input id="password" type="password" autoComplete="current-password" value={f.values.password} onChange={(e) => f.set("password", e.target.value)} aria-invalid={!!f.errors.password} />
       </Field>
       <FormError message={f.formError} />
-      <Button type="submit" size="lg" disabled={f.pending} className="mt-1 w-full">{f.pending ? "Signing in…" : "Sign in"}</Button>
+      <Button type="submit" disabled={f.pending} className="mt-1 w-full">{f.pending ? "Signing in…" : "Sign in"}</Button>
     </form>
   );
 }

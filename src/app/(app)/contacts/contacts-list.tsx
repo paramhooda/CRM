@@ -13,8 +13,8 @@ type Row = { id: string; firstName: string; lastName: string; email: string | nu
 export function ContactsList({ rows, query, total, page, pages, canAdd }: { rows: Row[]; query: Query; total: number; page: number; pages: number; canAdd: boolean }) {
   const [editing, setEditing] = useState<Row | "new" | null>(null);
   const columns: Column<Row>[] = [
-    { key: "name", header: "Name", sort: "name", cell: (r) => <button type="button" className="text-left font-medium hover:text-primary" onClick={() => setEditing(r)}>{r.firstName} {r.lastName}{r.isPrimary && <span className="ml-1 text-xs text-muted-foreground">(primary)</span>}{r.deletedAt && <span className="ml-2 text-xs text-destructive">(deleted)</span>}</button> },
-    { key: "account", header: "Account", sort: "account", cell: (r) => <Link href={`/accounts/${r.account.id}`} className="hover:text-primary">{r.account.name}</Link> },
+    { key: "name", header: "Name", sort: "name", cell: (r) => <button type="button" className="text-left font-medium hover:text-link" onClick={() => setEditing(r)}>{r.firstName} {r.lastName}{r.isPrimary && <span className="ml-1 text-xs text-muted-foreground">(primary)</span>}{r.deletedAt && <span className="ml-2 text-xs text-destructive">(deleted)</span>}</button> },
+    { key: "account", header: "Account", sort: "account", cell: (r) => <Link href={`/accounts/${r.account.id}`} className="hover:text-link">{r.account.name}</Link> },
     { key: "designation", header: "Designation", cell: (r) => r.designation ?? "—", hideBelow: "md" },
     { key: "email", header: "Email", cell: (r) => r.email ?? "—", hideBelow: "md" },
     { key: "phone", header: "Phone", cell: (r) => r.mobile ?? r.phone ?? "—", hideBelow: "lg" },

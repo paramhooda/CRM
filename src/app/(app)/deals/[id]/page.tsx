@@ -21,6 +21,7 @@ import { DocumentsPanel } from "./documents-panel";
 import { HistoryPanel } from "./history-panel";
 import { fmtDate, relativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "Deal" };
 
@@ -76,7 +77,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   return (
     <>
       <PageHeader
-        title={<span className="flex items-center gap-3"><span className="font-mono text-sm font-normal text-muted-foreground">{d.code}</span>{d.name}</span>}
+        title={<span className="flex items-center gap-3"><RecordCode className="text-sm">{d.code}</RecordCode>{d.name}</span>}
         crumbs={[{ href: "/deals", label: "Deals" }]}
         description={<span className="flex flex-wrap items-center gap-x-3 gap-y-1"><Link href={`/accounts/${d.account.id}`} className="hover:text-foreground">{d.account.name}</Link><span>Owner: {d.owner.fullName}</span>{d.presalesOwner && <span>Presales: {d.presalesOwner.fullName}</span>}</span>}
         meta={<><StagePill stage={d.stage} /><span className="text-xs text-muted-foreground">{d.daysInStage}d in stage</span>{sales && d.forecastCategory && <ForecastPill forecast={d.forecastCategory} />}{d.deletedAt && <NeutralPill className="bg-destructive/10 text-destructive">Deleted {fmtDate(d.deletedAt)}</NeutralPill>}</>}
@@ -89,7 +90,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
       />
       <section className="mb-5 grid gap-3 sm:grid-cols-3" aria-label="Key facts">
         {facts.map((f) => (
-          <div key={f.label} className="rounded-xl border border-border bg-card-tint px-4 py-3">
+          <div key={f.label} className="rounded-xl border border-border bg-card px-4 py-3 shadow-card">
             <div className="text-xs font-medium text-muted-foreground">{f.label}</div>
             <div className={cn("mt-1 text-xl font-semibold tracking-tight", "warn" in f && f.warn && "text-destructive")}>{f.value}</div>
             {f.sub && <div className="mt-0.5 text-xs text-muted-foreground">{f.sub}</div>}
@@ -112,7 +113,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               <div className="mb-2 flex items-center justify-between"><h2 className="text-sm font-semibold">Next step</h2>{d.nextStepDate && <span className={cn("text-xs", new Date(d.nextStepDate) < new Date() && !closed ? "text-destructive" : "text-muted-foreground")}>{fmtDate(d.nextStepDate)} · {relativeDays(d.nextStepDate)}</span>}</div>
               <p className={cn("text-sm", !d.nextStep && "text-muted-foreground")}>{d.nextStep ?? (closed ? "Closed." : "No next step set. Add one so the deal keeps moving.")}</p>
             </div>
-            <dl className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-2 rounded-xl border border-border bg-card-tint p-4 text-sm">
+            <dl className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm shadow-card">
               {overviewRows.map(([k, v]) => (
                 <div key={k} className="contents">
                   <dt className="text-xs text-muted-foreground">{k}</dt>

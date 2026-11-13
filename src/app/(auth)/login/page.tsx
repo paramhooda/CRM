@@ -11,10 +11,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const { next } = await searchParams;
   if (actor) redirect(next && next.startsWith("/") ? next : "/");
   return (
-    <div className="flex min-h-screen items-center justify-center bg-sidebar px-4">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex justify-center"><Logo height={36} /></div>
-        <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+        <div className="rounded-xl border border-border bg-card p-6 shadow-card">
           <h1 className="text-lg font-semibold tracking-tight">Sign in</h1>
           <p className="mb-5 mt-1 text-sm text-muted-foreground">Progression CRM</p>
           <LoginForm next={next} />

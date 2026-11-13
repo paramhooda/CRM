@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/crm/states";
 import { Button } from "@/components/ui/button";
 import { fmtDate, relativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "My work" };
 
@@ -35,8 +36,8 @@ export default async function MyWorkPage() {
             {w.open.map((r) => (
               <div key={r.id} className={cn("flex flex-wrap items-center gap-3 px-4 py-3", r.overdue && "bg-destructive/5")}>
                 <div className="min-w-0 flex-1">
-                  <Link href={`/deals/${r.deal.id}`} className="font-medium hover:text-primary">{r.deal.name}</Link>
-                  <div className="text-xs text-muted-foreground">{r.deal.code} · {r.deal.account.name} · {r.deal.owner.fullName} · {r.deal._count.lines} line{r.deal._count.lines === 1 ? "" : "s"}</div>
+                  <Link href={`/deals/${r.deal.id}`} className="font-medium hover:text-link">{r.deal.name}</Link>
+                  <div className="text-xs text-muted-foreground"><RecordCode>{r.deal.code}</RecordCode> · {r.deal.account.name} · {r.deal.owner.fullName} · {r.deal._count.lines} line{r.deal._count.lines === 1 ? "" : "s"}</div>
                   {"scope" in r && r.scope && <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{r.scope}</div>}
                   {"notes" in r && r.notes && <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{r.notes}</div>}
                 </div>
@@ -55,7 +56,7 @@ export default async function MyWorkPage() {
           <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
             {w.done.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
-                <Link href={`/deals/${r.deal.id}`} className="min-w-0 flex-1 truncate hover:text-primary">{r.deal.name} <span className="text-muted-foreground">· {r.deal.code}</span></Link>
+                <Link href={`/deals/${r.deal.id}`} className="min-w-0 flex-1 truncate hover:text-link">{r.deal.name} <RecordCode>· {r.deal.code}</RecordCode></Link>
                 <StatusPill status={r.status} />
                 <span className="text-xs text-muted-foreground">{fmtDate(r.updatedAt)}</span>
               </div>

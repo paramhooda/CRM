@@ -1,10 +1,10 @@
 import { cn } from "@/lib/utils";
 import { STAGE_META, type Stage } from "@/domain/stages";
 
-/** One pill style everywhere: colour carries meaning, the text always says what it is. */
+/** One tag style everywhere: a tinted background with darker text of the same hue, and the text always says what it is. */
 function Pill({ className, children, title }: { className?: string; children: React.ReactNode; title?: string }) {
   return (
-    <span title={title} className={cn("inline-flex h-6 max-w-full items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-xs font-medium", className)}>
+    <span title={title} className={cn("inline-flex h-6 max-w-full items-center gap-1 whitespace-nowrap rounded-md px-2 text-xs font-medium", className)}>
       {children}
     </span>
   );
@@ -38,7 +38,12 @@ const BU_CLASS: Record<string, string> = {
   "bu-services": "bg-bu-services-soft text-bu-services-foreground",
   "bu-cyber": "bg-bu-cyber-soft text-bu-cyber-foreground",
 };
+/** The solid colour of each business unit, for charts. */
 export const BU_SOLID: Record<string, string> = { "bu-iti": "var(--bu-iti)", "bu-cloud": "var(--bu-cloud)", "bu-services": "var(--bu-services)", "bu-cyber": "var(--bu-cyber)" };
+/** Blue-led categorical series, in order. */
+export const CHART_SERIES = Array.from({ length: 8 }, (_, i) => `var(--chart-${i + 1})`);
+/** One hue, light to dark, for ordered magnitudes (five steps). */
+export const CHART_MAGNITUDE = Array.from({ length: 5 }, (_, i) => `var(--chart-mag-${i + 1})`);
 
 export function BuTag({ name, colourToken, className }: { name: string; colourToken: string; className?: string }) {
   return <Pill className={cn(BU_CLASS[colourToken] ?? "bg-muted text-muted-foreground", className)}>{name}</Pill>;
@@ -72,5 +77,5 @@ export function StatusPill({ status, className }: { status: string; className?: 
 }
 
 export function NeutralPill({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <Pill className={cn("bg-muted text-muted-foreground", className)}>{children}</Pill>;
+  return <Pill className={cn("bg-muted text-foreground-secondary", className)}>{children}</Pill>;
 }

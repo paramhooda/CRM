@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 export type LookupRow = { id: string; name: string; code?: string | null; isActive: boolean; sortOrder: number; colourToken?: string | null; businessUnitId?: string | null; needsPresales?: boolean; isOwnIp?: boolean; appliesTo?: "LOST" | "DROPPED" | "BOTH"; restrictedToSales?: boolean; requiredAtWon?: boolean };
 type Bu = { id: string; name: string };
 
-const COLOURS = [{ id: "bu-iti", name: "Indigo" }, { id: "bu-cloud", name: "Teal" }, { id: "bu-services", name: "Amber" }, { id: "bu-cyber", name: "Rose" }];
+const COLOURS = [{ id: "bu-iti", name: "Blue" }, { id: "bu-cloud", name: "Green" }, { id: "bu-services", name: "Amber" }, { id: "bu-cyber", name: "Orange" }];
 const APPLIES = [{ id: "BOTH", name: "Lost and dropped" }, { id: "LOST", name: "Lost only" }, { id: "DROPPED", name: "Dropped only" }];
 
 /** One editor for every lookup table: name, order, active, plus the type's own fields. */
@@ -33,9 +33,9 @@ export function LookupEditor({ type, rows, businessUnits }: { type: LookupType; 
   };
   const columns: Column<LookupRow>[] = [
     { key: "name", header: "Name", cell: (r) => <span className={cn(!r.isActive && "text-muted-foreground line-through")}>{r.name}</span> },
-    ...(type === "business-units" ? ([{ key: "code", header: "Code", cell: (r) => r.code ?? "—" }, { key: "colour", header: "Colour", cell: (r) => <span className="flex items-center gap-2"><span className="size-3 rounded-full" style={{ background: `var(--${r.colourToken ?? "muted"})` }} />{COLOURS.find((c) => c.id === r.colourToken)?.name ?? "—"}</span> }] as Column<LookupRow>[]) : []),
+    ...(type === "business-units" ? ([{ key: "code", header: "Code", cell: (r) => r.code ?? "—" }, { key: "colour", header: "Colour", cell: (r) => <span className="flex items-center gap-2"><span className="size-3 rounded-sm" style={{ background: `var(--${r.colourToken ?? "muted"})` }} />{COLOURS.find((c) => c.id === r.colourToken)?.name ?? "—"}</span> }] as Column<LookupRow>[]) : []),
     ...(type === "sub-business-units" ? ([{ key: "bu", header: "Business unit", cell: (r) => buName.get(r.businessUnitId ?? "") ?? "—" }, { key: "presales", header: "Needs presales", cell: (r) => (r.needsPresales ? "Yes" : "No") }] as Column<LookupRow>[]) : []),
-    ...(type === "oems" ? ([{ key: "own", header: "Own IP", cell: (r) => (r.isOwnIp ? <NeutralPill className="bg-primary/10 text-primary">Own IP</NeutralPill> : "—") }] as Column<LookupRow>[]) : []),
+    ...(type === "oems" ? ([{ key: "own", header: "Own IP", cell: (r) => (r.isOwnIp ? <NeutralPill className="bg-selected text-selected-foreground">Own IP</NeutralPill> : "—") }] as Column<LookupRow>[]) : []),
     ...(type === "loss-reasons" ? ([{ key: "applies", header: "Applies to", cell: (r) => APPLIES.find((a) => a.id === r.appliesTo)?.name ?? "—" }] as Column<LookupRow>[]) : []),
     ...(type === "document-kinds" ? ([{ key: "flags", header: "Rules", cell: (r) => <span className="flex gap-1">{r.restrictedToSales && <NeutralPill>Sales only</NeutralPill>}{r.requiredAtWon && <NeutralPill>Required at Won</NeutralPill>}</span> }] as Column<LookupRow>[]) : []),
     { key: "order", header: "Order", align: "right", cell: (r) => r.sortOrder, hideBelow: "md" },

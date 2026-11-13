@@ -19,6 +19,7 @@ import { ViewToggle } from "./view-toggle";
 import { Kanban } from "./kanban";
 import { fmtDate, inr } from "@/lib/format";
 import { parseListQuery, type Query } from "@/lib/url-state";
+import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "Deals" };
 
@@ -48,7 +49,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   }
   const result = await listDeals(actor, query, query);
   const columns: Column<DealListRow>[] = [
-    { key: "name", header: "Deal", sort: "name", className: "min-w-52 max-w-72", cell: (r) => <span className="line-clamp-2">{r.name}<span className="block font-mono text-[11px] font-normal text-muted-foreground">{r.code}{r.deletedAt ? " · deleted" : ""}</span></span> },
+    { key: "name", header: "Deal", sort: "name", className: "min-w-52 max-w-72", cell: (r) => <span className="line-clamp-2">{r.name}<RecordCode className="block text-[11px] font-normal">{r.code}{r.deletedAt ? " · deleted" : ""}</RecordCode></span> },
     { key: "account", header: "Account", sort: "account", className: "max-w-48", cell: (r) => <span className="line-clamp-2">{r.account.name}</span>, hideBelow: "md" },
     { key: "stage", header: "Stage", sort: "stage", cell: (r) => <span className="flex flex-col items-start gap-1"><StagePill stage={r.stage} /><span className="text-[11px] text-muted-foreground">{r.daysInStage}d in stage</span></span> },
     { key: "bu", header: "BU", cell: (r) => <span className="flex flex-wrap gap-1">{r.businessUnits.map((b) => <BuTag key={b.id} name={b.name} colourToken={b.colourToken} />)}</span>, hideBelow: "lg" },

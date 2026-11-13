@@ -33,7 +33,7 @@ export default async function LookupsIndexPage() {
       <PageHeader title="Master data" description="The lists behind every dropdown. Deactivate values you no longer use; history keeps the old names." />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {LOOKUP_TYPES.map((t) => (
-          <Link key={t} href={`/admin/lookups/${t}`} className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card-tint p-4 transition-colors hover:border-primary/40">
+          <Link key={t} href={`/admin/lookups/${t}`} className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-card transition-colors hover:border-border-strong">
             <div>
               <div className="font-medium">{LOOKUP_LABEL[t]}</div>
               <p className="mt-1 text-xs text-muted-foreground">{DESCRIPTION[t]}</p>

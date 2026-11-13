@@ -27,7 +27,7 @@ export function UsersTable({ rows, includeInactive }: { rows: Row[]; includeInac
   const name = new Map(rows.map((r) => [r.id, r.fullName]));
   const locked = (r: Row) => !!r.lockedUntil && new Date(r.lockedUntil) > new Date();
   const columns: Column<Row>[] = [
-    { key: "name", header: "Name", cell: (r) => <button type="button" className="text-left font-medium hover:text-primary" onClick={() => setEditing(r)}>{r.fullName}{!r.isActive && <span className="ml-2 text-xs text-muted-foreground">(inactive)</span>}</button> },
+    { key: "name", header: "Name", cell: (r) => <button type="button" className="text-left font-medium hover:text-link" onClick={() => setEditing(r)}>{r.fullName}{!r.isActive && <span className="ml-2 text-xs text-muted-foreground">(inactive)</span>}</button> },
     { key: "email", header: "Email", cell: (r) => r.email, hideBelow: "md" },
     { key: "role", header: "Role", cell: (r) => <NeutralPill>{ROLE_LABEL[r.role]}</NeutralPill> },
     { key: "title", header: "Title", cell: (r) => r.title ?? "—", hideBelow: "lg" },

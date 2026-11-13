@@ -28,11 +28,11 @@ export function DataTable<T extends { id: string }>({ columns, rows, query, path
   const [sortField, sortDir] = sort.split(":");
   if (!rows.length) return <EmptyState {...empty} />;
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
+    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
-            <TableRow className="hover:bg-transparent">
+            <TableRow className="bg-background hover:bg-background">
               {columns.map((c) => {
                 const active = c.sort && sortField === c.sort;
                 const next = active && sortDir === "asc" ? "desc" : "asc";
@@ -43,7 +43,7 @@ export function DataTable<T extends { id: string }>({ columns, rows, query, path
                   </Link>
                 ) : c.header;
                 return (
-                  <TableHead key={c.key} className={cn("whitespace-nowrap text-xs font-medium text-muted-foreground", c.align === "right" && "text-right", c.hideBelow && HIDE[c.hideBelow], c.className)}>{head}</TableHead>
+                  <TableHead key={c.key} className={cn("whitespace-nowrap", c.align === "right" && "text-right", c.hideBelow && HIDE[c.hideBelow], c.className)}>{head}</TableHead>
                 );
               })}
             </TableRow>
@@ -53,7 +53,7 @@ export function DataTable<T extends { id: string }>({ columns, rows, query, path
               <TableRow key={r.id} className={cn(rowHref && "cursor-pointer", dense && "[&>td]:py-1.5")}>
                 {columns.map((c, i) => (
                   <TableCell key={c.key} className={cn("align-middle", c.align === "right" && "text-right tabular", c.hideBelow && HIDE[c.hideBelow], c.className)}>
-                    {rowHref && i === 0 ? <Link href={rowHref(r)} className="block -m-2 p-2 font-medium text-foreground hover:text-primary">{c.cell(r)}</Link> : c.cell(r)}
+                    {rowHref && i === 0 ? <Link href={rowHref(r)} className="-mx-3 -my-2 block px-3 py-2 font-medium text-foreground hover:text-link">{c.cell(r)}</Link> : c.cell(r)}
                   </TableCell>
                 ))}
               </TableRow>
@@ -62,7 +62,7 @@ export function DataTable<T extends { id: string }>({ columns, rows, query, path
         </Table>
       </div>
       {(footer || (pages && pages > 1) || total !== undefined) && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-background px-4 py-2 text-xs text-muted-foreground">
           <div>{footer ?? (total !== undefined ? `${total.toLocaleString("en-IN")} ${total === 1 ? "record" : "records"}` : null)}</div>
           {pages && pages > 1 && pathname && query && page && (
             <div className="flex items-center gap-1">

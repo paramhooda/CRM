@@ -19,6 +19,7 @@ import { useForm } from "@/client/use-form";
 import { api } from "@/client/api";
 import { REVENUE_MODEL_LABEL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
+import { RecordCode } from "@/components/crm/code";
 
 type Row = { id: string; code: string; name: string; unit: string; revenueModel: "ONE_TIME" | "ARR"; defaultTermMonths: number | null; listPrice: string | null; standardCost: string | null; hsnSac: string | null; isActive: boolean; deletedAt: string | null; businessUnitId: string; subBusinessUnitId: string; oemId: string; businessUnit: { name: string }; subBusinessUnit: { name: string }; oem: { name: string; isOwnIp: boolean } };
 
@@ -29,9 +30,9 @@ export function ProductsTable({ rows }: { rows: Row[] }) {
   const [removing, setRemoving] = useState<Row | null>(null);
   const bu = new Map(L.businessUnits.map((b) => [b.id, b]));
   const columns: Column<Row>[] = [
-    { key: "name", header: "Product", cell: (r) => <span className={cn(r.deletedAt && "text-muted-foreground line-through")}>{r.name}<span className="block font-mono text-[11px] text-muted-foreground">{r.code}{!r.isActive ? " · inactive" : ""}{r.deletedAt ? " · deleted" : ""}</span></span> },
+    { key: "name", header: "Product", cell: (r) => <span className={cn(r.deletedAt && "text-muted-foreground line-through")}>{r.name}<RecordCode className="block text-[11px]">{r.code}{!r.isActive ? " · inactive" : ""}{r.deletedAt ? " · deleted" : ""}</RecordCode></span> },
     { key: "bu", header: "BU · Sub BU", cell: (r) => <span className="flex items-center gap-1.5">{bu.get(r.businessUnitId) && <BuTag name={r.businessUnit.name} colourToken={bu.get(r.businessUnitId)!.colourToken} />}<span className="text-xs text-muted-foreground">{r.subBusinessUnit.name}</span></span> },
-    { key: "oem", header: "OEM", cell: (r) => <span>{r.oem.name}{r.oem.isOwnIp && <NeutralPill className="ml-1 bg-primary/10 text-primary">Own IP</NeutralPill>}</span>, hideBelow: "md" },
+    { key: "oem", header: "OEM", cell: (r) => <span>{r.oem.name}{r.oem.isOwnIp && <NeutralPill className="ml-1 bg-selected text-selected-foreground">Own IP</NeutralPill>}</span>, hideBelow: "md" },
     { key: "model", header: "Model", cell: (r) => `${REVENUE_MODEL_LABEL[r.revenueModel]}${r.revenueModel === "ARR" && r.defaultTermMonths ? ` · ${r.defaultTermMonths} mo` : ""} · ${r.unit}`, hideBelow: "lg" },
     { key: "price", header: "List price", align: "right", cell: (r) => <Money value={r.listPrice} precise />, hideBelow: "sm" },
     { key: "cost", header: "Std cost", align: "right", cell: (r) => <Money value={r.standardCost} precise />, hideBelow: "lg" },
