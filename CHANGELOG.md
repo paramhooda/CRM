@@ -2,6 +2,29 @@
 
 Each release says what changed, what happens to existing data, and any steps needed to upgrade.
 
+## 1.3.0: simpler screens
+
+**Deal page**
+- Header shows value, expected close and next step only.
+- Four tabs: Overview, Line items, Quotes, Documents.
+- Overview lists only what applies to the deal. Activity, buying group and history are one click from it.
+
+**Forms**
+- A new deal needs account, name, close date and what's being sold. The rest is under More details.
+- Presales is a Yes/No choice.
+- The lead form is just as short.
+
+**Hand-overs**
+- Each dialog asks only what is required; the rest is under More options.
+- The presales engineer is assigned automatically unless someone is picked.
+
+**Home page**
+- The first screen shows the numbers and a Needs your action list.
+- Filterable analytics sit below.
+- The opportunities list shows fewer columns by default; the rest can be switched on.
+
+**Data:** none. **Upgrade steps:** none.
+
 ## 1.2.0: lead to closure, checked end to end
 
 **Documents at every hand-over**

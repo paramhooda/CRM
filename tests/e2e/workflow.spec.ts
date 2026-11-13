@@ -43,6 +43,17 @@ async function pickProduct(page: Page, pickerIndex: number, sku: string) {
   await page.getByRole("button", { name: new RegExp(sku) }).click();
 }
 
+/** Optional fields on the deal form sit under "More details" */
+async function moreDetails(page: Page) {
+  const b = page.getByRole("button", { name: /More details/ });
+  if ((await b.getAttribute("aria-expanded")) !== "true") await b.click();
+}
+/** The presales engineer is optional in the BOQ request (auto-assigned); tests pick one under "More options" */
+async function pickPresales(dlg: ReturnType<Page["getByRole"]>, name: string) {
+  await dlg.getByRole("button", { name: /More options/ }).click();
+  await dlg.locator("select[name=assignedToId]").selectOption({ label: name });
+}
+
 test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM line items", () => {
   let oppUrl = "";
 
@@ -63,6 +74,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByRole("radio", { name: /Needs presales/ })).toHaveAttribute("aria-checked", "true");
     // Value rolls up from the lines: 10 × 2,52,350 + 2 × 9,10,800
     await expect(page.getByText("₹43.5 L").first()).toBeVisible();
+    await moreDetails(page);
     await page.fill("#nextStep", "Requirement workshop");
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
@@ -82,7 +94,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Advance to BOQ" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Request BOQ from presales")).toBeVisible();
-    await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
+    await pickPresales(dlg, PRESALES.name);
     await dlg.locator("textarea[name=scope]").fill("SD-WAN for 40 branches with dual ISP links and central orchestration.");
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
@@ -155,6 +167,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(dlg.getByText("Submit BOQ")).toBeVisible();
     await expect(dlg.getByText("2 of 3 lines go to purchase")).toBeVisible();
     await dlg.locator("textarea[name=solutionSummary]").fill("Cisco SD-WAN edge with Fortinet NGFW at hub, sized for 40 branches.");
+    await dlg.getByRole("button", { name: /More options/ }).click();
     await dlg.locator("select[name=purchaseUserId]").selectOption({ label: PURCHASE.name });
     await dlg.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
@@ -391,6 +404,7 @@ test.describe("Cost sources", () => {
     await pickProduct(page, 0, "NEON-HST-02");
     await page.getByLabel("Line 1 quantity").fill("50");
     await page.getByRole("radio", { name: /No presales/ }).click();
+    await moreDetails(page);
     await page.fill("#nextStep", "Send the proposal");
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
@@ -431,6 +445,7 @@ test.describe("Bringing presales into a resale deal", () => {
     await pickProduct(page, 0, "LNV-NBK-01");
     await page.getByLabel("Line 1 quantity").fill("40");
     await expect(page.getByRole("radio", { name: /No presales/ })).toHaveAttribute("aria-checked", "true"); // laptops are resale
+    await moreDetails(page);
     await page.fill("#nextStep", "Get pricing");
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
@@ -454,7 +469,7 @@ test.describe("Bringing presales into a resale deal", () => {
     await expect(dlg.getByText(/pricing request is stopped/)).toBeVisible();
     await expect(dlg.getByText("The deal moves back to the BOQ stage.")).toBeVisible();
     await expect(dlg.getByText(/Presales starts from your 1 line item/)).toBeVisible();
-    await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
+    await pickPresales(dlg, PRESALES.name);
     await dlg.locator("textarea[name=scope]").fill("40 laptops with imaging, asset tagging and on-site deployment.");
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(dlg.getByText("Say why presales is needed")).toBeVisible(); // a reason is required
@@ -593,7 +608,6 @@ test.describe("Process guardrails", () => {
     // The edit form shows the stage but cannot change it
     await page.goto(`${url}/edit`);
     await expect(page.locator("#stage")).toHaveCount(0);
-    await expect(page.getByText("Moves through the stage bar on the deal")).toBeVisible();
     await expect(page.locator("#forecastCategory option[value=COMMIT]")).toBeDisabled();
   });
 
@@ -628,10 +642,11 @@ test.describe("Process guardrails", () => {
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Advance to BOQ" }).click();
     const dlg = page.getByRole("dialog");
-    await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
+    // Only the requirement is needed: presales is assigned automatically
     await dlg.locator("textarea[name=scope]").fill("Ten access switches, same as the existing branch standard.");
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(currentStage(page)).toHaveText("BOQ");
+    await expect(page.getByLabel("Deal status")).toContainText("is preparing the BOQ");
     await stageMenu(page, "Skip BOQ (no presales needed)");
     await page.getByRole("dialog").locator("textarea[name=note]").fill("Standard branch switches; exact SKUs already on the deal");
     await page.getByRole("dialog").getByRole("button", { name: "Skip BOQ" }).click();
@@ -661,6 +676,8 @@ test.describe("Deal setup", () => {
     await page.getByLabel("Line 1 category").selectOption({ label: "Server" });
     await expect(page.getByRole("radio", { name: /Needs presales/ })).toHaveAttribute("aria-checked", "true");
     // Deal registration only for an OEM that runs it; the term only for recurring billing; the bid date only for RFP / tender
+    // (the optional ones sit under More details)
+    await moreDetails(page);
     await page.getByLabel("Line 1 OEM").selectOption({ label: "Dell" });
     await expect(page.locator("#dealRegStatus")).toBeVisible();
     await page.getByLabel("Line 1 OEM").selectOption({ label: "To be decided" });
@@ -671,9 +688,9 @@ test.describe("Deal setup", () => {
     await expect(page.locator("#submissionDueDate")).toHaveCount(0);
     await page.getByRole("radio", { name: "RFP" }).click();
     await expect(page.locator("#submissionDueDate")).toBeVisible();
-    // Deal type follows the account: a new logo is always new business
+    // Deal type follows the account: a new logo is always new business, so it isn't asked
     await page.selectOption("#accountId", { label: "SwiftMove Logistics Pvt Ltd" });
-    await expect(page.getByText("New logo · New business")).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "Deal type" })).toHaveCount(0);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
     await expect(page.getByRole("radiogroup", { name: "Deal type" }).getByRole("radio")).toHaveText(["Upsell", "Cross-sell", "Renewal"]);
   });
@@ -692,7 +709,7 @@ test.describe("Deal setup", () => {
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     const url = new URL(page.url()).pathname;
-    await expect(page.getByText("Resale · no presales")).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("resale");
     await expect(page.getByRole("list", { name: "Stage" }).locator("li", { hasText: /^BOQ$/ })).toHaveCount(0);
     await page.getByRole("button", { name: "Advance to Qualified" }).click();
     await expect(page.getByText("Moved to Qualified")).toBeVisible();
@@ -714,7 +731,7 @@ test.describe("Deal setup", () => {
     await expect(page.getByText("Moved to Qualified")).toBeVisible();
     await page.getByRole("button", { name: "Advance to BOQ" }).click();
     let dlg = page.getByRole("dialog");
-    await dlg.locator("select[name=assignedToId]").selectOption({ label: PRESALES.name });
+    await pickPresales(dlg, PRESALES.name);
     await dlg.locator("textarea[name=scope]").fill("Two rack servers for the branch file store.");
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(currentStage(page)).toHaveText("BOQ");
@@ -752,7 +769,6 @@ test.describe("Deal setup", () => {
     await expect(page.getByLabel("Deal status")).toContainText("Estimate only · resale");
     await expect(page.getByLabel("Deal status").getByRole("link", { name: "Add products" })).toBeVisible();
     await expect(page.getByLabel("Deal status").getByRole("button", { name: "Request BOQ from presales" })).toHaveCount(0); // not the main path
-    await expect(page.getByText("Resale · no presales")).toBeVisible();
   });
 });
 
@@ -784,6 +800,16 @@ test.describe("Line items, navigation and filters", () => {
     await expect(page).toHaveURL(/\/opportunities\?.*fc=COMMIT/);
     await expect(page.getByLabel("Active filters")).toContainText("Commit");
     await expect(page.getByLabel("Active filters")).toContainText("Open");
+  });
+
+  test("home shows the numbers and what needs action first, filterable analytics below", async ({ page }) => {
+    await login(page, HEAD);
+    await expect(page.getByRole("region", { name: "Needs your action" })).toBeVisible();
+    const analytics = page.getByRole("region", { name: "Analytics" });
+    await analytics.getByRole("button", { name: /^Period/ }).first().click();
+    await page.getByRole("button", { name: /^Last quarter/ }).click();
+    await expect(page).toHaveURL(/period=last-q/, { timeout: 8000 });
+    await expect(analytics).toBeVisible();
   });
 
   test("sidebar collapses with Ctrl+B and stays collapsed after reload", async ({ page }) => {

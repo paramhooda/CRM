@@ -41,6 +41,7 @@ test.describe.serial("Lead to closure", () => {
     await dlg.locator("input[name=lastName]").fill("Verma");
     await dlg.locator("input[name=company]").fill(company);
     await dlg.locator("input[name=email]").fill(`asha.${stamp}@lifecycle.example`);
+    await dlg.getByRole("button", { name: /More details/ }).click();
     await dlg.locator("select[name=status]").selectOption("QUALIFIED");
     await dlg.locator("textarea[name=requirement]").fill("40 laptops for the new branch");
     await dlg.getByRole("button", { name: "Save" }).click();
@@ -78,6 +79,7 @@ test.describe.serial("Lead to closure", () => {
 
     await page.getByRole("button", { name: "Advance to Pricing" }).click();
     const dlg = page.getByRole("dialog");
+    await dlg.getByRole("button", { name: /More options/ }).click();
     await dlg.getByLabel("Attach documents").setInputFiles(pdf("Laptop spec sheet.pdf"));
     await expect(dlg.getByText("Laptop spec sheet.pdf")).toBeVisible();
     await dlg.getByLabel("Kind of Laptop spec sheet.pdf").selectOption("BOQ_SHEET");
@@ -97,6 +99,7 @@ test.describe.serial("Lead to closure", () => {
     await page.getByLabel("Deal status").getByRole("button", { name: "Pricing complete" }).click();
     const done = page.getByRole("dialog");
     await expect(done.getByText(/No supplier quote attached yet/)).toBeVisible();
+    await done.getByRole("button", { name: /More options/ }).click();
     await done.getByLabel("Attach documents").setInputFiles(pdf("Redington quote R-2231.pdf"));
     await done.getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();

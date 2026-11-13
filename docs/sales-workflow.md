@@ -187,7 +187,42 @@ Under the stage path, one line says:
 
 On the right is **your** next action as a button. Less common actions sit under **More**. A sales manager sees the status and the sales-side actions (reassign, cancel, request a BOQ change). Presales and purchase work stays with the person assigned to it.
 
-The full trail (every request, revision, question and send-back) is on the **History** tab.
+Below the status, three facts: **value**, **expected close** and **next step**. Then four tabs:
+- **Overview**: next step, customer contact, team, and only the details that apply to this deal (bid date, deal
+  registration, competition, PO, loss reason, notes). Concern flags show here when there are any. Links lead to
+  **Activity & notes**, the **buying group** and the **history** (every request, revision, question, send-back and
+  field change).
+- **Line items**
+- **Quotes**
+- **Documents**
+
+## Asking only what is needed
+
+- **New deal:** account, opportunity name, expected close, and what's being sold. The customer contact is needed only
+  to qualify the deal. Whether presales is needed is a Yes/No suggested from the categories. Everything else
+  (procurement and bid date, deal registration, deal type, next step, lead source, competition, owner, notes) is
+  under **More details**, which opens by itself if one of them needs fixing.
+- **New lead:** name, company, email, phone and the requirement. The rest is under **More details**.
+- **Hand-overs** show only their required fields, with sensible defaults:
+  - **Request BOQ:** requirement and date. The presales engineer is assigned automatically: the deal's presales
+    owner, otherwise whoever has the least open work. Picking someone, deliverables and attachments are under
+    **More options**.
+  - **Submit BOQ:** the solution summary.
+  - **Request pricing:** the date.
+  - **Pricing complete:** the validity date.
+  - **Quote:** margin and validity; the terms are under **More options**.
+  - **Close as won:** PO number, date and file.
+
+  Reminders (a missing RFP or supplier quote) stay visible.
+
+## Home page
+
+- **First screen:** four numbers (open pipeline, commit and won this quarter, win rate) and **Needs your action**:
+  one line per deal waiting on you, most urgent first. That covers answering presales, a quote expiring or accepted,
+  the customer asking for changes, a priced deal to quote, a passed close date, an overdue next step, and a deal
+  going cold. Managers see their team's.
+- **Scroll down:** **Analytics**, with the filters (period, business unit, sales person and more), what needs
+  attention, insights, forecast, trend, pipeline by BU/category/OEM, and the team leaderboard.
 
 ## When something changes
 
