@@ -62,7 +62,10 @@ export const can = {
   viewSales: (u: U) => !isSupportRole(u),
   /** Product catalogue is governed centrally */
   manageProducts: (u: U) => u.role === "ADMIN",
+  /** Work with the customer on a quote: record their response, extend its validity */
   createQuote: (u: U, o: OppRef) => isManager(u) || (u.role === "SALES" && o.salesOwnerId === u.id),
+  /** Send a quote (or a revised one) to the customer: sales managers. The deal owner sets the prices and asks them. */
+  sendQuote: (u: U) => isManager(u),
   manageAccounts: (u: U) => u.role === "ADMIN" || u.role === "SALES_HEAD" || u.role === "SALES",
   manageLeads: (u: U) => u.role === "ADMIN" || u.role === "SALES_HEAD" || u.role === "SALES",
   logActivity: () => true,

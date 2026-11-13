@@ -12,12 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
 import {
-  requestPresales, startPresales, submitBoq, requestPricing, startPricing, completePricing, createQuote,
+  requestPresales, startPresales, submitBoq, requestPricing, startPricing, completePricing,
   askSales, answerPresales, returnToPresales, reassignRequest, cancelRequest, recordQuoteResponse, extendQuoteValidity, changeDueDate,
 } from "@/server/actions/workflow";
-import { fmtDate, inr, isoDate, pct } from "@/lib/format";
+import { fmtDate, isoDate } from "@/lib/format";
 import { AttachFiles, uploadAll, type ExistingDoc, type PickedFile } from "@/components/opportunities/attach-files";
 import { MoreOptions } from "@/components/ui/more-options";
+import { PricingForm, type PricingAction } from "@/components/opportunities/pricing-form";
 import type { ActionResult } from "@/lib/validation";
 import { PRESALES_DELIVERABLES } from "@/lib/deal-setup";
 import { cn } from "@/lib/utils";
@@ -44,7 +45,7 @@ export type DealAction = Base &
     | { kind: "reassign"; reqKind: "presales" | "pricing"; requestId: string; people: U[]; currentId: string; due: Date; overdue: boolean }
     | { kind: "cancel"; reqKind: "presales" | "pricing"; requestId: string }
     | { kind: "dueDate"; reqKind: "presales" | "pricing"; requestId: string; due: Date }
-    | { kind: "quote"; oppId: string; version: number; lines: { cost: number; price: number | null; mult: number }[]; maxValidTill?: Date | null }
+    | PricingAction
     | { kind: "response"; quoteId: string; version: number }
     | { kind: "extend"; quoteId: string; version: number; validTill: Date; maxValidTill: Date | null }
   );
@@ -338,78 +339,10 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
         </DialogContent>
       );
     case "quote":
-      return <QuoteForm a={a} close={close} />;
+      return <PricingForm a={a} close={close} />;
     case "response":
       return <ResponseForm a={a} close={close} />;
   }
-}
-
-/** Sales adds margin and sends the quote in one step. Prices already set on the lines can be kept. */
-function QuoteForm({ a, close }: { a: Extract<DealAction, { kind: "quote" }>; close: () => void }) {
-  const allPriced = a.lines.every((l) => l.price !== null);
-  const [keep, setKeep] = useState(allPriced);
-  const [margin, setMargin] = useState("15");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const { pending, run } = useAction();
-  const m = Math.min(90, Math.max(0, Number(margin) || 0)) / 100;
-  const cost = a.lines.reduce((s, l) => s + l.cost * l.mult, 0);
-  const value = a.lines.reduce((s, l) => s + (keep ? l.price ?? 0 : Math.round((l.cost / (1 - m)) * 100) / 100) * l.mult, 0);
-  const gm = value ? ((value - cost) / value) * 100 : null;
-  return (
-    <DialogContent title={a.version > 1 ? `Send revised quote (v${a.version})` : "Create & send quote"} description="The quote opens as a printable page to save as PDF and send. The deal moves to Proposal Submitted.">
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const f = Object.fromEntries(new FormData(e.currentTarget).entries());
-          run(() => createQuote(a.oppId, { ...f, marginPct: keep ? "" : String(m * 100) }), {
-            success: "Quote created",
-            onOk: (r) => {
-              close();
-              const id = (r.data as { id: string } | undefined)?.id;
-              if (id) window.open(`/opportunities/${a.oppId}/quotes/${id}`, "_blank");
-            },
-            onError: (r) => setErrors(r.fieldErrors ?? {}),
-          });
-        }}
-      >
-        <div className="rounded-lg border border-border p-3">
-          {allPriced && (
-            <div role="radiogroup" aria-label="Pricing" className="mb-3 grid grid-cols-2 gap-2">
-              {[{ v: true, l: "Use line item prices" }, { v: false, l: "Apply a margin" }].map((o) => (
-                <button
-                  key={o.l} type="button" role="radio" aria-checked={keep === o.v} onClick={() => setKeep(o.v)}
-                  className={cn("rounded-md border px-3 py-1.5 text-[13px] cursor-pointer", keep === o.v ? "border-primary bg-primary-soft font-medium" : "border-border text-ink-2 hover:border-border-strong")}
-                >
-                  {o.l}
-                </button>
-              ))}
-            </div>
-          )}
-          {!keep && (
-            <Field label="Gross margin %" hint="Sets the sell price of every line from its cost">
-              <Input value={margin} onChange={(e) => setMargin(e.target.value)} inputMode="decimal" aria-label="Gross margin %" className="w-28 text-right tabular" />
-            </Field>
-          )}
-          <dl className="mt-3 grid grid-cols-3 gap-2 text-[13px]">
-            <div><dt className="text-xs text-ink-3">Quote value</dt><dd className="font-semibold tabular">{inr(value)}</dd></div>
-            <div><dt className="text-xs text-ink-3">Cost</dt><dd className="tabular">{inr(cost)}</dd></div>
-            <div><dt className="text-xs text-ink-3">Margin</dt><dd className="tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>{gm === null ? "—" : pct(gm, 1)}</dd></div>
-          </dl>
-        </div>
-        <Field label="Valid till" required error={errors.validTill} hint={a.maxValidTill ? `Supplier prices hold until ${fmtDate(a.maxValidTill)}; the quote can't promise longer.` : undefined}>
-          <Input
-            name="validTill" type="date" min={isoDate(new Date())} max={a.maxValidTill ? isoDate(a.maxValidTill) : undefined}
-            defaultValue={a.maxValidTill && a.maxValidTill < new Date(Date.now() + 30 * 86_400_000) ? isoDate(a.maxValidTill) : plusDays(30)}
-          />
-        </Field>
-        <MoreOptions label="Terms" hint="standard terms">
-          <Textarea name="terms" aria-label="Terms" className="min-h-20" defaultValue={"Prices in INR, exclusive of GST.\nPayment: 30 days from invoice.\nDelivery: 3–4 weeks from PO, subject to OEM stock.\nWarranty and support as per OEM terms."} />
-        </MoreOptions>
-        <Footer onCancel={close} pending={pending} label={a.version > 1 ? "Send revised quote" : "Create & send quote"} icon={<Send />} />
-      </form>
-    </DialogContent>
-  );
 }
 
 const RESPONSES = [

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Save, Percent, Lock, Tag, Wand2, RefreshCw, Pencil, X } from "lucide-react";
+import { Plus, Trash2, Save, Lock, Tag, Wand2, RefreshCw, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -11,8 +11,8 @@ import { saveBoq } from "@/server/actions/workflow";
 import type { OppDetail } from "@/server/queries/opportunity-detail";
 import type { ProductOption } from "@/server/queries/options";
 import { inr, pct, fmtDate, isoDate } from "@/lib/format";
-import { COST_SOURCE_META, allowedCostSources, defaultCostSource, type CostSourceKey } from "@/lib/costing";
-import { billingPeriods, type BillingFrequencyKey } from "@/lib/boq";
+import { COST_SOURCE_META, allowedCostSources, costHeading, defaultCostSource, type CostSourceKey } from "@/lib/costing";
+import { billingPeriods, gmSummary, type BillingFrequencyKey } from "@/lib/boq";
 import { BILLING_FREQUENCY_LABEL, LINE_BILLING_STATUS_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +25,9 @@ const UNITS = ["Nos", "Lot", "Users", "Cores", "Devices", "VMs", "TB", "Racks", 
 const MIX_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s7)", "var(--ink-3)"];
 let keySeq = 0;
 const k = () => `new-${++keySeq}`;
+
+/** Sales prices of costed lines are set in the pricing step (after purchase prices the BOQ), not here */
+const priceLocked = (l: Line) => !l.isEstimate && l.unitCost !== null && l.pricingStatus === "QUOTED";
 
 const mult = (l: Pick<Line, "quantity" | "billingFrequency" | "termMonths">) =>
   (Number(l.quantity) || 0) * billingPeriods({ billingFrequency: l.billingFrequency as BillingFrequencyKey, termMonths: l.termMonths });
@@ -54,7 +57,6 @@ export function LineItemsEditor({
   const start = () => initial.map((l) => ({ ...l, _key: l.id, _custom: !l.productId }));
   const [lines, setLines] = useState<Line[]>(start);
   const [dirty, setDirty] = useState(false);
-  const [targetMargin, setTargetMargin] = useState("15");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { pending, run } = useAction();
   // After a save (or anyone's change) the server is the truth: re-pricing flags, statuses and the BOQ version.
@@ -74,7 +76,7 @@ export function LineItemsEditor({
   // Who enters a line's cost: purchase for purchase lines, presales for own-brand lines (editing a rate card cost
   // makes it a presales cost for this deal); rate card lines take the catalogue's standard cost
   const costEditable = (l: Line) => (l.costSource === "PURCHASE" ? can.cost : can.internal);
-  const sourcesFor = (l: Line) => allowedCostSources({ ownBrand: l.ownBrand, standardCost: l.standardCost, isProduct: !!l.productId });
+  const sourcesFor = (l: Line) => allowedCostSources({ ownBrand: l.ownBrand, standardCost: l.standardCost, isProduct: !!l.productId, rateCard: l.rateCard });
   const setSource = (l: Line, src: CostSourceKey) =>
     set(l._key, { costSource: src, ...(src === "RATE_CARD" ? { unitCost: l.standardCost } : {}) });
   const stopEditing = () => { setLines(start()); setDirty(false); setErrors({}); setEditing(false); };
@@ -85,10 +87,10 @@ export function LineItemsEditor({
   };
   const pickProduct = (key: string, p: ProductOption | null) => {
     if (!p) return set(key, { productId: null, _custom: true });
-    const src = defaultCostSource({ ownBrand: p.ownBrand, standardCost: p.standardCost, isProduct: true });
+    const src = defaultCostSource({ ownBrand: p.ownBrand, standardCost: p.standardCost, isProduct: true, rateCard: p.rateCard });
     const was = lines.find((l) => l._key === key);
     set(key, {
-      ownBrand: p.ownBrand, costSource: src,
+      ownBrand: p.ownBrand, rateCard: p.rateCard, costSource: src,
       ...(src === "RATE_CARD" ? { unitCost: p.standardCost } : was?.costSource === "RATE_CARD" ? { unitCost: null } : {}),
       productId: p.id, _custom: false, isEstimate: false, businessUnitId: p.businessUnitId, categoryId: p.categoryId, oemId: p.oemId, oemName: p.oemName,
       buName: p.buName, categoryName: p.categoryName, partNumber: p.code, description: p.name, unit: p.unit,
@@ -103,7 +105,7 @@ export function LineItemsEditor({
         _key: k(), _custom: false, isEstimate: false, id: "", lineNo: ls.length + 1, productId: null, businessUnitId: "", categoryId: "", oemId: "",
         oemName: "", buName: "", categoryName: "", partNumber: "", description: "", quantity: 1, unit: "Nos", billingFrequency: "ONE_TIME",
         termMonths: null, hsnSac: null, gstRatePct: 18, unitCost: null, distributor: null, oemQuoteRef: null, leadTimeDays: null,
-        pricingStatus: "PENDING", costStale: false, ownBrand: false, costSource: "PURCHASE", costValidTill: null, costNote: null, costExpired: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
+        pricingStatus: "PENDING", costStale: false, ownBrand: false, rateCard: false, costSource: "PURCHASE", costValidTill: null, costNote: null, costExpired: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
       },
     ]);
     setDirty(true);
@@ -114,12 +116,6 @@ export function LineItemsEditor({
   };
   const fill = (field: "unitPrice" | "unitCost", from: "listPrice" | "standardCost", only: (l: Line) => boolean = () => true) => {
     setLines((ls) => ls.map((l) => (only(l) && l[field] === null && l[from] !== null ? { ...l, [field]: l[from] } : l)));
-    setDirty(true);
-  };
-  const applyMargin = () => {
-    const m = Number(targetMargin) / 100;
-    if (!(m > -1 && m < 0.95)) return;
-    setLines((ls) => ls.map((l) => (l.unitCost !== null ? { ...l, unitPrice: Math.round(l.unitCost / (1 - m)) } : l)));
     setDirty(true);
   };
 
@@ -143,7 +139,8 @@ export function LineItemsEditor({
       const rest = all.slice(4).reduce((a, [, v]) => a + v, 0);
       return rest > 0 ? [...head, ["Other", rest] as [string, number]] : head;
     };
-    return { sell, cost, margin: sellCosted ? ((sellCosted - costPriced) / sellCosted) * 100 : null, priced, costed, recurring, oemMix: toMix(byOem), buMix: toMix(byBu) };
+    const gm = gmSummary(lines.map((l) => ({ ...l, billingFrequency: l.billingFrequency as BillingFrequencyKey })));
+    return { sell, cost, margin: sellCosted ? ((sellCosted - costPriced) / sellCosted) * 100 : null, gm, priced, costed, recurring, oemMix: toMix(byOem), buMix: toMix(byBu) };
   }, [lines]);
 
   const save = () =>
@@ -200,14 +197,7 @@ export function LineItemsEditor({
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {!editing && editable && <Button size="sm" variant="primary" onClick={() => setEditing(true)}><Pencil /> {editLabel}</Button>}
           {can.cost && <Button size="sm" variant="ghost" onClick={() => fill("unitCost", "standardCost", (l) => l.costSource === "PURCHASE")} title="Fill empty purchase costs with the catalogue standard cost"><Wand2 /> Standard costs</Button>}
-          {can.price && <Button size="sm" variant="ghost" onClick={() => fill("unitPrice", "listPrice")} title="Fill empty sell prices with catalogue list price"><Tag /> List prices</Button>}
-          {can.price && perms.viewCost && (
-            <div className="flex items-center gap-1 rounded-md border border-border pl-2">
-              <Percent className="size-3.5 text-ink-3" />
-              <input value={targetMargin} onChange={(e) => setTargetMargin(e.target.value)} className="h-7 w-9 bg-transparent text-right text-xs tabular outline-none" aria-label="Target margin %" />
-              <Button size="sm" variant="ghost" onClick={applyMargin} title="Set sell price on every costed line to achieve this gross margin">Price at margin</Button>
-            </div>
-          )}
+          {can.price && lines.some((l) => !priceLocked(l)) && <Button size="sm" variant="ghost" onClick={() => fill("unitPrice", "listPrice", (l) => !priceLocked(l))} title="Fill empty sales prices on lines not yet costed with the catalogue list price"><Tag /> List prices</Button>}
           {can.spec && <Button size="sm" onClick={add}><Plus /> Add line</Button>}
           {editing && <Button size="sm" variant="ghost" onClick={stopEditing}><X /> Cancel</Button>}
           {editing && <Button size="sm" variant="primary" disabled={!dirty || pending} onClick={save}><Save /> Save</Button>}
@@ -235,9 +225,9 @@ export function LineItemsEditor({
               <th scope="col" className="w-[136px] px-2 py-2.5 font-medium">Quantity</th>
               <th scope="col" className="w-[128px] px-2 py-2.5 font-medium">Billing</th>
               <th scope="col" className="w-[80px] px-2 py-2.5 font-medium">HSN/SAC</th>
-              {perms.viewCost && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-amber)" }}>Unit cost</th>}
+              {perms.viewCost && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-amber)" }}>{costHeading(lines.map((l) => l.costSource))}</th>}
               {perms.viewCost && <th scope="col" className="w-[164px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>Cost from</th>}
-              {perms.sales && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-green)" }}>Unit price</th>}
+              {perms.sales && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-green)" }}>Sales price</th>}
               {perms.sales && <th scope="col" className="w-[100px] px-2 py-2.5 text-right font-medium">Value</th>}
               {perms.sales && perms.viewCost && <th scope="col" className="w-[56px] px-2 py-2.5 text-right font-medium">GM %</th>}
               {!perms.sales && <th scope="col" className="w-[110px] px-2 py-2.5 text-right font-medium">Cost total</th>}
@@ -288,7 +278,7 @@ export function LineItemsEditor({
                           {sel(l.oemId, (v) => {
                             const oem = oems.find((o) => o.id === v);
                             const ownBrand = !!oem?.ownBrand;
-                            set(l._key, { oemId: v, oemName: oem?.name ?? oemTbd?.name ?? "", ownBrand, costSource: defaultCostSource({ ownBrand, standardCost: null, isProduct: false }) });
+                            set(l._key, { oemId: v, oemName: oem?.name ?? oemTbd?.name ?? "", ownBrand, costSource: defaultCostSource({ ownBrand, standardCost: null, isProduct: false, rateCard: false }) });
                           }, l.isEstimate && oemTbd ? [oemTbd, ...oems] : oems, `Line ${i + 1} OEM`, "OEM")}
                         </div>
                       ) : (
@@ -363,7 +353,11 @@ export function LineItemsEditor({
                       />
                     </td>
                   )}
-                  {perms.sales && <td className="px-2 py-2">{numIn(l.unitPrice, (n) => set(l._key, { unitPrice: n }), !can.price, `Line ${i + 1} unit price`, l.listPrice)}</td>}
+                  {perms.sales && (
+                    <td className="px-2 py-2" title={can.price && priceLocked(l) ? "Costed: set the sales price in the pricing step on the deal" : undefined}>
+                      {numIn(l.unitPrice, (n) => set(l._key, { unitPrice: n }), !can.price || priceLocked(l), `Line ${i + 1} unit price`, l.listPrice)}
+                    </td>
+                  )}
                   {perms.sales && (
                     <td className="px-2 py-2.5 text-right tabular">
                       {value === null ? <span className="text-ink-3">—</span> : (
@@ -375,7 +369,7 @@ export function LineItemsEditor({
                     <td className="px-2 py-2.5 text-right font-medium tabular">{l.unitCost === null ? <span className="text-ink-3">—</span> : inr(mult(l) * l.unitCost)}</td>
                   )}
                   {perms.sales && perms.viewCost && (
-                    <td className="px-2 py-2.5 text-right tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>
+                    <td className="px-2 py-2.5 text-right tabular" style={{ color: gm !== null && gm < 0 ? "var(--t-red)" : undefined }}>
                       {gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}
                     </td>
                   )}
@@ -408,8 +402,17 @@ export function LineItemsEditor({
       <div className="grid gap-6 border-t border-border px-5 py-4 md:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,2fr)]">
         <Total label="Sell value" value={inr(totals.sell)} sub={`${totals.priced}/${lines.length} lines priced`} />
         {perms.viewCost && <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${lines.length} lines costed`} />}
-        {perms.viewCost && <Total label="Gross margin" value={totals.margin === null ? "—" : pct(totals.margin, 1)} sub={totals.margin !== null ? inr(totals.sell - totals.cost) : undefined} danger={totals.margin !== null && totals.margin < 8} />}
-        <Total label="Recurring value" value={inr(totals.recurring)} sub="over the contract term" />
+        {perms.viewCost && (
+          <Total
+            label="Contract GM" value={totals.gm.contract.gmPct === null ? "—" : pct(totals.gm.contract.gmPct, 1)}
+            sub={totals.gm.contract.gmPct === null ? undefined : `${inr(totals.gm.contract.gm)} over the term`} danger={totals.gm.contract.gm < 0}
+          />
+        )}
+        {perms.viewCost && totals.gm.monthly ? (
+          <Total label="Monthly GM (recurring)" value={inr(totals.gm.monthly.gm)} sub={`${pct(totals.gm.monthly.gmPct ?? 0, 1)} of ${inr(totals.gm.monthly.value)} a month`} danger={totals.gm.monthly.gm < 0} />
+        ) : totals.recurring > 0 ? (
+          <Total label="Recurring value" value={inr(totals.recurring)} sub="over the contract term" />
+        ) : <div />}
         <div className="flex flex-col gap-3">
           <MixBar label="By OEM" mix={totals.oemMix} />
           <MixBar label="By business unit" mix={totals.buMix} />
@@ -429,8 +432,9 @@ function SourceBadge({ line: l }: { line: Line }) {
   if (waiting && !l.costStale) return <Badge tone="amber">Waiting on {COST_SOURCE_META[src].who}</Badge>;
   if (src === "PURCHASE" && l.costExpired) return <Badge tone="red">Supplier price expired {fmtDate(l.costValidTill, "short")}</Badge>;
   return (
-    <Badge tone={SOURCE_TONE[src]}>
-      {COST_SOURCE_META[src].label}
+    <Badge tone={SOURCE_TONE[src]} title={COST_SOURCE_META[src].hint}>
+      {COST_SOURCE_META[src].costLabel}
+      {src !== "PURCHASE" ? ` · ${COST_SOURCE_META[src].label.toLowerCase()}` : ""}
       {src === "PURCHASE" && l.costValidTill ? ` · valid till ${fmtDate(l.costValidTill, "short")}` : ""}
       {src === "PURCHASE" && l.distributor ? ` · ${l.distributor}` : ""}
     </Badge>
@@ -540,8 +544,8 @@ function BoqView({ lines, viewCost, sales, locked }: { lines: Line[]; viewCost: 
             <th scope="col" className="px-5 py-2.5 font-medium">Item</th>
             <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Quantity</th>
             <th scope="col" className="w-36 px-3 py-2.5 font-medium">Billing</th>
-            {viewCost && <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Unit cost</th>}
-            {sales && <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Unit price</th>}
+            {viewCost && <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">{costHeading(lines.map((l) => l.costSource))}</th>}
+            {sales && <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">Sales price</th>}
             <th scope="col" className="w-28 px-3 py-2.5 text-right font-medium">{sales ? "Amount" : "Cost total"}</th>
             {sales && viewCost && <th scope="col" className="w-20 px-5 py-2.5 text-right font-medium">GM %</th>}
           </tr>
@@ -589,7 +593,7 @@ function BoqView({ lines, viewCost, sales, locked }: { lines: Line[]; viewCost: 
                     <td className="px-3 py-3 text-right font-medium tabular">
                       {v === null ? <span className="text-ink-3">—</span> : <span className={cn(sales && l.unitPrice === null && "text-ink-3")} title={sales && l.unitPrice === null ? "At list price until priced" : undefined}>{inr(v)}</span>}
                     </td>
-                    {sales && viewCost && <td className="px-5 py-3 text-right tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>{gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}</td>}
+                    {sales && viewCost && <td className="px-5 py-3 text-right tabular" style={{ color: gm !== null && gm < 0 ? "var(--t-red)" : undefined }}>{gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}</td>}
                   </tr>
                 );
               }),

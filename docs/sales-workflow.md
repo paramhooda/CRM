@@ -7,7 +7,7 @@ Each team owns one pipeline stage. The CRM moves the deal to the next stage as e
 | Identified, Qualified | Sales | Qualify; add quick-estimate lines (BU, category, OEM or "To be decided", value) | **Request BOQ from presales** → BOQ |
 | **BOQ** | Presales | Turn estimates into catalogue lines | **Submit BOQ** → Pricing |
 | **Pricing** | Purchase | Enter OEM and distributor costs for third-party lines | **Pricing complete** → back to sales, still in Pricing |
-| Pricing (priced) | Sales | Add margin | **Create & send quote** → Proposal Submitted |
+| Pricing (priced) | Sales, then a sales manager | Sales sets the sales price of each line; a sales manager reviews it | **Save and send to manager**, then the manager's **Create & send quote** → Proposal Submitted |
 | Proposal Submitted, Negotiation | Sales | Follow up with the customer | **Record customer response**; mark **Won** with the PO |
 
 Deals without presales are fine: sales can add lines and **Request pricing** directly, which moves the deal from Qualified to Pricing.
@@ -21,8 +21,9 @@ Each person enters only what they know at their step. Everything else is derived
 | **New deal** | Sales | Account, customer contact (optional until Qualified), name, expected close, next step; what's being sold as business unit → category → OEM → value (one-time or recurring with a term); presales yes / no; procurement (bid date for RFP / tender); deal registration (only for OEMs that run it). Lead source, competition and notes are optional, under More details. | Account type (from the account), deal type options, stage (Identified), probability, forecast (Pipeline), revenue model, contract term and ARR (from the lines), owner (you) |
 | **Request BOQ** | Sales | Presales engineer, needed by, customer requirement, deliverables (BOQ, solution document, presentation, site survey, PoC / demo); sites, only when a survey is asked for | Presales owner, stage (BOQ) |
 | **Submit BOQ** | Presales | BOQ lines (catalogue products), solution summary, assumptions and exclusions; the cost of own-brand lines not on the rate card | Each line's cost source, which lines purchase must price, rate card costs, stage (Pricing) |
-| **Pricing** | Purchase | Unit cost, distributor and supplier validity, per third-party line | Margin, the earliest validity |
-| **Quote** | Sales | Margin %, validity, terms | Sell prices, deal value, stage (Proposal Submitted) |
+| **Pricing** | Purchase | Purchase price, distributor and supplier validity, per third-party line | The earliest validity |
+| **Sales prices** | Sales (deal owner) | The sales price of each line, or a GM % per line or per business unit | GM per line, contract GM, monthly GM, deal value |
+| **Quote** | Sales manager | Validity, terms (and any price change) | Deal value, stage (Proposal Submitted) |
 | **Won** | Sales | Customer PO number and date | Contract dates, billing lines |
 
 ### Does the deal need presales?
@@ -61,23 +62,38 @@ Most MSPs and system integrators split cost the same way: bought-in products are
 | Cost source | Default for | Who enters the cost | Goes to purchase? |
 |---|---|---|---|
 | **Purchase** | Third-party OEMs (Dell, Cisco, Microsoft…) | Purchase, with that supplier's validity on the line | Yes |
-| **Rate card** | Own-brand (Progression, Neon Cloud) catalogue items with a standard cost | Nobody: the catalogue's standard cost is applied automatically | No |
-| **Presales** | Own-brand custom lines, or own-brand items presales re-costs for this deal | Presales, with a short note on how it was costed | No |
+| **Rate card** | Own-brand (Progression, Neon Cloud) catalogue items with a standard cost, in a **rate card category**: Cloud, NOC and SOC | Nobody: the catalogue's standard cost is applied automatically | No |
+| **Presales** | Own-brand items in any other category (professional services, FMS, AMC, compliance…), own-brand custom lines, and items presales re-costs for this deal | Presales, with a short note on how it was costed | No |
 
-- An admin marks the own brands under Settings → Picklists → OEMs → **Own brand**.
+- An admin marks the own brands under Settings → Picklists → OEMs → **Own brand**, and the rate card categories under Settings → Business units and categories → **Rate card** (today all of Cloud, plus NOC and SOC).
+- The cost is called **Purchase price** on purchase lines and **Internal cost** on rate card and presales lines, everywhere it is shown.
 - Third-party lines are always costed by purchase. Own-brand lines can be switched between the three. **Source via purchase** is for own-brand work that is bought in, such as subcontracted services or back-to-back AMC.
 - Presales reworks a rate card cost by typing a different cost on the line. The line becomes a presales cost for this deal; the catalogue is unchanged.
 - A device-based SOC or NOC rate card is a catalogue product priced per device, so it is costed from the rate card like any other. Deals that don't fit the card are re-costed by presales.
 - Each purchase line carries its own supplier's validity, because one deal often has prices from several distributors. Purchase sets it on the line; the date given at **Pricing complete** fills any line without one. **Re-validate costs** sends back only the lines whose price has lapsed.
 - Presales must enter the cost of own-brand lines before submitting the BOQ. A deal with only own-brand lines skips purchase altogether.
-- Sales sees where each cost came from on Line items: Purchase (with validity and distributor), Rate card or Presales, or who it is still waiting on.
+- Sales sees where each cost came from on Line items: Purchase price (with validity and distributor), Internal cost · rate card or Internal cost · presales, or who it is still waiting on.
+
+## Sales prices and GM
+
+Once purchase has priced the BOQ (or straight away when every line is costed internally), the deal owner sets the sales prices; a sales manager sends the quote.
+
+1. **Set sales prices** (the advance to Proposal, for the deal owner). One table: each line's purchase price or internal cost, the sales price, GM % and GM. Typing a GM % sets the price from the cost, and a GM can be applied to a whole business unit at once (hardware and services usually differ). The totals show the contract value, cost, **contract GM** (one-time lines plus recurring lines over their term) and, for recurring lines, **monthly GM**. There is no minimum GM: rate-to-rate lines (0%) are allowed, and a loss shows in red.
+2. **Save and send to manager.** The prices are saved and the owner's manager is notified (every sales head when the owner has no manager). The deal shows "Prices set · waiting for the quote", and the manager's home page lists it under Needs your action.
+3. **Create & send quote** (sales managers only). The manager sees the same table, can change any price, sets the validity and terms, and sends. A revised quote after a customer change goes the same way.
+
+Rules:
+- Sales prices can only be set when no BOQ or pricing work is open and every line has a current cost. On Line items, the sales price of a costed line is read-only: it is set in this step. Lines not yet costed keep an editable price (an estimate of the deal's value).
+- Prices are saved against the BOQ version that was open. If someone changed the lines in between, the save is refused with a reload message.
+- Only sales managers (sales heads and admins) send quotes. Deal owners still record the customer's response and extend a quote's validity.
+- Line items shows the contract GM and the monthly GM of recurring lines to everyone who sees the sell side.
 
 ## Stage rules (enforced for everyone)
 
 The stage bar works like Salesforce Path:
 - **The stages show progress only and cannot be clicked.**
 - **One button advances the deal to its next stage.**
-  - Into BOQ, Pricing and Proposal Submitted, the advance *is* the hand-over: **Advance to BOQ** opens the BOQ request, **Advance to Pricing** opens Submit BOQ (presales) or Request pricing (resale deals), and **Advance to Proposal** opens Create & send quote.
+  - Into BOQ, Pricing and Proposal Submitted, the advance *is* the hand-over: **Advance to BOQ** opens the BOQ request, **Advance to Pricing** opens Submit BOQ (presales) or Request pricing (resale deals), and **Advance to Proposal** opens Set sales prices for the deal owner and Create & send quote for a sales manager.
   - Elsewhere it moves the deal directly: Advance to Qualified, Advance to Negotiation, and **Close as won** from Negotiation.
   - When the next step belongs to someone else, the button is disabled and says who it is waiting on.
 - **Resale deals have their own path without BOQ**, the way Salesforce gives each sales process its own stages.
@@ -210,7 +226,8 @@ Below the status, three facts: **value**, **expected close** and **next step**. 
   - **Submit BOQ:** the solution summary.
   - **Request pricing:** the date.
   - **Pricing complete:** the validity date.
-  - **Quote:** margin and validity; the terms are under **More options**.
+  - **Set sales prices:** a sales price (or GM %) per line, with a GM per business unit in one step.
+  - **Quote** (sales managers): validity; the terms are under **More options**.
   - **Close as won:** PO number, date and file.
 
   Reminders (a missing RFP or supplier quote) stay visible.
@@ -232,7 +249,7 @@ Below the status, three facts: **value**, **expected close** and **next step**. 
 | Customer or sales changes the scope | **Request BOQ change** (More) | Presales gets revision N+1 with the reason. Pricing in progress is stopped and the deal returns to BOQ. Only the lines presales change go back to purchase. |
 | Presales needs information | **Ask sales a question** (More) | Sales sees **Answer presales**. The presales due date pauses while waiting. |
 | Purchase cannot price a line (end-of-sale part, wrong SKU) | **Send back to presales** (More) | Presales gets a high-priority revision and the deal returns to BOQ. |
-| Customer wants a different price | **Send revised quote** | Re-price at a new margin in the same dialog. The old quote version is superseded. |
+| Customer wants a different price | **Revise sales prices** (owner), then **Send revised quote** (manager) | Re-price line by line in the same table. The old quote version is superseded. |
 | A supplier price has lapsed | **Re-validate costs** | Purchase re-confirms the lines whose price lapsed (every purchase line, if none has). Quoting is blocked until then. |
 | Own-brand work is subcontracted | Set the line to **Source via purchase** | Purchase prices it with the other bought-in lines. |
 | Someone is away | **Reassign** (More) | The new owner is notified. An overdue request needs a new due date for them. |
@@ -267,7 +284,7 @@ The rules are in `src/lib/workflow.ts` (unit-tested), the actions in `src/server
 
 ## Line items
 
-The Line items tab shows the BOQ as a clean read-only table, grouped by business unit with subtotals. Each row shows the item, quantity, billing, unit price and amount; cost and margin columns appear for people who can see cost, with where each cost came from (Purchase with its validity, Rate card or Presales) or who it is waiting on. Estimates, lapsed supplier prices and lines that need re-pricing are marked.
+The Line items tab shows the BOQ as a clean read-only table, grouped by business unit with subtotals. Each row shows the item, quantity, billing, sales price and amount; the cost column (Purchase price, Internal cost, or both when mixed) and GM appear for people who can see cost, with where each cost came from (Purchase price with its validity, Internal cost · rate card or Internal cost · presales) or who it is waiting on. The totals show the contract GM and, for recurring lines, the monthly GM. Estimates, lapsed supplier prices and lines that need re-pricing are marked.
 
 Each person's button opens edit mode with only the fields they may change:
 - **Edit line items** for presales and the deal owner (products and quantities, and the owner's prices);

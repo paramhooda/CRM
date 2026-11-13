@@ -4,7 +4,7 @@
 import { PrismaClient, Prisma, type Stage, type ForecastCategory } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import {
-  ACCOUNTS, ADMIN_NAME, BUSINESS_UNITS, CATEGORY_OEMS, PRESALES_CATEGORIES, DEAL_REG_OEMS, OWN_BRAND_OEMS, CATEGORY_PROFILE, CONTACT_TEMPLATES, FIRST_NAMES,
+  ACCOUNTS, ADMIN_NAME, BUSINESS_UNITS, CATEGORY_OEMS, PRESALES_CATEGORIES, DEAL_REG_OEMS, OWN_BRAND_OEMS, isRateCardCategory, CATEGORY_PROFILE, CONTACT_TEMPLATES, FIRST_NAMES,
   LAST_NAMES, OEMS, PICKLISTS, PRESALES_PEOPLE, PURCHASE_PEOPLE, SALES_HEAD, SALES_PEOPLE, PRODUCT_TEMPLATES, COMPLEMENTS,
   OEM_CODE,
 } from "./seed-data";
@@ -117,7 +117,7 @@ async function main() {
     const row = await db.businessUnit.create({ data: { name: bu.name, code: bu.code, sortOrder: i } });
     bus[bu.name] = { id: row.id, cats: {} };
     for (const [j, c] of bu.categories.entries()) {
-      const cat = await db.category.create({ data: { name: c, businessUnitId: row.id, sortOrder: j, needsPresales: PRESALES_CATEGORIES.has(`${bu.name}|${c}`) } });
+      const cat = await db.category.create({ data: { name: c, businessUnitId: row.id, sortOrder: j, needsPresales: PRESALES_CATEGORIES.has(`${bu.name}|${c}`), rateCard: isRateCardCategory(bu.name, c) } });
       bus[bu.name]!.cats[c] = cat.id;
     }
   }
@@ -850,16 +850,16 @@ async function main() {
     if (lines === 1) await db.opportunity.update({ where: { id: l.opportunityId }, data: { oemId: oemTbd } });
   }
 
-  // Cost sources. Own-brand lines take the rate card's standard cost; about one in four was re-costed by presales
-  // for the deal. Purchase lines carry their own supplier's validity: each distributor quotes a different period,
+  // Cost sources. Own-brand lines in rate card categories (Cloud, NOC, SOC) take the standard cost; about one in four
+  // was re-costed by presales for the deal. Other own-brand lines are costed by presales. Purchase lines carry their own supplier's validity: each distributor quotes a different period,
   // starting from the deal's pricing response.
   const ownLines = await db.opportunityLineItem.findMany({
     where: { isEstimate: false, oem: { ownBrand: true } },
-    select: { id: true, unitCost: true, pricingStatus: true, product: { select: { standardCost: true } } },
+    select: { id: true, unitCost: true, pricingStatus: true, product: { select: { standardCost: true } }, category: { select: { rateCard: true } } },
   });
   for (const l of ownLines) {
     const std = l.product?.standardCost ?? null;
-    if (std !== null && !chance(0.25)) {
+    if (std !== null && l.category.rateCard && !chance(0.25)) {
       await db.opportunityLineItem.update({ where: { id: l.id }, data: { costSource: "RATE_CARD", unitCost: std, pricingStatus: "QUOTED" } });
     } else {
       const unitCost = l.unitCost ?? (std !== null ? Math.round(Number(std) * 1.08) : null);

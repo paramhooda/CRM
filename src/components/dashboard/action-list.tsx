@@ -6,7 +6,7 @@ import { ChevronRight, CheckCircle2 } from "lucide-react";
 import type { ActionItem } from "@/lib/action-items";
 import { cn } from "@/lib/utils";
 
-const URGENT = new Set(["ANSWER_PRESALES", "QUOTE_EXPIRED", "RECORD_PO", "REVISE_QUOTE", "QUOTE_EXPIRING"]);
+const URGENT = new Set(["ANSWER_PRESALES", "QUOTE_EXPIRED", "RECORD_PO", "REVISE_QUOTE", "QUOTE_EXPIRING", "SEND_QUOTE"]);
 const SHOW = 8;
 
 export function ActionList({ items, showOwner }: { items: ActionItem[]; showOwner: boolean }) {

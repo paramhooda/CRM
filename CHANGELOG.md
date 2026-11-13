@@ -2,6 +2,37 @@
 
 Each release says what changed, what happens to existing data, and any steps needed to upgrade.
 
+## 1.4.0: sales prices and GM
+
+**Pricing step**
+- Once purchase has priced the BOQ, the deal owner sets the sales price of each line in one table. The table shows the line's purchase price (or internal cost), sales price, GM % and GM.
+- Typing a GM % sets the price. One GM can be applied to a whole business unit.
+- There is no minimum GM: rate-to-rate lines are fine.
+- The owner hands the prices to their manager, who gets a notification and a "Prices set" item on their home page.
+- Only sales managers send quotes. They see the same table and can change any price before sending.
+- On Line items, the sales price of a costed line is now set only in this step.
+
+**GM**
+- Contract GM covers one-time lines plus recurring lines over their term.
+- Monthly GM is shown for recurring lines.
+- Both appear in the pricing table and on Line items.
+
+**Labels**
+- The cost reads **Purchase price** on purchase lines and **Internal cost** on rate card and presales lines.
+- Unit price is now **Sales price**.
+
+**Rate card**
+- The rate card now applies only to Cloud, NOC and SOC. Other own-brand lines (professional services, FMS, AMC, compliance) are costed by presales.
+- An admin can change this per category under Settings → Business units and categories → Rate card.
+
+**Data:**
+- New category flag `rateCard`, set for every Cloud category plus NOC and SOC.
+- New deal field `pricesReadyAt`, empty for existing deals.
+- On open deals, own-brand lines that took a rate card cost in any other category keep that cost, now as a presales cost marked "Was the rate card cost".
+- Closed deals, quotes, prices and costs are unchanged.
+
+**Upgrade steps:** none. Sales people who used to send quotes now set the prices and hand them to their manager.
+
 ## 1.3.0: simpler screens
 
 **Deal page**

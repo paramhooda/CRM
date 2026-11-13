@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth";
-import { opportunityScope } from "@/lib/authz";
+import { isManager, opportunityScope } from "@/lib/authz";
 import { oppWhere, parseOppFilters, type SearchParams } from "@/lib/filters";
 import { ACTIVE_STAGES, STAGE_META, THRESHOLDS, type StageKey } from "@/lib/constants";
 import { fiscalPeriod, fiscalYearRange, lastMonths, parsePeriodKey, quarterRange, periodLabel, fyLabel } from "@/lib/fiscal";
@@ -381,7 +381,7 @@ export async function getActionItems(user: CurrentUser) {
   const deals = await db.opportunity.findMany({
     where: { AND: [opportunityScope(user), { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED", "HOLD"] } }] },
     select: {
-      id: true, name: true, stage: true, expectedCloseDate: true, nextStep: true, nextStepDate: true, healthLabel: true,
+      id: true, name: true, stage: true, expectedCloseDate: true, nextStep: true, nextStepDate: true, healthLabel: true, pricesReadyAt: true,
       account: { select: { name: true } },
       salesOwner: { select: { name: true } },
       quotes: { orderBy: { version: "desc" }, take: 1, select: { status: true, validTill: true, createdAt: true } },
@@ -397,7 +397,9 @@ export async function getActionItems(user: CurrentUser) {
       quote: d.quotes[0] ?? null,
       pricedAt: d.pricingRequests.find((r) => r.status === "QUOTED")?.quotedAt ?? null,
       workOpen: d.presalesRequests.length > 0 || d.pricingRequests.some((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS"),
+      pricesReadyAt: d.pricesReadyAt,
     })),
     now,
+    isManager(user),
   );
 }

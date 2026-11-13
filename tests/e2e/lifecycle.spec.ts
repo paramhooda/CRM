@@ -110,15 +110,32 @@ test.describe.serial("Lead to closure", () => {
   test("won is refused until the quote matches the deal, and a changed line must be re-confirmed by purchase", async ({ page }) => {
     await login(page, SALES);
     await page.goto(dealUrl);
+    // Purchase priced it: sales sets the sales price against the purchase price and hands it to their manager
     await page.getByRole("button", { name: "Advance to Proposal" }).click();
     let dlg = page.getByRole("dialog");
-    if (await dlg.getByRole("radio", { name: "Apply a margin" }).count()) await dlg.getByRole("radio", { name: "Apply a margin" }).click();
-    await dlg.getByLabel("Gross margin %").fill("12");
+    await expect(dlg.getByText("Set sales prices")).toBeVisible();
+    await expect(dlg.getByRole("columnheader", { name: "Purchase price" })).toBeVisible();
+    await dlg.getByLabel("Line 1 GM %").fill("12");
+    await expect(dlg.getByLabel("Line 1 sales price")).toHaveValue("59090.91"); // 52,000 at 12% GM
+    await dlg.getByRole("button", { name: /^Save and send to/ }).click();
+    await expect(page.getByText(/Prices saved/)).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("Prices set · waiting for the quote");
+    await expect(page.getByRole("button", { name: /Advance to Proposal \(not available: Waiting for/ })).toBeVisible();
+
+    // The sales manager reviews the same prices and sends the quote
+    await login(page, HEAD);
+    await page.goto(dealUrl);
+    await page.getByRole("button", { name: "Advance to Proposal" }).click();
+    dlg = page.getByRole("dialog");
+    await expect(dlg.getByLabel("Line 1 sales price")).toHaveValue("59090.91");
+    await expect(dlg.getByLabel("GM summary")).toContainText("12.0%");
     const popup = page.waitForEvent("popup");
     await dlg.getByRole("button", { name: "Create & send quote" }).click();
     await (await popup).close();
     await expect(page.getByLabel("Deal status")).toContainText("Quote v1 with customer");
 
+    await login(page, SALES);
+    await page.goto(dealUrl);
     await page.getByRole("button", { name: "Record customer response" }).click();
     dlg = page.getByRole("dialog");
     await dlg.getByRole("radio", { name: "Wants changes" }).click();
@@ -155,15 +172,22 @@ test.describe.serial("Lead to closure", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
 
+    // Sales keeps the prices (the new quantity at the same unit price); the manager sends the revised quote
     await login(page, SALES);
+    await page.goto(dealUrl);
+    await page.getByLabel("Deal status").getByRole("button", { name: "Revise sales prices" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: /^Save and send to/ }).click();
+    await expect(page.getByText(/Prices saved/)).toBeVisible();
+    await login(page, HEAD);
     await page.goto(dealUrl);
     await page.getByLabel("Deal status").getByRole("button", { name: "Send revised quote" }).click();
     dlg = page.getByRole("dialog");
-    // Keep the prices already on the lines (the margin applied to v1, with the new quantity)
     const popup2 = page.waitForEvent("popup");
     await dlg.getByRole("button", { name: "Send revised quote" }).click();
     await (await popup2).close();
     await expect(page.getByLabel("Deal status")).toContainText("Quote v2 with customer");
+    await login(page, SALES);
+    await page.goto(dealUrl);
     await page.getByRole("button", { name: "Record customer response" }).click();
     dlg = page.getByRole("dialog");
     await dlg.getByRole("button", { name: "Save" }).click(); // Accepted is the default

@@ -100,7 +100,7 @@ async function Picklists() {
       <h2 className="text-[13px] font-semibold">Business units and categories</h2>
       <div className="grid gap-3 md:grid-cols-2">
         {bus.map((b) => (
-          <PicklistEditor key={b.id} title={b.name} type={`CATEGORY:${b.id}`} kind="CATEGORY" values={b.categories.map((c) => ({ id: c.id, label: c.name, active: c.active, flags: { needsPresales: c.needsPresales } }))} flags={[{ key: "needsPresales", label: "Needs presales" }]} />
+          <PicklistEditor key={b.id} title={b.name} type={`CATEGORY:${b.id}`} kind="CATEGORY" values={b.categories.map((c) => ({ id: c.id, label: c.name, active: c.active, flags: { needsPresales: c.needsPresales, rateCard: c.rateCard } }))} flags={[{ key: "needsPresales", label: "Needs presales" }, { key: "rateCard", label: "Rate card" }]} />
         ))}
       </div>
       <PicklistEditor title="OEMs" type="OEM" kind="OEM" values={oems.map((o) => ({ id: o.id, label: o.name, active: o.active, flags: { dealRegistration: o.dealRegistration, ownBrand: o.ownBrand } }))} flags={[{ key: "dealRegistration", label: "Deal registration" }, { key: "ownBrand", label: "Own brand" }]} />

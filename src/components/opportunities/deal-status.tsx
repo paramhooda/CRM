@@ -12,8 +12,21 @@ import { OPEN_PRESALES, OPEN_PRICING } from "@/lib/workflow";
 import { PRESALES_STATUS_LABEL, PRICING_STATUS_LABEL, STAGE_META, type StageKey, type Tone } from "@/lib/constants";
 import { nextStage, type Needs } from "@/lib/stage-rules";
 import { fmtDate, relativeDays } from "@/lib/format";
-import { lineMultiplier } from "@/lib/boq";
+import { lineMultiplier, type BillingFrequencyKey } from "@/lib/boq";
+import { pricesReady } from "@/lib/action-items";
 import { cn } from "@/lib/utils";
+
+/**
+ * The owner set the sales prices and a sales manager has yet to send the quote; `manager`: who they handed it to.
+ */
+export function priceHandover(d: OppDetail) {
+  const o = d.opp;
+  const quote = o.quotes[0];
+  const workOpen = o.presalesRequests.some((r) => (OPEN_PRESALES as readonly string[]).includes(r.status)) || o.pricingRequests.some((r) => (OPEN_PRICING as readonly string[]).includes(r.status));
+  const pricedAt = o.pricingRequests.find((r) => r.status === "QUOTED")?.quotedAt ?? null;
+  const m = o.salesOwner.manager;
+  return { ready: pricesReady({ pricesReadyAt: o.pricesReadyAt, pricedAt, quote: quote ?? null, workOpen }), manager: m && m.active ? m.name : null };
+}
 
 export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   const o = d.opp;
@@ -74,11 +87,19 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
         : "No presales on this deal. Involve presales to cost them, or switch the lines to Source via purchase.";
       who = o.presalesOwner ? { name: o.presalesOwner.name, role: "Presales" } : { name: sales, role: "Sales" };
       break;
-    case "READY_TO_QUOTE":
-      headline = quote ? "BOQ changed · send a revised quote" : "Priced · ready to quote";
-      detail = "Next: add margin and send the quote.";
-      who = { name: sales, role: "Sales" };
+    case "READY_TO_QUOTE": {
+      const p = priceHandover(d);
+      if (p.ready) {
+        headline = "Prices set · waiting for the quote";
+        detail = `${p.manager ?? "A sales manager"} reviews the sales prices and sends the quote.`;
+        who = { name: p.manager ?? "Sales manager", role: "Sales manager" };
+      } else {
+        headline = quote ? "BOQ changed · send a revised quote" : "Priced · set the sales prices";
+        detail = "Next: set the sales price of each line. A sales manager sends the quote.";
+        who = { name: sales, role: "Sales" };
+      }
       break;
+    }
     case "QUOTE_SENT":
       headline = `Quote v${quote!.version} with customer`;
       detail = `Sent ${fmtDate(quote!.submittedAt ?? quote!.createdAt)} · valid till ${fmtDate(quote!.validTill)}. Next: record the customer's response.`;
@@ -216,11 +237,20 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
   // A quote can't promise prices for longer than the earliest supplier validity behind it
   const supplierUntil = purchaseLines.map((l) => (l.costValidTill ? new Date(l.costValidTill) : null)).filter((x): x is Date => !!x);
   const maxValidTill = supplierUntil.length ? new Date(Math.min(...supplierUntil.map((x) => x.getTime()))) : null;
+  // Pricing step: the deal owner sets the sales prices once purchase has priced the BOQ; a sales manager sends the quote
+  const sends = d.perms.sendQuote;
+  const priceState = priceHandover(d);
   const quoteAction = (primary: boolean): DealAction => ({
-    id: "quote", kind: "quote", primary, oppId: o.id, version: (quote?.version ?? 0) + 1,
-    label: quote ? "Send revised quote" : "Create & send quote",
+    id: "quote", kind: "quote", oppId: o.id, version: (quote?.version ?? 0) + 1, boqVersion: o.boqVersion, send: sends, managerName: priceState.manager,
+    // Once the owner handed the prices over, editing them again is not their main step
+    primary: primary && (sends || !priceState.ready),
+    label: sends ? (quote ? "Send revised quote" : "Create & send quote") : priceState.ready ? "Edit sales prices" : quote ? "Revise sales prices" : "Set sales prices",
     disabledReason: w.blockers.find((b) => !b.startsWith("Quote v") && !b.startsWith("The lines changed") && !b.startsWith("The deal is on hold")),
-    lines: realLines.map((l) => ({ cost: l.unitCost ?? 0, price: l.unitPrice, mult: lineMultiplier(l) })),
+    lines: realLines.map((l) => ({
+      id: l.id, n: l.lineNo, description: l.description, partNumber: l.partNumber, buName: l.buName || "Unclassified", quantity: l.quantity, unit: l.unit,
+      billingFrequency: l.billingFrequency as BillingFrequencyKey, termMonths: l.termMonths, mult: lineMultiplier(l), cost: l.unitCost ?? 0,
+      costSource: l.costSource, price: l.unitPrice, listPrice: l.listPrice,
+    })),
     maxValidTill,
   });
   // Documents count when linked to the request or added to the deal while it was open, whoever added them
@@ -323,7 +353,9 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       // Nothing for purchase to price (own-brand lines on the rate card): the next real step is the quote
       const skipPricing = next === "PRICING" && !needsBoq && realLines.length > 0 && w.state === "READY_TO_QUOTE";
       const action = next === "BOQ" ? find("pull") : skipPricing ? find("quote") : next === "PRICING" ? (stage === "BOQ" && solution ? find("submit") : find("price")) : find("quote");
-      if (action && !action.disabledReason) advance = { kind: "action", label: to(skipPricing ? "PROPOSAL" : next), action };
+      if (action?.id === "quote" && !sends && priceState.ready)
+        advance = { kind: "blocked", label: to("PROPOSAL"), reason: `Waiting for ${priceState.manager ?? "a sales manager"} to send the quote.` };
+      else if (action && !action.disabledReason) advance = { kind: "action", label: to(skipPricing ? "PROPOSAL" : next), action };
       else {
         const reason =
           action?.disabledReason ??
@@ -336,7 +368,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
             : w.state === "NEEDS_COSTING" ? "Own-brand lines need a cost from presales first."
             : next === "PRICING" ? "The deal owner requests pricing from purchase."
             : w.needsCost ? "Lines need a current cost from purchase first."
-            : "The deal owner sends the quote.");
+            : "A sales manager sends the quote.");
         advance = { kind: "blocked", label: to(next), reason };
       }
     }

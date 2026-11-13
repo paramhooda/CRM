@@ -77,3 +77,32 @@ export function mixBy<T extends BoqLineLike>(lines: T[], key: (l: T) => string):
     .map(([k, value]) => ({ key: k, value, share: total ? value / total : 0 }))
     .sort((a, b) => b.value - a.value);
 }
+
+export type Gm = { value: number; cost: number; gm: number; gmPct: number | null };
+const gmOf = (value: number, cost: number): Gm => ({ value, cost, gm: value - cost, gmPct: value > 0 ? ((value - cost) / value) * 100 : null });
+
+/** Unit price that gives a gross margin (% of the sales price) on a cost, to the paisa. */
+export function priceAtMargin(cost: number, marginPct: number): number {
+  return Math.round((cost / (1 - marginPct / 100)) * 100) / 100;
+}
+
+/**
+ * Gross margin of priced, costed lines: over the whole contract (one-time plus recurring lines over their term), and
+ * per month for recurring lines (`monthly` is null when nothing recurs). Unit cost and price are per billing period.
+ */
+export function gmSummary(lines: BoqLineLike[]): { contract: Gm; monthly: Gm | null } {
+  let value = 0, cost = 0, mValue = 0, mCost = 0, recurring = false;
+  for (const l of lines) {
+    if (l.unitCost === null || l.unitCost === undefined || l.unitPrice === null || l.unitPrice === undefined) continue;
+    const m = lineMultiplier(l);
+    value += m * toNumber(l.unitPrice);
+    cost += m * toNumber(l.unitCost);
+    if (l.billingFrequency !== "ONE_TIME") {
+      recurring = true;
+      const perMonth = toNumber(l.quantity) / MONTHS_PER_PERIOD[l.billingFrequency];
+      mValue += perMonth * toNumber(l.unitPrice);
+      mCost += perMonth * toNumber(l.unitCost);
+    }
+  }
+  return { contract: gmOf(value, cost), monthly: recurring ? gmOf(mValue, mCost) : null };
+}

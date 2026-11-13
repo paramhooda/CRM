@@ -16,13 +16,13 @@ export const getOptions = cache(async () => {
     db.product.findMany({
       where: { active: true },
       orderBy: [{ oem: { sortOrder: "asc" } }, { code: "asc" }],
-      include: { oem: { select: { name: true, ownBrand: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } } },
+      include: { oem: { select: { name: true, ownBrand: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true, rateCard: true } } },
     }),
   ]);
   const pl = (type: string) => picklists.filter((p) => p.type === type).map((p) => p.value);
   return {
     bus: bus.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-    categories: bus.flatMap((b) => b.categories.map((c) => ({ id: c.id, name: c.name, buId: b.id, buName: b.name, needsPresales: c.needsPresales }))),
+    categories: bus.flatMap((b) => b.categories.map((c) => ({ id: c.id, name: c.name, buId: b.id, buName: b.name, needsPresales: c.needsPresales, rateCard: c.rateCard }))),
     // "To be decided" is kept apart: only quick estimates may use it, never catalogue products or BOQ lines
     oems: oems.filter((o) => !o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems, dealRegistration: o.dealRegistration, ownBrand: o.ownBrand })),
     oemTbd: oems.filter((o) => o.isPlaceholder).map((o) => ({ id: o.id, name: o.name, uses: o._count.lineItems }))[0] ?? null,
@@ -36,7 +36,7 @@ export const getOptions = cache(async () => {
     distributors: pl("DISTRIBUTOR"),
     products: products.map((p) => ({
       id: p.id, code: p.code, name: p.name, oemId: p.oemId, oemName: p.oem.name, ownBrand: p.oem.ownBrand, businessUnitId: p.businessUnitId,
-      buName: p.businessUnit.name, categoryId: p.categoryId, categoryName: p.category.name, productType: p.productType,
+      buName: p.businessUnit.name, categoryId: p.categoryId, categoryName: p.category.name, rateCard: p.category.rateCard, productType: p.productType,
       unit: p.unit, billingFrequency: p.billingFrequency, defaultTermMonths: p.defaultTermMonths,
       listPrice: p.listPrice === null ? null : Number(p.listPrice), standardCost: p.standardCost === null ? null : Number(p.standardCost),
       hsnSac: p.hsnSac, gstRatePct: Number(p.gstRatePct),

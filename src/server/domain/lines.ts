@@ -76,13 +76,17 @@ export async function resolveSpec(tx: Tx, l: LineInput, fallbackTerm: number | n
 /** What decides a line's cost source (own brand, catalogue standard cost), loaded once per save. */
 export async function costFactsLoader(tx: Tx) {
   const own = new Set((await tx.oem.findMany({ where: { ownBrand: true }, select: { id: true } })).map((o) => o.id));
+  const card = new Set((await tx.category.findMany({ where: { rateCard: true }, select: { id: true } })).map((c) => c.id));
   const std = new Map<string, number | null>();
-  return async (spec: { productId: string | null; oemId: string }): Promise<SourceFacts> => {
+  return async (spec: { productId: string | null; oemId: string; categoryId: string }): Promise<SourceFacts> => {
     if (spec.productId && !std.has(spec.productId)) {
       const p = await tx.product.findUnique({ where: { id: spec.productId }, select: { standardCost: true } });
       std.set(spec.productId, p?.standardCost === null || p?.standardCost === undefined ? null : toNumber(p.standardCost));
     }
-    return { ownBrand: own.has(spec.oemId), isProduct: !!spec.productId, standardCost: spec.productId ? std.get(spec.productId) ?? null : null };
+    return {
+      ownBrand: own.has(spec.oemId), isProduct: !!spec.productId, rateCard: card.has(spec.categoryId),
+      standardCost: spec.productId ? std.get(spec.productId) ?? null : null,
+    };
   };
 }
 

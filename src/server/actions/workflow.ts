@@ -842,52 +842,134 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
   return res;
 });
 
-// ───────────── Quotes ─────────────
+// ───────────── Sales prices and quotes ─────────────
+
+/** Sales prices for the lines, per billing period (to the paisa) */
+const pricesSchema = z.array(z.object({ id: z.string().min(1), unitPrice: z.coerce.number().min(0, "Prices can't be negative").max(1e11) })).max(200);
+
+/**
+ * Sales prices are set once purchase has priced the BOQ: no BOQ or pricing work open, real lines only, and every line
+ * has a current cost (purchase price or internal cost).
+ */
+async function assertCosted(tx: Tx, opp: { id: string; presalesRequired: boolean }, what: string) {
+  if (await tx.presalesRequest.count({ where: { opportunityId: opp.id, status: openPresales } }))
+    throw new UserError(`Presales is still working on the BOQ. Set prices once they submit it.`);
+  if (await tx.pricingRequest.count({ where: { opportunityId: opp.id, status: openPricing } }))
+    throw new UserError(`Purchase is still pricing the BOQ. Set the sales prices once pricing is complete.`);
+  if (opp.presalesRequired && !(await tx.presalesRequest.count({ where: { opportunityId: opp.id, status: "BOQ_SUBMITTED" } })))
+    throw new UserError("This deal needs a BOQ from presales before it can be priced.");
+  await assertRealBoq(tx, opp.id, what);
+  const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: opp.id }, orderBy: { lineNo: "asc" } });
+  const pending = lines.filter(needsPurchaseCost).map((l) => l.lineNo);
+  if (pending.length) throw new UserError(`${linesText(pending).replace(/^l/, "L")} still need${pending.length > 1 ? "" : "s"} a current cost from purchase. Request pricing first.`);
+  assertInternalCosts(lines, what);
+}
+
+/** Write the sales prices given; every line of the deal must have one. Returns how many changed. */
+async function applyPrices(tx: Tx, oppId: string, prices: z.infer<typeof pricesSchema>, userId: string) {
+  const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId }, select: { id: true, lineNo: true, unitPrice: true } });
+  const given = new Map(prices.map((p) => [p.id, Math.round(p.unitPrice * 100) / 100]));
+  if ([...given.keys()].some((id) => !lines.some((l) => l.id === id))) throw new UserError("The line items changed since you opened this. Reload the page and price them again.");
+  const missing = lines.filter((l) => !given.has(l.id)).map((l) => l.lineNo);
+  if (missing.length) throw new UserError(`Set a sales price on ${linesText(missing)}.`);
+  let changed = 0;
+  for (const l of lines) {
+    const price = given.get(l.id)!;
+    if (l.unitPrice !== null && toNumber(l.unitPrice) === price) continue;
+    await tx.opportunityLineItem.update({ where: { id: l.id }, data: { unitPrice: new Prisma.Decimal(price), updatedById: userId } });
+    changed++;
+  }
+  return changed;
+}
+
+/** Claim the next BOQ version, or fail if the lines were saved by someone after this form was opened. */
+async function claimBoqVersion(tx: Tx, oppId: string, version: number) {
+  const claimed = await tx.opportunity.updateMany({ where: { id: oppId, boqVersion: version }, data: { boqVersion: version + 1 } });
+  if (!claimed.count) throw new UserError("The line items changed after you opened this. Reload the page to see the changes, then price them again.");
+}
+
+/** Sales managers to ask for the quote: the deal owner's manager, or every sales head when they have none. */
+async function quoteSenders(tx: Tx, ownerId: string) {
+  const owner = await tx.user.findUnique({ where: { id: ownerId }, select: { manager: { select: { id: true, role: true, active: true } } } });
+  const m = owner?.manager;
+  if (m && m.active && (m.role === "SALES_HEAD" || m.role === "ADMIN")) return [m.id];
+  const heads = await tx.user.findMany({ where: { role: "SALES_HEAD", active: true }, select: { id: true } });
+  if (heads.length) return heads.map((h) => h.id);
+  return (await tx.user.findMany({ where: { role: "ADMIN", active: true }, select: { id: true } })).map((u) => u.id);
+}
+
+const savePricesSchema = z.object({ prices: pricesSchema, version: z.number().int() });
+
+/**
+ * The deal owner sets the sales price of each line once purchase has priced the BOQ, and asks a sales manager to send
+ * the quote. GM is worked out from these prices against each line's purchase price or internal cost.
+ */
+export const savePrices = safeAction("savePrices", async function savePrices(oppId: string, input: Record<string, unknown>): Promise<ActionResult> {
+  const user = await requireUser();
+  const opp = await visibleOpp(user, oppId);
+  if (!opp) return { ok: false, error: "Opportunity not found." };
+  if (!can.editBoqPrice(user, opp)) return { ok: false, error: "Only the deal owner or a manager can set the sales prices." };
+  if (isClosed(opp.stage)) return { ok: false, error: "This deal is closed." };
+  if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it before pricing." };
+  const parsed = savePricesSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  const res = await run(() =>
+    db.$transaction(async (tx) => {
+      await lockDeal(tx, oppId);
+      await claimBoqVersion(tx, oppId, parsed.data.version);
+      await assertCosted(tx, opp, "pricing");
+      await applyPrices(tx, oppId, parsed.data.prices, user.id);
+      const t = boqTotals(await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId } }));
+      const gm = t.marginPct === null ? "" : ` at ${Math.round(t.marginPct * 10) / 10}% GM`;
+      // A manager sends the quote themselves; anyone else hands it to a manager
+      const handOver = !can.sendQuote(user);
+      await tx.opportunity.update({ where: { id: oppId }, data: { lastActivityAt: new Date(), ...(handOver ? { pricesReadyAt: new Date() } : {}) } });
+      await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "PRICES_SET", userId: user.id, newValue: `Sales prices set${gm}` });
+      if (handOver)
+        await notify(tx, await quoteSenders(tx, opp.salesOwnerId), {
+          type: "WORKFLOW", title: `Prices set on ${opp.name}: review and send the quote`, body: `${user.name} set the sales prices${gm}.`, link: boqLink(oppId), exclude: user.id,
+        });
+      await rollUpDeal(tx, oppId, user.id);
+      await recomputeOpportunity(tx, oppId);
+    }),
+  );
+  if (res.ok) refresh(oppId);
+  return res;
+});
 
 const quoteSchema = z.object({
   validTill: day,
   terms: z.string().max(4000).optional(),
-  /** When set, every line is priced at this gross margin on its cost before the quote is created */
-  marginPct: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : Number(v)), z.number().min(0).max(90).optional()),
+  /** Sales prices to send at (the manager may adjust the owner's prices); omitted: the lines' current prices */
+  prices: pricesSchema.optional(),
+  /** BOQ version the form was opened at; required with prices */
+  version: z.number().int().optional(),
 });
 
 export const createQuote = safeAction("createQuote", async function createQuote(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
-  if (!can.createQuote(user, opp)) return { ok: false, error: "Only the deal owner or a manager can issue quotes." };
+  if (!can.sendQuote(user)) return { ok: false, error: "Only a sales manager can send quotes. Set the sales prices and ask your manager to send it." };
   if (isClosed(opp.stage)) return { ok: false, error: "This deal is closed." };
   if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it before sending a quote." };
   const parsed = quoteSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   if (isPast(parsed.data.validTill)) return { ok: false, error: "Quote validity is in the past.", fieldErrors: { validTill: "Validity is in the past" } };
+  if (parsed.data.prices && parsed.data.version === undefined) return { ok: false, error: "This page is out of date. Reload it and try again." };
   const res = await run(() =>
     db.$transaction(async (tx) => {
       await lockDeal(tx, oppId);
-      if (await tx.presalesRequest.count({ where: { opportunityId: oppId, status: openPresales } }))
-        throw new UserError("Presales is still working on the BOQ. Quote once they submit it.");
-      if (await tx.pricingRequest.count({ where: { opportunityId: oppId, status: openPricing } }))
-        throw new UserError("Purchase is still pricing the BOQ. Quote once pricing is complete.");
-      if (opp.presalesRequired && !(await tx.presalesRequest.count({ where: { opportunityId: oppId, status: "BOQ_SUBMITTED" } })))
-        throw new UserError("This deal needs a BOQ from presales before it can be quoted.");
-      await assertRealBoq(tx, oppId, "quoting");
-      const m = parsed.data.marginPct;
-      if (m !== undefined) {
-        const costed = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId, isEstimate: false, unitCost: { not: null } }, select: { id: true, unitCost: true } });
-        for (const l of costed)
-          // To the paisa: rounding to whole rupees would turn small per-unit prices (₹0.40/GB) into ₹0
-          await tx.opportunityLineItem.update({ where: { id: l.id }, data: { unitPrice: new Prisma.Decimal(Math.round((toNumber(l.unitCost) / (1 - m / 100)) * 100) / 100), updatedById: user.id } });
-      }
+      if (parsed.data.version !== undefined) await claimBoqVersion(tx, oppId, parsed.data.version);
+      await assertCosted(tx, opp, "quoting");
+      if (parsed.data.prices) await applyPrices(tx, oppId, parsed.data.prices, user.id);
       const lines = await tx.opportunityLineItem.findMany({
         where: { opportunityId: oppId },
         orderBy: { lineNo: "asc" },
         include: { oem: { select: { name: true } }, product: { select: { hsnSac: true, gstRatePct: true } } },
       });
       const t = boqTotals(lines);
-      const pending = lines.filter(needsPurchaseCost).map((l) => l.lineNo);
-      if (pending.length) throw new UserError(`${linesText(pending).replace(/^l/, "L")} still need${pending.length > 1 ? "" : "s"} a current cost from purchase. Request pricing first.`);
-      assertInternalCosts(lines, "quoting");
-      if (!t.fullyPriced) throw new UserError("Every BOQ line needs a sell price before quoting.");
+      if (!t.fullyPriced) throw new UserError("Every BOQ line needs a sales price before quoting.");
       if (!t.fullyCosted) throw new UserError("Some lines have no cost yet.");
       const expired = lines.filter((l) => costExpired(l, new Date()));
       if (expired.length) {
@@ -920,14 +1002,18 @@ export const createQuote = safeAction("createQuote", async function createQuote(
       await tx.opportunity.update({
         where: { id: oppId },
         // version: an edit form opened before the quote must not put back the old margin
-        data: { amount, expectedMarginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), lastActivityAt: new Date(), version: { increment: 1 } },
+        data: { amount, expectedMarginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), pricesReadyAt: null, lastActivityAt: new Date(), version: { increment: 1 } },
       });
       await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: opp, after: { amount }, fields: ["amount"], userId: user.id });
-      await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "QUOTE_ISSUED", userId: user.id, newValue: `${code} v${q.version}${m !== undefined ? ` at ${m}% margin` : ""}` });
+      const gm = t.marginPct === null ? "" : ` at ${Math.round(t.marginPct * 10) / 10}% GM`;
+      await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "QUOTE_ISSUED", userId: user.id, newValue: `${code} v${q.version}${gm}` });
       await tx.opportunity.update({ where: { id: oppId }, data: { boqVersion: { increment: 1 } } });
+      // The owner hears that their quote went out
+      await notify(tx, [opp.salesOwnerId], { type: "WORKFLOW", title: `Quote ${code} v${q.version} sent on ${opp.name}`, link: `/opportunities/${oppId}?tab=quotes`, exclude: user.id });
       if (STAGE_META[opp.stage as StageKey].order < STAGE_META.PROPOSAL.order) {
         await applyStageChange(tx, user, oppId, "PROPOSAL", {}, { keepForecast: true, source: "system" });
       }
+      await rollUpDeal(tx, oppId, user.id);
       await recomputeOpportunity(tx, oppId);
       return { id: q.id };
     }),

@@ -53,6 +53,9 @@ export const PRESALES_CATEGORIES = new Set([
   "Cybersecurity|SOC", "Cybersecurity|Compliance",
 ]);
 
+/** Categories costed from the rate card (own-brand catalogue standard cost): all of Cloud, plus NOC and SOC. */
+export const isRateCardCategory = (bu: string, category: string) => bu === "Cloud" || category === "NOC" || category === "SOC";
+
 /** Own brands: costed from the rate card (catalogue standard cost) or by presales, not by purchase. */
 export const OWN_BRAND_OEMS = new Set(["Progression", "Neon Cloud"]);
 

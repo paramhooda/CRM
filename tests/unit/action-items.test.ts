@@ -21,6 +21,7 @@ describe("needs your action", () => {
     expect(kind({ quote: { status: "CHANGES_REQUESTED", validTill: days(10), createdAt: days(-5) } })).toBe("REVISE_QUOTE");
     expect(kind({ quote: { status: "ACCEPTED", validTill: days(10), createdAt: days(-5) } })).toBe("RECORD_PO");
     expect(kind({ pricedAt: days(-2) })).toBe("READY_TO_QUOTE");
+    expect(actionItems([deal({ pricedAt: days(-2) })], now)[0].label).toBe("Purchase priced it: set the sales prices");
     expect(kind({ expectedCloseDate: days(-3) })).toBe("CLOSE_DATE_PASSED");
     expect(kind({ nextStep: "Call", nextStepDate: days(-1) })).toBe("NEXT_STEP_OVERDUE");
     expect(kind({ healthLabel: "DYING" })).toBe("NO_ACTIVITY");
@@ -29,6 +30,18 @@ describe("needs your action", () => {
     expect(actionItems([deal({ pricedAt: days(-5), quote: { status: "SUBMITTED", validTill: days(20), createdAt: days(-2) } })], now)).toEqual([]);
     expect(actionItems([deal({ pricedAt: days(-5), workOpen: true })], now)).toEqual([]);
   });
+  it("once the owner sets the prices, a manager sends the quote and the owner has nothing to do", () => {
+    const priced = deal({ pricedAt: days(-3), pricesReadyAt: days(-1) });
+    expect(actionItems([priced], now)).toEqual([]);
+    expect(actionItems([priced], now, true)[0].kind).toBe("SEND_QUOTE");
+    // A customer change after the quote: the owner revises the prices again, then a manager sends it
+    const changes = { quote: { status: "CHANGES_REQUESTED", validTill: days(10), createdAt: days(-5) } };
+    expect(actionItems([deal({ ...changes, pricesReadyAt: days(-6) })], now, true)[0].kind).toBe("REVISE_QUOTE");
+    expect(actionItems([deal({ ...changes, pricesReadyAt: days(-1) })], now, true)[0].kind).toBe("SEND_QUOTE");
+    // Prices set before purchase re-priced the deal are stale
+    expect(actionItems([deal({ pricedAt: days(-1), pricesReadyAt: days(-3) })], now, true)[0].kind).toBe("READY_TO_QUOTE");
+  });
+
   it("held and closed deals are left alone", () => {
     for (const stage of ["HOLD", "WON", "LOST", "DROPPED"]) expect(actionItems([deal({ stage, expectedCloseDate: days(-3) })], now)).toEqual([]);
   });

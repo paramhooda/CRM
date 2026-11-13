@@ -1,18 +1,32 @@
 import { describe, it, expect } from "vitest";
-import { allowedCostSources, costExpired, defaultCostSource, lineCostStatus, needsInternalCost, needsPurchaseCost, resolveCostSource } from "@/lib/costing";
+import { allowedCostSources, costExpired, costHeading, defaultCostSource, lineCostStatus, needsInternalCost, needsPurchaseCost, resolveCostSource } from "@/lib/costing";
 
 const DAY = 86_400_000;
 const now = new Date("2026-10-26T06:00:00Z");
-const thirdParty = { ownBrand: false, standardCost: 900, isProduct: true };
-const rateCarded = { ownBrand: true, standardCost: 900, isProduct: true };
-const ownCustom = { ownBrand: true, standardCost: null, isProduct: false };
+const thirdParty = { ownBrand: false, standardCost: 900, isProduct: true, rateCard: false };
+const rateCarded = { ownBrand: true, standardCost: 900, isProduct: true, rateCard: true };
+const ownCustom = { ownBrand: true, standardCost: null, isProduct: false, rateCard: true };
+/** Own-brand catalogue item with a standard cost, in a category without a rate card (e.g. professional services) */
+const ownOffCard = { ownBrand: true, standardCost: 900, isProduct: true, rateCard: false };
 
 describe("cost source", () => {
   it("third-party lines are priced by purchase; own brand uses the rate card when the catalogue has a cost, else presales", () => {
     expect(defaultCostSource(thirdParty)).toBe("PURCHASE");
     expect(defaultCostSource(rateCarded)).toBe("RATE_CARD");
     expect(defaultCostSource(ownCustom)).toBe("PRESALES");
-    expect(defaultCostSource({ ownBrand: true, standardCost: null, isProduct: true })).toBe("PRESALES");
+    expect(defaultCostSource({ ownBrand: true, standardCost: null, isProduct: true, rateCard: true })).toBe("PRESALES");
+  });
+
+  it("the rate card applies only in its categories (Cloud, NOC, SOC); other own-brand lines are costed by presales", () => {
+    expect(defaultCostSource(ownOffCard)).toBe("PRESALES");
+    expect(allowedCostSources(ownOffCard)).toEqual(["PRESALES", "PURCHASE"]);
+    expect(resolveCostSource("RATE_CARD", ownOffCard)).toBe("PRESALES");
+  });
+
+  it("the cost column says purchase price only for purchase lines", () => {
+    expect(costHeading(["PURCHASE"])).toBe("Purchase price");
+    expect(costHeading(["RATE_CARD", "PRESALES"])).toBe("Internal cost");
+    expect(costHeading(["PURCHASE", "RATE_CARD"])).toBe("Purchase price / internal cost");
   });
 
   it("internal costing is only for own brand; any own-brand line may go via purchase (subcontracting)", () => {

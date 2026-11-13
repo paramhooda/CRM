@@ -260,12 +260,14 @@ export const addPicklistValue = safeAction("addPicklistValue", async function ad
 });
 
 /**
- * Category "needs presales" (solution vs resale default); OEM "runs deal registration" and "own brand" (costed from
- * the rate card or by presales instead of purchase, for lines added from now on).
+ * Category "needs presales" (solution vs resale default) and "rate card" (own-brand lines in it take the catalogue's
+ * standard cost; today Cloud, NOC and SOC); OEM "runs deal registration" and "own brand" (costed from the rate card or
+ * by presales instead of purchase). Both apply to lines added from now on.
  */
 export const togglePicklistFlag = safeAction("togglePicklistFlag", async function togglePicklistFlag(kind: "OEM" | "CATEGORY", id: string, flag: string = "dealRegistration"): Promise<ActionResult> {
   const admin = await requireAdmin();
   if (kind === "OEM" && flag !== "dealRegistration" && flag !== "ownBrand") return { ok: false, error: "Unknown flag." };
+  if (kind === "CATEGORY" && flag !== "needsPresales" && flag !== "rateCard" && flag !== "dealRegistration") return { ok: false, error: "Unknown flag." };
   if (kind === "OEM") {
     const o = await db.oem.findUniqueOrThrow({ where: { id } });
     if (o.isPlaceholder) return { ok: false, error: "\"To be decided\" is a placeholder and cannot carry flags." };
@@ -273,9 +275,10 @@ export const togglePicklistFlag = safeAction("togglePicklistFlag", async functio
     else await db.oem.update({ where: { id }, data: { dealRegistration: !o.dealRegistration } });
   } else {
     const c = await db.category.findUniqueOrThrow({ where: { id } });
-    await db.category.update({ where: { id }, data: { needsPresales: !c.needsPresales } });
+    if (flag === "rateCard") await db.category.update({ where: { id }, data: { rateCard: !c.rateCard } });
+    else await db.category.update({ where: { id }, data: { needsPresales: !c.needsPresales } });
   }
-  await db.auditLog.create({ data: { entityType: "Picklist", entityId: id, action: "FLAG", field: kind === "OEM" ? flag : "needsPresales", changedById: admin.id } });
+  await db.auditLog.create({ data: { entityType: "Picklist", entityId: id, action: "FLAG", field: kind === "OEM" || flag === "rateCard" ? flag : "needsPresales", changedById: admin.id } });
   revalidatePath("/admin");
   return { ok: true };
 });

@@ -270,6 +270,8 @@ model Category {
   sortOrder      Int                   @default(0)
   /// Solutions in this category need presales design and a BOQ (servers, SOC); resale items do not (laptops)
   needsPresales  Boolean               @default(false)
+  /// Own-brand lines in this category are costed from the rate card (the catalogue's standard cost). Today: Cloud, NOC, SOC.
+  rateCard       Boolean               @default(false)
   active         Boolean               @default(true)
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
@@ -470,6 +472,8 @@ model Opportunity {
   id               String   @id @default(cuid())
   /// Increments on every line-item save; stale saves are rejected (two people editing at once)
   boqVersion       Int      @default(0)
+  /// When the deal owner last set the sales prices and asked a sales manager to send the quote
+  pricesReadyAt    DateTime?
   /// Increments on every edit of the deal's details; a save from a stale form is rejected instead of overwriting
   version          Int      @default(0)
   code             String   @unique

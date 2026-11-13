@@ -1,28 +1,40 @@
 // Where each line's cost comes from (pure, unit-tested).
 // Third-party products are costed by purchase, each line with its own supplier validity. Own-brand lines
-// (Progression, Neon Cloud) are costed from the rate card (the catalogue's standard cost) or by presales when the
-// deal needs a different cost. Any own-brand line can still go to purchase, for subcontracted or back-to-back work.
+// (Progression, Neon Cloud) in rate card categories (Cloud, NOC, SOC) take the catalogue's standard cost; other
+// own-brand lines, and deals that need a different cost, are costed by presales. Any own-brand line can still go to
+// purchase, for subcontracted or back-to-back work.
 
 export type CostSourceKey = "PURCHASE" | "RATE_CARD" | "PRESALES";
 
-export const COST_SOURCE_META: Record<CostSourceKey, { label: string; who: string; hint: string }> = {
-  PURCHASE: { label: "Purchase", who: "purchase", hint: "Supplier price from purchase, with its own validity" },
-  RATE_CARD: { label: "Rate card", who: "the rate card", hint: "Standard cost from the catalogue, applied automatically" },
-  PRESALES: { label: "Presales", who: "presales", hint: "Cost worked out by presales for this deal" },
+/** `costLabel`: what the cost is called on a line. Only purchase lines have a purchase price; the rest are internal. */
+export const COST_SOURCE_META: Record<CostSourceKey, { label: string; who: string; hint: string; costLabel: string }> = {
+  PURCHASE: { label: "Purchase", who: "purchase", hint: "Supplier price from purchase, with its own validity", costLabel: "Purchase price" },
+  RATE_CARD: { label: "Rate card", who: "the rate card", hint: "Standard cost from the catalogue, applied automatically", costLabel: "Internal cost" },
+  PRESALES: { label: "Presales", who: "presales", hint: "Cost worked out by presales for this deal", costLabel: "Internal cost" },
 };
 
-export type SourceFacts = { ownBrand: boolean; standardCost: number | null; isProduct: boolean };
-
-/** Own-brand catalogue items with a standard cost use the rate card; other own-brand lines are costed by presales. */
-export function defaultCostSource(f: SourceFacts): CostSourceKey {
-  if (!f.ownBrand) return "PURCHASE";
-  return f.isProduct && f.standardCost !== null ? "RATE_CARD" : "PRESALES";
+/** Column heading for the cost of a set of lines: "Purchase price", "Internal cost", or both when mixed. */
+export function costHeading(sources: string[]): string {
+  const purchase = sources.some((s) => s === "PURCHASE");
+  const internal = sources.some((s) => s !== "PURCHASE");
+  return purchase && internal ? "Purchase price / internal cost" : internal ? "Internal cost" : "Purchase price";
 }
 
-/** Sources a line may use: internal costing is only for own brand, and the rate card only where it has a cost. */
+/** `rateCard`: the line's category uses the rate card (Cloud, NOC, SOC today) */
+export type SourceFacts = { ownBrand: boolean; standardCost: number | null; isProduct: boolean; rateCard: boolean };
+
+const onRateCard = (f: SourceFacts) => f.rateCard && f.isProduct && f.standardCost !== null;
+
+/** Own-brand catalogue items in a rate card category with a standard cost use the rate card; other own-brand lines are costed by presales. */
+export function defaultCostSource(f: SourceFacts): CostSourceKey {
+  if (!f.ownBrand) return "PURCHASE";
+  return onRateCard(f) ? "RATE_CARD" : "PRESALES";
+}
+
+/** Sources a line may use: internal costing is only for own brand, and the rate card only in its categories, where it has a cost. */
 export function allowedCostSources(f: SourceFacts): CostSourceKey[] {
   if (!f.ownBrand) return ["PURCHASE"];
-  return f.isProduct && f.standardCost !== null ? ["RATE_CARD", "PRESALES", "PURCHASE"] : ["PRESALES", "PURCHASE"];
+  return onRateCard(f) ? ["RATE_CARD", "PRESALES", "PURCHASE"] : ["PRESALES", "PURCHASE"];
 }
 
 /** The requested source if it is allowed for the line, otherwise its default. */
