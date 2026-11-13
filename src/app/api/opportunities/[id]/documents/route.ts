@@ -8,6 +8,7 @@ import { recordEvent } from "@/lib/audit";
 import { CLOSED_STAGES, type StageKey } from "@/lib/constants";
 import { DOCUMENT_KIND_META, checkUpload, uploadKinds, type DocumentKindKey } from "@/lib/documents";
 import { OPEN_PRESALES, OPEN_PRICING } from "@/lib/workflow";
+import { QUOTE_KINDS } from "@/lib/quote-coverage";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       },
       select: { id: true },
     });
+    // A supplier or OEM quote says which lines it covers (purchase must back every priced line with one)
+    const lineIds = String(form.get("lineIds") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    if (lineIds.length && QUOTE_KINDS.includes(kind)) {
+      const lines = await tx.opportunityLineItem.findMany({ where: { id: { in: lineIds }, opportunityId: id }, select: { id: true } });
+      if (lines.length) await tx.documentLine.createMany({ data: lines.map((l) => ({ documentId: d.id, lineItemId: l.id })), skipDuplicates: true });
+    }
     await recordEvent(tx, { entityType: "Opportunity", entityId: id, action: "DOCUMENT_ADDED", userId: user.id, newValue: `${DOCUMENT_KIND_META[kind].label} · ${check.fileName}` });
     return d;
   });

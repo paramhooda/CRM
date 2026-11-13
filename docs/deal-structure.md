@@ -27,7 +27,7 @@ BU and category are **your** taxonomy for how you organise practices, targets an
 | **Deal header** | Account, owner, stage, forecast, close date, procurement mode, deal registration. Value, ARR, margin and the *primary* BU, category and OEM are **derived** from the lines (the largest line), never typed. | Sales |
 | **Estimate line** (qualification onward) | BU, category, OEM (may be **To be decided**), estimated value, one-time or recurring. One per practice or vendor in the deal is enough. | Sales |
 | **BOQ line** (BOQ stage onward) | Catalogue product (which fixes BU, category, OEM, HSN/SAC, GST) or a classified custom line, quantity, term, cost (purchase price or internal cost) and where it came from, sales price. These replace the estimates. | Presales, purchase or the rate card (cost), sales (sales price, once the lines are costed) |
-| **Quote** | An immutable snapshot of the priced BOQ lines, versioned. | Sales manager |
+| **Quote** | An immutable snapshot of the priced BOQ lines, versioned. Sent after any price approval an admin-defined rule asks for. | Sales (deal owner) |
 | **Won lines** | The same BOQ lines, locked and marked ready to bill. | Automatic |
 
 ## So, should line level start only at the BOQ?

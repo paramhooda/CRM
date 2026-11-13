@@ -82,7 +82,7 @@ test.describe.serial("Lead to closure", () => {
     await dlg.getByRole("button", { name: /More options/ }).click();
     await dlg.getByLabel("Attach documents").setInputFiles(pdf("Laptop spec sheet.pdf"));
     await expect(dlg.getByText("Laptop spec sheet.pdf")).toBeVisible();
-    await dlg.getByLabel("Kind of Laptop spec sheet.pdf").selectOption("BOQ_SHEET");
+    await dlg.getByLabel("Kind of Laptop spec sheet.pdf").selectOption("OTHER"); // the BOQ itself is the line items
     await dlg.getByRole("button", { name: "Send to purchase" }).click();
     await expect(page.getByText("Purchase notified")).toBeVisible();
     await expect(currentStage(page)).toHaveText("Pricing");
@@ -98,9 +98,12 @@ test.describe.serial("Lead to closure", () => {
     await expect(page.getByText("Line items saved")).toBeVisible();
     await page.getByLabel("Deal status").getByRole("button", { name: "Pricing complete" }).click();
     const done = page.getByRole("dialog");
-    await expect(done.getByText(/No supplier quote attached yet/)).toBeVisible();
-    await done.getByRole("button", { name: /More options/ }).click();
-    await done.getByLabel("Attach documents").setInputFiles(pdf("Redington quote R-2231.pdf"));
+    // The priced line needs a supplier quote; a quote picked here covers the open lines
+    await expect(done.getByLabel("Supplier quotes")).toContainText("○ Line 1");
+    await done.getByRole("button", { name: "Send to sales" }).click();
+    await expect(done.getByText(/Attach the supplier quote for line 1/)).toBeVisible();
+    await done.getByLabel("Add supplier quotes").setInputFiles(pdf("Redington quote R-2231.pdf"));
+    await expect(done.getByLabel("Supplier quotes")).toContainText("✓ Line 1");
     await done.getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
     await page.goto(`${dealUrl}?tab=documents`);
@@ -110,32 +113,18 @@ test.describe.serial("Lead to closure", () => {
   test("won is refused until the quote matches the deal, and a changed line must be re-confirmed by purchase", async ({ page }) => {
     await login(page, SALES);
     await page.goto(dealUrl);
-    // Purchase priced it: sales sets the sales price against the purchase price and hands it to their manager
+    // Purchase priced it: the owner sets the sales price against the purchase price and sends the quote
     await page.getByRole("button", { name: "Advance to Proposal" }).click();
     let dlg = page.getByRole("dialog");
-    await expect(dlg.getByText("Set sales prices")).toBeVisible();
     await expect(dlg.getByRole("columnheader", { name: "Purchase price" })).toBeVisible();
     await dlg.getByLabel("Line 1 GM %").fill("12");
     await expect(dlg.getByLabel("Line 1 sales price")).toHaveValue("59090.91"); // 52,000 at 12% GM
-    await dlg.getByRole("button", { name: /^Save and send to/ }).click();
-    await expect(page.getByText(/Prices saved/)).toBeVisible();
-    await expect(page.getByLabel("Deal status")).toContainText("Prices set · waiting for the quote");
-    await expect(page.getByRole("button", { name: /Advance to Proposal \(not available: Waiting for/ })).toBeVisible();
-
-    // The sales manager reviews the same prices and sends the quote
-    await login(page, HEAD);
-    await page.goto(dealUrl);
-    await page.getByRole("button", { name: "Advance to Proposal" }).click();
-    dlg = page.getByRole("dialog");
-    await expect(dlg.getByLabel("Line 1 sales price")).toHaveValue("59090.91");
     await expect(dlg.getByLabel("GM summary")).toContainText("12.0%");
     const popup = page.waitForEvent("popup");
     await dlg.getByRole("button", { name: "Create & send quote" }).click();
     await (await popup).close();
     await expect(page.getByLabel("Deal status")).toContainText("Quote v1 with customer");
 
-    await login(page, SALES);
-    await page.goto(dealUrl);
     await page.getByRole("button", { name: "Record customer response" }).click();
     dlg = page.getByRole("dialog");
     await dlg.getByRole("radio", { name: "Wants changes" }).click();
@@ -159,6 +148,8 @@ test.describe.serial("Lead to closure", () => {
     await dlg.locator("textarea[name=reason]").fill("Quantity 40 → 45");
     await dlg.getByRole("button", { name: "Send to purchase" }).click();
     await expect(page.getByText("Purchase notified")).toBeVisible();
+    // A re-pricing follows the usual path: the deal goes back to Pricing until the revised quote goes out
+    await expect(currentStage(page)).toHaveText("Pricing");
 
     // Purchase can't pass the old cost through: Pricing complete waits until the line is re-costed or confirmed
     await login(page, PURCHASE);
@@ -169,25 +160,24 @@ test.describe.serial("Lead to closure", () => {
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await page.getByLabel("Deal status").getByRole("button", { name: "Pricing complete" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
+    dlg = page.getByRole("dialog");
+    // The confirmed price needs the supplier's quote for the new quantity
+    await dlg.getByLabel("Add supplier quotes").setInputFiles(pdf("Redington quote R-2240.pdf"));
+    await dlg.getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
 
-    // Sales keeps the prices (the new quantity at the same unit price); the manager sends the revised quote
+    // The owner is told to re-check the prices; the table shows what changed since the quote
     await login(page, SALES);
     await page.goto(dealUrl);
-    await page.getByLabel("Deal status").getByRole("button", { name: "Revise sales prices" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: /^Save and send to/ }).click();
-    await expect(page.getByText(/Prices saved/)).toBeVisible();
-    await login(page, HEAD);
-    await page.goto(dealUrl);
+    await expect(page.getByLabel("Deal status")).toContainText("Revised pricing ready");
     await page.getByLabel("Deal status").getByRole("button", { name: "Send revised quote" }).click();
     dlg = page.getByRole("dialog");
+    await expect(dlg.getByText(/Changed since quote v1: qty was 40/)).toBeVisible();
     const popup2 = page.waitForEvent("popup");
     await dlg.getByRole("button", { name: "Send revised quote" }).click();
     await (await popup2).close();
     await expect(page.getByLabel("Deal status")).toContainText("Quote v2 with customer");
-    await login(page, SALES);
-    await page.goto(dealUrl);
+    await expect(currentStage(page)).toHaveText("Proposal Submitted");
     await page.getByRole("button", { name: "Record customer response" }).click();
     dlg = page.getByRole("dialog");
     await dlg.getByRole("button", { name: "Save" }).click(); // Accepted is the default

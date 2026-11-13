@@ -64,8 +64,8 @@ export const can = {
   manageProducts: (u: U) => u.role === "ADMIN",
   /** Work with the customer on a quote: record their response, extend its validity */
   createQuote: (u: U, o: OppRef) => isManager(u) || (u.role === "SALES" && o.salesOwnerId === u.id),
-  /** Send a quote (or a revised one) to the customer: sales managers. The deal owner sets the prices and asks them. */
-  sendQuote: (u: U) => isManager(u),
+  /** Send a quote (or a revised one): the deal owner or a manager, once any approval the prices need is given */
+  sendQuote: (u: U, o: OppRef) => isManager(u) || (u.role === "SALES" && o.salesOwnerId === u.id),
   manageAccounts: (u: U) => u.role === "ADMIN" || u.role === "SALES_HEAD" || u.role === "SALES",
   manageLeads: (u: U) => u.role === "ADMIN" || u.role === "SALES_HEAD" || u.role === "SALES",
   logActivity: () => true,

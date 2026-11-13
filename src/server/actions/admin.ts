@@ -327,3 +327,64 @@ export const runRecompute = safeAction("runRecompute", async function runRecompu
   revalidatePath("/", "layout");
   return { ok: true, data: { count } };
 });
+
+// ───────────── Price approval rules ─────────────
+
+const approvalRuleSchema = z
+  .object({
+    name: z.string().trim().min(2, "Name the rule").max(80),
+    active: z.boolean().default(true),
+    gmBelowPct: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(-100).max(100).nullable()),
+    rateCardDiscount: z.boolean().default(false),
+    minDealValue: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number().min(0).max(1e12).nullable()),
+    businessUnitIds: z.array(z.string()).max(50).default([]),
+    steps: z
+      .array(z.object({ kind: z.enum(["OWNER_MANAGER", "ROLE", "USER"]), role: z.enum(["SALES_HEAD", "ADMIN"]).nullish(), userId: z.string().nullish() }))
+      .min(1, "Add at least one approver")
+      .max(6),
+  })
+  .refine((r) => r.gmBelowPct !== null || r.rateCardDiscount || r.minDealValue !== null, { path: ["conditions"], message: "Choose at least one condition" })
+  .refine((r) => r.steps.every((s) => (s.kind === "ROLE" ? !!s.role : s.kind === "USER" ? !!s.userId : true)), { path: ["steps"], message: "Pick the role or person for each approver" });
+
+/** Create or change a price approval rule. Requests already raised keep the steps they were given. */
+export const saveApprovalRule = safeAction("saveApprovalRule", async function saveApprovalRule(id: string | null, input: unknown): Promise<ActionResult<{ id: string }>> {
+  const admin = await requireAdmin();
+  const parsed = approvalRuleSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  const v = parsed.data;
+  // Named approvers see every deal: sales heads and admins only
+  const named = v.steps.filter((s) => s.kind === "USER").map((s) => s.userId!);
+  if (named.length) {
+    const ok = await db.user.count({ where: { id: { in: named }, active: true, role: { in: ["SALES_HEAD", "ADMIN"] } } });
+    if (ok !== new Set(named).size) return { ok: false, error: "A named approver must be an active sales head or admin.", fieldErrors: { steps: "Pick a sales head or admin" } };
+  }
+  if (v.businessUnitIds.length && (await db.businessUnit.count({ where: { id: { in: v.businessUnitIds } } })) !== new Set(v.businessUnitIds).size)
+    return { ok: false, error: "A chosen business unit no longer exists." };
+  const data = {
+    name: v.name, active: v.active, rateCardDiscount: v.rateCardDiscount, businessUnitIds: v.businessUnitIds,
+    gmBelowPct: v.gmBelowPct === null ? null : new Prisma.Decimal(v.gmBelowPct), minDealValue: v.minDealValue === null ? null : new Prisma.Decimal(v.minDealValue),
+  };
+  const steps = v.steps.map((s, i) => ({ position: i, kind: s.kind, role: s.kind === "ROLE" ? s.role! : null, userId: s.kind === "USER" ? s.userId! : null }));
+  const saved = await db.$transaction(async (tx) => {
+    const r = id
+      ? await tx.approvalRule.update({ where: { id }, data: { ...data, steps: { deleteMany: {}, create: steps } } })
+      : await tx.approvalRule.create({ data: { ...data, createdById: admin.id, sortOrder: (await tx.approvalRule.count()) + 1, steps: { create: steps } } });
+    await recordEvent(tx, { entityType: "ApprovalRule", entityId: r.id, action: id ? "UPDATE" : "CREATE", userId: admin.id, newValue: v.name });
+    return r;
+  });
+  revalidatePath("/admin");
+  return { ok: true, data: { id: saved.id } };
+});
+
+/** Remove a rule. Requests already raised keep their steps. */
+export const deleteApprovalRule = safeAction("deleteApprovalRule", async function deleteApprovalRule(id: string): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  const r = await db.approvalRule.findUnique({ where: { id }, select: { name: true } });
+  if (!r) return { ok: false, error: "Rule not found." };
+  await db.$transaction(async (tx) => {
+    await tx.approvalRule.delete({ where: { id } });
+    await recordEvent(tx, { entityType: "ApprovalRule", entityId: id, action: "DELETE", userId: admin.id, oldValue: r.name });
+  });
+  revalidatePath("/admin");
+  return { ok: true };
+});

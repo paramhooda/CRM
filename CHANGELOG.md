@@ -2,6 +2,55 @@
 
 Each release says what changed, what happens to existing data, and any steps needed to upgrade.
 
+## 1.6.0: approval rules, quote-backed pricing, and one path for revisions
+
+**Approvals**
+- Admins define approval rules under Settings → Approvals. A rule applies when every condition set on it holds:
+  - contract GM below a percentage;
+  - a rate card item priced below its rate card price;
+  - deal value at or above an amount;
+  - optionally, only some business units.
+- Each rule lists its approvers in order: the deal owner's manager, any Sales Head, any Admin, or a named person.
+- When a rule applies, the owner asks for approval. Approvers approve or send back with a note, from their home page.
+- The owner sends the quote once approved. Any later price or line change needs a new approval.
+- Without rules, quotes go out as before.
+
+**The owner sends the quote again.** The 1.4.0 step "sales prices → manager sends" is gone.
+
+**New deals**
+- Every opportunity starts at **Qualified**, and the Identified stage is retired.
+- The customer contact is required. The value can wait until pricing.
+- Deal type is no longer asked. It is worked out from the account and what the customer already bought, and can be corrected on the edit form.
+- The Deal ID shows on the deal page.
+
+**Line items**
+- Edit mode shows each person only what they enter:
+  - presales: products, quantity, billing, and the cost of own-brand lines off the rate card;
+  - purchase: purchase price, supplier and validity;
+  - sales: products and quantities.
+- Rate card items (Cloud, NOC, SOC) are always costed from the rate card; nobody can change their cost.
+- Rate card items start at their rate card price in the pricing step; a lower price is a discount that a rule can send for approval.
+
+**Hand-overs**
+- **Submit BOQ:**
+  - the documents sales asked for (solution document, presentation, site survey) are required;
+  - the BOQ is no longer uploaded: it is generated from the line items (Documents → Bill of quantities);
+  - purchase is assigned automatically.
+- **Pricing complete:** every third-party line priced needs a supplier or OEM quote; one quote can cover several lines. Rate card, presales-costed and own-brand lines are exempt.
+
+**Revisions**
+- A BOQ change, re-pricing or re-validation after a quote moves the deal back to BOQ or Pricing, and it comes forward the usual way.
+- The owner sees "Revised pricing ready · re-check the sales prices", and each line shows what changed since the quote.
+- A revision that changed nothing the customer sees returns the deal to where it was.
+
+**Data:**
+- Open deals at Identified move to Qualified, with a stage-history row, and held deals resume to Qualified.
+- New tables (approval rules, price approvals, quote-to-line links) and a cost timestamp on line items start empty.
+- Existing documents (old BOQ sheets included), costs, prices and quotes are unchanged.
+- Rate card items that presales re-costed keep their cost until the line changes.
+
+**Upgrade steps:** none. Add approval rules under Settings → Approvals if you want them.
+
 ## 1.5.0: a deal can start without a value; fixes from a full walk-through
 
 **New deals**

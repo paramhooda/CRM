@@ -559,6 +559,7 @@ model Opportunity {
   pricingRequests  PricingRequest[]
   quotes           Quote[]
   documents        OpportunityDocument[]
+  priceApprovals   PriceApproval[]
   activities       Activity[]
   stageHistory     StageHistory[]
 
@@ -615,6 +616,10 @@ model OpportunityLineItem {
   /// The line changed (quantity, part, term…) after it was costed: purchase must enter or confirm a new cost
   needsReprice     Boolean           @default(false)
   costSource       CostSource        @default(PURCHASE)
+  /// When purchase last entered or confirmed the cost or validity: lines priced in a request need a supplier quote from it
+  costSetAt        DateTime?
+  /// Supplier or OEM quotes that cover this line
+  quoteDocuments   DocumentLine[]
   /// Until when the supplier's price holds (purchase lines; each vendor quotes its own validity)
   costValidTill    DateTime?
   /// How presales built an internal cost, or why a line was sent to purchase
@@ -904,8 +909,99 @@ model OpportunityDocument {
   uploadedById      String
   uploadedBy        User             @relation(fields: [uploadedById], references: [id])
   createdAt         DateTime         @default(now())
+  /// The lines a supplier or OEM quote covers (one quote can cover several)
+  lines             DocumentLine[]
 
   @@index([opportunityId, createdAt])
+}
+
+/// A supplier or OEM quote covers these line items
+model DocumentLine {
+  documentId String
+  document   OpportunityDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  lineItemId String
+  lineItem   OpportunityLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, lineItemId])
+  @@index([lineItemId])
+}
+
+// ───────────────────────── Price approvals ─────────────────────────
+
+enum ApproverKind {
+  /// The deal owner's manager
+  OWNER_MANAGER
+  /// Anyone with a role (Sales Head, Admin)
+  ROLE
+  /// A named person
+  USER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// Admin-defined: when a deal's prices need approval before the quote goes out, and who approves, in order. Every
+/// condition set on a rule must hold; several rules give "or". No rule matching means no approval is needed.
+model ApprovalRule {
+  id               String             @id @default(cuid())
+  name             String
+  active           Boolean            @default(true)
+  sortOrder        Int                @default(0)
+  /// Contract GM below this percentage
+  gmBelowPct       Decimal?           @db.Decimal(5, 2)
+  /// Any rate card line priced below its rate card (list) price
+  rateCardDiscount Boolean            @default(false)
+  /// Deal value at or above this amount
+  minDealValue     Decimal?           @db.Decimal(16, 2)
+  /// Only deals with lines in these business units; empty means any
+  businessUnitIds  String[]           @default([])
+  steps            ApprovalRuleStep[]
+  createdById      String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+}
+
+/// One approver step of a rule: the owner's manager, anyone with a role, or a named person
+model ApprovalRuleStep {
+  id       String       @id @default(cuid())
+  ruleId   String
+  rule     ApprovalRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  position Int
+  kind     ApproverKind
+  role     Role?
+  userId   String?
+
+  @@index([ruleId, position])
+}
+
+/// A request to approve a deal's sales prices before the quote goes out
+model PriceApproval {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  status        ApprovalStatus @default(PENDING)
+  requestedById String
+  /// The lines and prices approved: any change afterwards needs a new approval
+  fingerprint   String
+  gmPct         Decimal?       @db.Decimal(6, 2)
+  totalValue    Decimal        @db.Decimal(16, 2)
+  /// Why approval was needed, one line per matching rule
+  reasons       String[]       @default([])
+  /// Approver steps resolved when requested, with each decision (src/lib/approvals.ts)
+  steps         Json
+  currentStep   Int            @default(0)
+  /// The last decision's note (a rejection says why)
+  note          String?
+  decidedAt     DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([opportunityId, createdAt])
+  @@index([status])
 }
 
 /// Sign-in attempts, kept 30 days: lockout after repeated wrong passwords, and an audit trail of failures

@@ -3,12 +3,13 @@ import { canSeeDocument, checkUpload, contentDisposition, uploadKinds, visibleKi
 import { can, isSupportRole, opportunityScope, accountScope } from "@/lib/authz";
 
 describe("who adds which documents", () => {
-  it("each role adds the papers of its own job; managers add any kind", () => {
-    expect(uploadKinds("PRESALES")).toEqual(expect.arrayContaining(["SOW", "SOLUTION_DOC", "BOQ_SHEET"]));
+  it("each role adds the papers of its own job; managers add any kind; nobody uploads a BOQ (it is the line items)", () => {
+    expect(uploadKinds("PRESALES")).toEqual(expect.arrayContaining(["SOW", "SOLUTION_DOC"]));
+    for (const role of ["SALES", "PRESALES", "PURCHASE", "SALES_HEAD", "ADMIN"]) expect(uploadKinds(role)).not.toContain("BOQ_SHEET");
     expect(uploadKinds("PRESALES")).not.toContain("SUPPLIER_QUOTE");
     expect(uploadKinds("PURCHASE")).toEqual(["SUPPLIER_QUOTE", "OEM_QUOTE", "OTHER"]);
     expect(uploadKinds("SALES")).toContain("CUSTOMER_PO");
-    expect(uploadKinds("SALES_HEAD")).toHaveLength(10);
+    expect(uploadKinds("SALES_HEAD")).toHaveLength(9);
   });
 });
 

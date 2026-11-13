@@ -3,7 +3,10 @@
 // BOQ editing (with locks and concurrency checks) and quotes with customer responses.
 // The deal's workflow state is derived from these records by `deriveWorkflow` (src/lib/workflow.ts).
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
+import { Prisma, type DocumentKind } from "@prisma/client";
+import { DELIVERABLE_LABEL, DOC_DELIVERABLES } from "@/lib/deal-setup";
+import { linesNeedingQuote, uncoveredLines } from "@/lib/quote-coverage";
+import { matchRules, mergeSteps, nextOpenStep, priceFingerprint, rateCardDiscountLines, resolveSteps, type DealPricing, type ResolvedStep, type RuleInput } from "@/lib/approvals";
 import { z } from "zod";
 import { db, type Tx } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/auth";
@@ -71,14 +74,37 @@ const touchBoq = (tx: Tx, oppId: string) => tx.opportunity.update({ where: { id:
 
 /**
  * Keep the pipeline stage in step with who holds the deal: BOQ while presales works on it, Pricing while purchase
- * prices it and until the quote goes out (Proposal Submitted). Deals only move forward, except that a BOQ revision
- * during Pricing takes the deal back to BOQ. Once a quote is with the customer the stage is left to sales.
+ * prices it and until the quote goes out (Proposal Submitted). A revision follows the same path: a BOQ change or a
+ * re-pricing asked for after the quote went out takes the deal back to BOQ or Pricing, and the revised quote brings
+ * it to Proposal Submitted again. The quote already with the customer stays there until the revised one replaces it.
  */
 async function syncStage(tx: Tx, user: CurrentUser, oppId: string, to: "BOQ" | "PRICING") {
   const { stage } = await tx.opportunity.findUniqueOrThrow({ where: { id: oppId }, select: { stage: true } });
   if (isClosed(stage) || stage === "HOLD" || stage === to) return;
   const forward = STAGE_META[to].order > STAGE_META[stage as StageKey].order;
-  if (forward || (to === "BOQ" && stage === "PRICING")) await applyStageChange(tx, user, oppId, to, {}, { keepForecast: true, source: "system" });
+  const back = !forward && ["PRICING", "PROPOSAL", "NEGOTIATION"].includes(stage);
+  if (forward || back) await applyStageChange(tx, user, oppId, to, { note: back ? (to === "BOQ" ? "BOQ revision requested" : "Re-pricing requested") : undefined }, { keepForecast: true, source: "system" });
+}
+
+/**
+ * A revision that changed nothing the customer sees (a re-validation, costs only): the quote with the customer still
+ * describes the deal, so the deal returns to where it was with that quote (Proposal Submitted or Negotiation).
+ */
+async function returnIfQuoteStillCurrent(tx: Tx, user: CurrentUser, oppId: string) {
+  const o = await tx.opportunity.findUniqueOrThrow({
+    where: { id: oppId },
+    select: {
+      stage: true,
+      quotes: { orderBy: { version: "desc" }, take: 1, select: { status: true, snapshot: true } },
+      lineItems: { orderBy: { lineNo: "asc" }, include: { product: { select: { gstRatePct: true } } } },
+      stageHistory: { where: { toStage: { in: ["PROPOSAL", "NEGOTIATION"] } }, orderBy: { changedAt: "desc" }, take: 1, select: { toStage: true } },
+    },
+  });
+  const q = o.quotes[0];
+  if (!q || !["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"].includes(q.status) || !["BOQ", "PRICING"].includes(o.stage)) return;
+  if (quoteMatchesLines(q.snapshot, o.lineItems.map(quotedLine)) !== true) return;
+  const to = (o.stageHistory[0]?.toStage ?? "PROPOSAL") as StageKey;
+  await applyStageChange(tx, user, oppId, to, { note: "Nothing the customer sees changed: back with the quote" }, { keepForecast: true, source: "system" });
 }
 
 /** Pick the purchase user with the fewest open pricing requests. */
@@ -321,7 +347,6 @@ export const answerPresales = safeAction("answerPresales", async function answer
 const submitBoqSchema = z.object({
   solutionSummary: z.string().trim().min(10, "Add a short solution summary").max(4000),
   assumptions: z.string().trim().max(4000).optional(),
-  purchaseUserId: z.string().optional(),
   dueDate: day.optional(),
   notes: z.string().max(2000).optional(),
 });
@@ -343,6 +368,16 @@ export const submitBoq = safeAction("submitBoq", async function submitBoq(reques
   const res = await run(() =>
     db.$transaction(async (tx) => {
       const count = await assertRealBoq(tx, r.opportunityId, "submitting");
+      // Documents sales asked for are part of the hand-over: attached to this request, or added since it was raised
+      const askedDocs = r.deliverables.filter((k) => DOC_DELIVERABLES.includes(k));
+      if (askedDocs.length) {
+        const have = await tx.opportunityDocument.findMany({
+          where: { opportunityId: r.opportunityId, kind: { in: askedDocs as DocumentKind[] }, OR: [{ presalesRequestId: r.id }, { createdAt: { gte: r.createdAt } }] },
+          select: { kind: true },
+        });
+        const missing = askedDocs.filter((k) => !have.some((h) => h.kind === k)).map((k) => (DELIVERABLE_LABEL[k] ?? k).toLowerCase());
+        if (missing.length) throw new UserError(`Sales asked for the ${missing.join(" and the ")}. Attach ${missing.length > 1 ? "them" : "it"} before submitting the BOQ.`);
+      }
       let pricingRequestId: string | undefined;
       const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: r.opportunityId } });
       assertInternalCosts(lines, "submitting");
@@ -360,7 +395,8 @@ export const submitBoq = safeAction("submitBoq", async function submitBoq(reques
         newValue: `Revision ${r.revision} · ${count} lines${pending.length ? ` · ${pending.length} to price` : " · no cost changes"}`,
       });
       if (pending.length) {
-        const purchaseId = await purchaseFor(tx, parsed.data.purchaseUserId || opp.purchaseOwnerId);
+        // Purchase is assigned automatically: the deal's purchase owner, or whoever has the least open work
+        const purchaseId = await purchaseFor(tx, opp.purchaseOwnerId);
         const priced = await tx.pricingRequest.count({ where: { opportunityId: r.opportunityId, status: "QUOTED" } });
         const kind = priced ? "REPRICE" : "FULL";
         await tx.opportunityLineItem.updateMany({ where: { id: { in: pending.map((l) => l.id) } }, data: { pricingStatus: "PENDING" } });
@@ -390,6 +426,7 @@ export const submitBoq = safeAction("submitBoq", async function submitBoq(reques
         exclude: user.id,
       });
       await syncStage(tx, user, r.opportunityId, "PRICING");
+      if (!pending.length) await returnIfQuoteStillCurrent(tx, user, r.opportunityId);
       await recomputeOpportunity(tx, r.opportunityId);
       return { pricing: pending.length > 0, pricingRequestId };
     }),
@@ -506,6 +543,22 @@ export const completePricing = safeAction("completePricing", async function comp
   // "Price unchanged" on it, so an old price never passes as current
   const stale = await db.opportunityLineItem.findMany({ where: { ...purchaseLines, needsReprice: true }, select: { lineNo: true } });
   if (stale.length) return { ok: false, error: `${linesText(stale.map((l) => l.lineNo)).replace(/^l/, "L")} changed after ${stale.length > 1 ? "they were" : "it was"} costed. Enter the new cost, or tick "Price unchanged", and save the BOQ first.` };
+  // Every third-party line priced in this request needs a supplier or OEM quote attached to it (one can cover several)
+  const needing = linesNeedingQuote(
+    (await db.opportunityLineItem.findMany({
+      where: { opportunityId: r.opportunityId }, orderBy: { lineNo: "asc" },
+      select: { id: true, lineNo: true, isEstimate: true, costSource: true, costSetAt: true, pricingStatus: true, costValidTill: true, oem: { select: { ownBrand: true } } },
+    })).map((l) => ({ ...l, ownBrand: l.oem.ownBrand })),
+    r.createdAt, new Date(),
+  );
+  if (needing.length) {
+    const covered = await db.documentLine.findMany({
+      where: { lineItemId: { in: needing.map((l) => l.id) }, document: { kind: { in: ["SUPPLIER_QUOTE", "OEM_QUOTE"] }, OR: [{ pricingRequestId: requestId }, { createdAt: { gte: r.createdAt } }] } },
+      select: { lineItemId: true },
+    });
+    const open = uncoveredLines(needing, covered.map((c) => c.lineItemId));
+    if (open.length) return { ok: false, error: `Attach the supplier quote for ${linesText(open)}, and mark which lines it covers. One quote can cover several lines.` };
+  }
   const now = new Date();
   // Each supplier quotes its own validity. Lines in this request without one, or with a lapsed one, take the date
   // confirmed here; lines not in the request keep theirs.
@@ -535,6 +588,7 @@ export const completePricing = safeAction("completePricing", async function comp
       exclude: user.id,
     });
     await touchBoq(tx, r.opportunityId);
+    await returnIfQuoteStillCurrent(tx, user, r.opportunityId);
     await recomputeOpportunity(tx, r.opportunityId);
   }));
   if (!res.ok) return res;
@@ -775,7 +829,13 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
 
         // Cost source, and what this user may enter for it
         const facts = await costFacts(specData ?? cur!);
-        const source = resolveCostSource(spec || internal ? l.costSource ?? cur?.costSource : cur!.costSource, facts);
+        const requested = spec || internal ? l.costSource ?? cur?.costSource : cur!.costSource;
+        let source = resolveCostSource(requested, facts);
+        // Rate card items presales re-costed before the rate card was locked keep that cost until the line itself
+        // changes (product, quantity, billing or term): no surprise price changes on open deals
+        const lineChanged = !!specData && !!cur && (specData.productId !== cur.productId || Number(specData.quantity) !== Number(cur.quantity)
+          || specData.billingFrequency !== cur.billingFrequency || (specData.termMonths ?? null) !== (cur.termMonths ?? null));
+        if (cur?.costSource === "PRESALES" && source === "RATE_CARD" && requested === "PRESALES" && !lineChanged) source = "PRESALES";
         const sourceChanged = !!cur && source !== cur.costSource;
         if (sourceChanged && lock && (source === "PURCHASE" || cur!.costSource === "PURCHASE")) throw new UserError(lock);
         const canCost = source === "PURCHASE" ? cost : source === "PRESALES" && internal;
@@ -823,6 +883,8 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
           stale: cur.needsReprice, confirmed: canCost && source === "PURCHASE" && !!l.confirmCost,
         });
         data.pricingStatus = st.status;
+        // When purchase sets or confirms a price: lines priced in a request need a supplier quote from it
+        if (source === "PURCHASE" && canCost && (costChanged || !!l.confirmCost)) data.costSetAt = new Date();
         data.needsReprice = st.stale;
         if (st.repriced) repriced++;
         await tx.opportunityLineItem.update({ where: { id: cur.id }, data });
@@ -888,52 +950,139 @@ async function claimBoqVersion(tx: Tx, oppId: string, version: number) {
   if (!claimed.count) throw new UserError("The line items changed after you opened this. Reload the page to see the changes, then price them again.");
 }
 
-/** Sales managers to ask for the quote: the deal owner's manager, or every sales head when they have none. */
-async function quoteSenders(tx: Tx, ownerId: string) {
-  const owner = await tx.user.findUnique({ where: { id: ownerId }, select: { manager: { select: { id: true, role: true, active: true } } } });
-  const m = owner?.manager;
-  if (m && m.active && (m.role === "SALES_HEAD" || m.role === "ADMIN")) return [m.id];
-  const heads = await tx.user.findMany({ where: { role: "SALES_HEAD", active: true }, select: { id: true } });
-  if (heads.length) return heads.map((h) => h.id);
-  return (await tx.user.findMany({ where: { role: "ADMIN", active: true }, select: { id: true } })).map((u) => u.id);
+// ───────────── Price approvals ─────────────
+
+/** Active approval rules, in their order, as the pure engine reads them */
+async function loadRules(tx: Tx): Promise<RuleInput[]> {
+  const rules = await tx.approvalRule.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], include: { steps: { orderBy: { position: "asc" } } } });
+  return rules.map((r) => ({
+    id: r.id, name: r.name, active: r.active, gmBelowPct: r.gmBelowPct === null ? null : toNumber(r.gmBelowPct), rateCardDiscount: r.rateCardDiscount,
+    minDealValue: r.minDealValue === null ? null : toNumber(r.minDealValue), businessUnitIds: r.businessUnitIds,
+    steps: r.steps.map((x) => ({ kind: x.kind, role: x.role, userId: x.userId })),
+  }));
 }
 
-const savePricesSchema = z.object({ prices: pricesSchema, version: z.number().int() });
+/** The deal's prices as the approval rules see them, and the fingerprint an approval is tied to. */
+async function pricingFacts(tx: Tx, oppId: string) {
+  const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId }, orderBy: { lineNo: "asc" }, include: { product: { select: { listPrice: true } } } });
+  const t = boqTotals(lines);
+  const n = (v: unknown) => (v === null || v === undefined ? null : toNumber(v));
+  const pricing: DealPricing = {
+    gmPct: t.marginPct, value: t.totalPrice, businessUnitIds: [...new Set(lines.map((l) => l.businessUnitId))],
+    rateCardDiscountLines: rateCardDiscountLines(lines.map((l) => ({ lineNo: l.lineNo, costSource: l.costSource, unitPrice: n(l.unitPrice), listPrice: n(l.product?.listPrice) }))),
+  };
+  const fingerprint = priceFingerprint(lines.map((l) => ({ id: l.id, quantity: toNumber(l.quantity), unitPrice: n(l.unitPrice), unitCost: n(l.unitCost), billingFrequency: l.billingFrequency, termMonths: l.termMonths })));
+  return { pricing, fingerprint, totals: t };
+}
+
+const approvalRequestSchema = z.object({ prices: pricesSchema, version: z.number().int() });
 
 /**
- * The deal owner sets the sales price of each line once purchase has priced the BOQ, and asks a sales manager to send
- * the quote. GM is worked out from these prices against each line's purchase price or internal cost.
+ * The deal owner (or a manager) asks for the prices to be approved, when an approval rule applies to them. The prices
+ * are saved, any earlier request still waiting is replaced, and the first approver is notified.
  */
-export const savePrices = safeAction("savePrices", async function savePrices(oppId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const requestApproval = safeAction("requestApproval", async function requestApproval(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ approved: boolean }>> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
-  if (!can.editBoqPrice(user, opp)) return { ok: false, error: "Only the deal owner or a manager can set the sales prices." };
+  if (!can.editBoqPrice(user, opp)) return { ok: false, error: "Only the deal owner or a manager can ask for price approval." };
   if (isClosed(opp.stage)) return { ok: false, error: "This deal is closed." };
-  if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it before pricing." };
-  const parsed = savePricesSchema.safeParse(input);
+  if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it first." };
+  const parsed = approvalRequestSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const res = await run(() =>
     db.$transaction(async (tx) => {
       await lockDeal(tx, oppId);
       await claimBoqVersion(tx, oppId, parsed.data.version);
-      await assertCosted(tx, opp, "pricing");
+      await assertCosted(tx, opp, "asking for approval");
       await applyPrices(tx, oppId, parsed.data.prices, user.id);
-      const t = boqTotals(await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId } }));
-      const gm = t.marginPct === null ? "" : ` at ${Math.round(t.marginPct * 10) / 10}% GM`;
-      // A manager sends the quote themselves; anyone else hands it to a manager
-      const handOver = !can.sendQuote(user);
-      await tx.opportunity.update({ where: { id: oppId }, data: { lastActivityAt: new Date(), ...(handOver ? { pricesReadyAt: new Date() } : {}) } });
-      await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "PRICES_SET", userId: user.id, newValue: `Sales prices set${gm}` });
-      if (handOver)
-        await notify(tx, await quoteSenders(tx, opp.salesOwnerId), {
-          type: "WORKFLOW", title: `Prices set on ${opp.name}: review and send the quote`, body: `${user.name} set the sales prices${gm}.`, link: boqLink(oppId), exclude: user.id,
+      const { pricing, fingerprint, totals } = await pricingFacts(tx, oppId);
+      const matched = matchRules(await loadRules(tx), pricing);
+      if (!matched.length) throw new UserError("These prices don't need approval. Send the quote.");
+      // People who can approve: the owner's manager, sales heads and admins, a named person (still active)
+      const [owner, people] = await Promise.all([
+        tx.user.findUnique({ where: { id: opp.salesOwnerId }, select: { manager: { select: { id: true, name: true, active: true } } } }),
+        tx.user.findMany({ where: { active: true, role: { in: ["SALES_HEAD", "ADMIN"] } }, select: { id: true, name: true, role: true } }),
+      ]);
+      const m = owner?.manager;
+      const steps = resolveSteps(mergeSteps(matched), {
+        requesterId: user.id,
+        ownerManager: m && m.active ? { id: m.id, name: m.name } : null,
+        byRole: { SALES_HEAD: people.filter((p) => p.role === "SALES_HEAD"), ADMIN: people.filter((p) => p.role === "ADMIN") },
+        byId: Object.fromEntries(people.map((p) => [p.id, p])),
+        admins: people.filter((p) => p.role === "ADMIN"),
+      });
+      const at = nextOpenStep(steps);
+      await tx.priceApproval.updateMany({ where: { opportunityId: oppId, status: "PENDING" }, data: { status: "CANCELLED", decidedAt: new Date(), note: "Replaced by a new request" } });
+      const reasons = matched.map((x) => `${x.rule.name}: ${x.reasons.join("; ")}`);
+      await tx.priceApproval.create({
+        data: {
+          opportunityId: oppId, requestedById: user.id, fingerprint, reasons, steps: steps as unknown as Prisma.InputJsonValue,
+          currentStep: at === -1 ? steps.length : at, status: at === -1 ? "APPROVED" : "PENDING", decidedAt: at === -1 ? new Date() : null,
+          gmPct: totals.marginPct === null ? null : new Prisma.Decimal(Math.round(totals.marginPct * 100) / 100), totalValue: new Prisma.Decimal(Math.round(totals.totalPrice)),
+        },
+      });
+      await tx.opportunity.update({ where: { id: oppId }, data: { lastActivityAt: new Date() } });
+      await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "APPROVAL_REQUESTED", userId: user.id, newValue: reasons.join(" · ") });
+      if (at !== -1)
+        await notify(tx, steps[at]!.approverIds, {
+          type: "WORKFLOW", title: `Approve prices: ${opp.name}`, body: `${user.name} asks for approval. ${reasons.join(" · ")}`, link: `/opportunities/${oppId}`, exclude: user.id,
         });
       await rollUpDeal(tx, oppId, user.id);
       await recomputeOpportunity(tx, oppId);
+      return { approved: at === -1 };
     }),
   );
   if (res.ok) refresh(oppId);
+  return res;
+});
+
+const decisionSchema = z
+  .object({ decision: z.enum(["APPROVED", "REJECTED"]), note: z.string().trim().max(2000).optional() })
+  .refine((v) => v.decision === "APPROVED" || (v.note && v.note.length >= 3), { path: ["note"], message: "Say why, so the owner can revise the prices" });
+
+/** An approver of the current step approves or rejects. Approved by every step: the owner can send the quote. */
+export const decideApproval = safeAction("decideApproval", async function decideApproval(approvalId: string, input: Record<string, unknown>): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = decisionSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  const ap = await db.priceApproval.findUnique({ where: { id: approvalId }, include: { opportunity: { select: { id: true, name: true, salesOwnerId: true, stage: true } } } });
+  if (!ap || !(await visibleOpp(user, ap.opportunityId))) return { ok: false, error: "Approval not found." };
+  if (ap.status !== "PENDING") return { ok: false, error: "This approval is already decided. Reload the page." };
+  const steps = ap.steps as unknown as ResolvedStep[];
+  const step = steps[ap.currentStep];
+  if (!step) return { ok: false, error: "This approval is already decided. Reload the page." };
+  if (!step.approverIds.includes(user.id) && user.role !== "ADMIN") return { ok: false, error: `This step is for ${step.label}.` };
+  if (ap.requestedById === user.id) return { ok: false, error: "You can't approve prices you asked approval for." };
+  const now = new Date();
+  steps[ap.currentStep] = { ...step, decision: parsed.data.decision, decidedById: user.id, decidedByName: user.name, note: parsed.data.note || null, decidedAt: now.toISOString() };
+  const next = nextOpenStep(steps);
+  const done = parsed.data.decision === "REJECTED" || next === -1;
+  const status = parsed.data.decision === "REJECTED" ? "REJECTED" : next === -1 ? "APPROVED" : "PENDING";
+  const res = await run(() =>
+    db.$transaction(async (tx) => {
+      // Only from the step it was on: two approvers acting at once don't both count
+      const claimed = await tx.priceApproval.updateMany({
+        where: { id: approvalId, status: "PENDING", currentStep: ap.currentStep },
+        data: { steps: steps as unknown as Prisma.InputJsonValue, currentStep: done ? ap.currentStep : next, status, note: parsed.data.note || null, decidedAt: done ? now : null },
+      });
+      if (!claimed.count) throw new UserError("Someone else decided this step just now. Reload the page.");
+      await recordEvent(tx, {
+        entityType: "Opportunity", entityId: ap.opportunityId, action: parsed.data.decision === "APPROVED" ? "PRICES_APPROVED" : "PRICES_REJECTED", userId: user.id,
+        newValue: `${step.label}${parsed.data.note ? `: ${parsed.data.note}` : ""}`,
+      });
+      const owner = [ap.opportunity.salesOwnerId, ap.requestedById];
+      if (status === "APPROVED")
+        await notify(tx, owner, { type: "WORKFLOW", title: `Prices approved: ${ap.opportunity.name}`, body: "Send the quote.", link: `/opportunities/${ap.opportunityId}`, exclude: user.id });
+      else if (status === "REJECTED")
+        await notify(tx, owner, { type: "WORKFLOW", title: `Prices not approved: ${ap.opportunity.name}`, body: `${user.name}: ${parsed.data.note}`, link: `/opportunities/${ap.opportunityId}`, exclude: user.id });
+      else
+        await notify(tx, steps[next]!.approverIds, {
+          type: "WORKFLOW", title: `Approve prices: ${ap.opportunity.name}`, body: `Approved by ${user.name}; your step is next. ${ap.reasons.join(" · ")}`, link: `/opportunities/${ap.opportunityId}`, exclude: user.id,
+        });
+    }),
+  );
+  if (res.ok) refresh(ap.opportunityId);
   return res;
 });
 
@@ -950,7 +1099,7 @@ export const createQuote = safeAction("createQuote", async function createQuote(
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
-  if (!can.sendQuote(user)) return { ok: false, error: "Only a sales manager can send quotes. Set the sales prices and ask your manager to send it." };
+  if (!can.sendQuote(user, opp)) return { ok: false, error: "Only the deal owner or a manager can send quotes." };
   if (isClosed(opp.stage)) return { ok: false, error: "This deal is closed." };
   if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it before sending a quote." };
   const parsed = quoteSchema.safeParse(input);
@@ -963,6 +1112,13 @@ export const createQuote = safeAction("createQuote", async function createQuote(
       if (parsed.data.version !== undefined) await claimBoqVersion(tx, oppId, parsed.data.version);
       await assertCosted(tx, opp, "quoting");
       if (parsed.data.prices) await applyPrices(tx, oppId, parsed.data.prices, user.id);
+      // Prices an approval rule applies to go out only once approved, exactly as approved
+      const facts = await pricingFacts(tx, oppId);
+      const matched = matchRules(await loadRules(tx), facts.pricing);
+      if (matched.length) {
+        const ok = await tx.priceApproval.findFirst({ where: { opportunityId: oppId, status: "APPROVED", fingerprint: facts.fingerprint }, select: { id: true } });
+        if (!ok) throw new UserError(`These prices need approval first (${matched.map((x) => x.reasons.join("; ")).join(" · ")}). Ask for approval.`);
+      }
       const lines = await tx.opportunityLineItem.findMany({
         where: { opportunityId: oppId },
         orderBy: { lineNo: "asc" },
@@ -1002,7 +1158,7 @@ export const createQuote = safeAction("createQuote", async function createQuote(
       await tx.opportunity.update({
         where: { id: oppId },
         // version: an edit form opened before the quote must not put back the old margin
-        data: { amount, expectedMarginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), pricesReadyAt: null, lastActivityAt: new Date(), version: { increment: 1 } },
+        data: { amount, expectedMarginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), lastActivityAt: new Date(), version: { increment: 1 } },
       });
       await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: opp, after: { amount }, fields: ["amount"], userId: user.id });
       const gm = t.marginPct === null ? "" : ` at ${Math.round(t.marginPct * 10) / 10}% GM`;

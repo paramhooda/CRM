@@ -6,7 +6,7 @@ export function emptyOppValues(userId: string, accountId?: string): OppFormValue
   return {
     name: "", accountId: accountId ?? "", primaryContactId: "", businessUnitId: "", categoryId: "", oemId: "",
     accountType: "NEW_LOGO", revenueModel: "ONE_TIME", dealType: "NEW_BUSINESS", procurementMode: "DIRECT", amount: "",
-    arrAmount: "", contractTermMonths: "", contractStartDate: "", expectedMarginPct: "", stage: "IDENTIFIED", probability: "10",
+    arrAmount: "", contractTermMonths: "", contractStartDate: "", expectedMarginPct: "", stage: "QUALIFIED", probability: "20",
     forecastCategory: "PIPELINE", expectedCloseDate: isoDate(new Date(Date.now() + 90 * 86_400_000)), salesOwnerId: userId,
     presalesOwnerId: "", leadSource: "", competitors: "", nextStep: "", nextStepDate: "", submissionDueDate: "",
     dealRegStatus: "NOT_REQUIRED", dealRegNumber: "", dealRegExpiry: "", lossReason: "", lossNotes: "", poNumber: "", poDate: "",

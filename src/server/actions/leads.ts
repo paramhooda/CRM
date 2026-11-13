@@ -11,7 +11,7 @@ import { STAGE_META } from "@/lib/constants";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
 import { leadSchema, zodErrors, type ActionResult } from "@/lib/validation";
 import { createEstimateLine } from "@/server/domain/lines";
-import { dealTypeFor } from "@/lib/deal-setup";
+import { autoDealType } from "@/lib/deal-setup";
 import { safeAction, UserError } from "@/server/action-error";
 import { startOfTodayIST } from "@/lib/format";
 
@@ -69,17 +69,14 @@ const convertSchema = z.object({
   opportunityName: z.string().trim().min(3).max(160),
   categoryId: z.string().min(1, "Select a category"),
   oemId: z.string().min(1, "Select an OEM"),
-  /** Blank or 0: not known yet. The deal then starts at Identified, since a qualified deal needs its value. */
+  /** Blank or 0: not known yet; the value is set at pricing */
   amount: z.preprocess((v) => (v === "" || v === null || v === undefined ? 0 : v), z.coerce.number().min(0, "The value can't be negative").max(1e11, "That value is too large")),
   expectedCloseDate: z.coerce.date(),
   /** Solution deal (presales prepares the BOQ) or resale; defaults to what the category usually needs */
   presalesRequired: z.preprocess((v) => (v === undefined || v === "" ? undefined : v === true || v === "true" || v === "on"), z.boolean().optional()),
 });
 
-/**
- * Convert a qualified lead: creates (or reuses) the account, the contact and an opportunity in Qualified stage, or in
- * Identified when the value isn't known yet.
- */
+/** Convert a qualified lead: creates (or reuses) the account, the contact and an opportunity in Qualified stage. */
 export const convertLead = safeAction("convertLead", async function convertLead(id: string, input: Record<string, unknown>): Promise<ActionResult<{ opportunityId: string }>> {
   const user = await requireUser();
   if (!can.manageLeads(user)) return { ok: false, error: "Not allowed." };
@@ -102,7 +99,8 @@ export const convertLead = safeAction("convertLead", async function convertLead(
     return { ok: false, error: "Account not found, or it isn't one you can see." };
   }
 
-  const stage = v.amount > 0 ? ("QUALIFIED" as const) : ("IDENTIFIED" as const);
+  // Every opportunity starts at Qualified; the value may come later, at pricing
+  const stage = "QUALIFIED" as const;
   const oppId = await db.$transaction(async (tx) => {
     const now = new Date();
     // Claim the lead first: two people converting it at once get one deal, not two
@@ -125,6 +123,10 @@ export const convertLead = safeAction("convertLead", async function convertLead(
       }
     }
     const account = await tx.account.findUniqueOrThrow({ where: { id: accountId } });
+    // Deal type from what the customer already bought (won deals' categories)
+    const bought = account.accountType === "EXISTING"
+      ? (await tx.opportunityLineItem.findMany({ where: { opportunity: { accountId, stage: "WON", deletedAt: null } }, select: { categoryId: true }, distinct: ["categoryId"] })).map((l) => l.categoryId)
+      : [];
     // The person may already be a contact: reuse them on this account; never create a second contact with their email
     const known = lead.email ? await tx.contact.findFirst({ where: { email: { equals: lead.email, mode: "insensitive" }, deletedAt: null }, include: { account: { select: { name: true } } } }) : null;
     if (known && known.accountId !== accountId)
@@ -138,7 +140,7 @@ export const convertLead = safeAction("convertLead", async function convertLead(
     const opp = await tx.opportunity.create({
       data: {
         code: await nextCode(tx, "OPP"), name: v.opportunityName, accountId, primaryContactId: contact.id, businessUnitId: cat.businessUnitId,
-        categoryId: cat.id, oemId: v.oemId, accountType: account.accountType, dealType: dealTypeFor(account.accountType),
+        categoryId: cat.id, oemId: v.oemId, accountType: account.accountType, dealType: autoDealType(account.accountType, bought, [{ categoryId: cat.id, recurring: false }]),
         presalesRequired: v.presalesRequired ?? cat.needsPresales, amount: new Prisma.Decimal(v.amount), stage, probability: STAGE_META[stage].probability,
         forecastCategory: "PIPELINE", expectedCloseDate: v.expectedCloseDate, originalCloseDate: v.expectedCloseDate, stageEnteredAt: now,
         lastActivityAt: now, salesOwnerId: ownerId, leadSource: lead.source, description: lead.requirement, createdById: user.id,

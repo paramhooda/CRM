@@ -1,7 +1,8 @@
 import "server-only";
 import { db } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth";
-import { isManager, opportunityScope } from "@/lib/authz";
+import { opportunityScope } from "@/lib/authz";
+import type { ResolvedStep } from "@/lib/approvals";
 import { oppWhere, parseOppFilters, type SearchParams } from "@/lib/filters";
 import { ACTIVE_STAGES, STAGE_META, THRESHOLDS, type StageKey } from "@/lib/constants";
 import { fiscalPeriod, fiscalYearRange, lastMonths, parsePeriodKey, quarterRange, periodLabel, fyLabel } from "@/lib/fiscal";
@@ -376,12 +377,21 @@ export type Dashboard = Awaited<ReturnType<typeof getDashboard>>;
  * "Needs your action" for the home page: open deals waiting on sales (the person's own, a manager's team), one item
  * each. Not filtered by the analytics filters: it is a to-do list.
  */
+/** The latest price approval as the action list sees it: whose turn it is, and since when */
+function approvalFor(ap: { status: string; steps: unknown; currentStep: number; requestedById: string; createdAt: Date; decidedAt: Date | null } | undefined, user: CurrentUser) {
+  if (!ap || ap.status === "CANCELLED") return null;
+  const step = (ap.steps as ResolvedStep[])[ap.currentStep];
+  const waitingOnMe = ap.status === "PENDING" && !!step && ap.requestedById !== user.id && (step.approverIds.includes(user.id) || user.role === "ADMIN");
+  return { status: ap.status as "PENDING" | "APPROVED" | "REJECTED", waitingOnMe, at: ap.decidedAt ?? ap.createdAt };
+}
+
 export async function getActionItems(user: CurrentUser) {
   const now = new Date();
   const deals = await db.opportunity.findMany({
     where: { AND: [opportunityScope(user), { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED", "HOLD"] } }] },
     select: {
-      id: true, name: true, stage: true, expectedCloseDate: true, nextStep: true, nextStepDate: true, healthLabel: true, pricesReadyAt: true, amount: true, createdAt: true,
+      id: true, name: true, stage: true, expectedCloseDate: true, nextStep: true, nextStepDate: true, healthLabel: true, amount: true, createdAt: true,
+      priceApprovals: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, steps: true, currentStep: true, requestedById: true, createdAt: true, decidedAt: true } },
       account: { select: { name: true } },
       salesOwner: { select: { name: true } },
       quotes: { orderBy: { version: "desc" }, take: 1, select: { status: true, validTill: true, createdAt: true } },
@@ -397,11 +407,10 @@ export async function getActionItems(user: CurrentUser) {
       quote: d.quotes[0] ?? null,
       pricedAt: d.pricingRequests.find((r) => r.status === "QUOTED")?.quotedAt ?? null,
       workOpen: d.presalesRequests.length > 0 || d.pricingRequests.some((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS"),
-      pricesReadyAt: d.pricesReadyAt,
       amount: Number(d.amount),
       createdAt: d.createdAt,
+      approval: approvalFor(d.priceApprovals[0], user),
     })),
     now,
-    isManager(user),
   );
 }

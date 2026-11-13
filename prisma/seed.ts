@@ -48,8 +48,9 @@ type Scenario =
 
 // Planned mix for open deals so every dashboard panel has meaningful content.
 const OPEN_PLAN: [StageKey, Scenario][] = [
-  ["IDENTIFIED", "fresh"], ["IDENTIFIED", "fresh"], ["IDENTIFIED", "fresh"], ["IDENTIFIED", "healthy"],
-  ["IDENTIFIED", "healthy"], ["IDENTIFIED", "stalled"], ["IDENTIFIED", "stalled"],
+  // Opportunities start at Qualified (leads carry the earlier qualification)
+  ["QUALIFIED", "fresh"], ["QUALIFIED", "fresh"], ["QUALIFIED", "fresh"], ["QUALIFIED", "healthy"],
+  ["QUALIFIED", "healthy"], ["QUALIFIED", "stalled"], ["QUALIFIED", "stalled"],
   ["QUALIFIED", "healthy"], ["QUALIFIED", "healthy"], ["QUALIFIED", "healthy"], ["QUALIFIED", "healthy"],
   ["QUALIFIED", "stalled"], ["QUALIFIED", "stalled"], ["QUALIFIED", "overdue"], ["QUALIFIED", "slipping"],
   ["QUALIFIED", "fresh"],
@@ -392,7 +393,7 @@ async function main() {
     await db.auditLog.create({ data: { entityType: "Opportunity", entityId: opp.id, action: "CREATE", newValue: opp.name, changedById: owner.id, changedAt: createdAt } });
 
     // Stage history: walk the path to the current stage
-    const path: StageKey[] = ["IDENTIFIED"];
+    const path: StageKey[] = [];
     const linear: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
     const target = isClosed ? (p.stage === "WON" ? "NEGOTIATION" : pick(linear.slice(0, int(1, 5)))) : p.stage === "HOLD" ? pick(linear.slice(0, 4)) : p.stage;
     for (const st of linear) { if (STAGE_META[st].order <= STAGE_META[target].order) path.push(st); }
@@ -842,7 +843,7 @@ async function main() {
   }
   if (qExpiring) await db.quote.update({ where: { id: qExpiring.id }, data: { validTill: new Date(NOW.getTime() + 2 * DAY) } });
   const tbdEstimates = await db.opportunityLineItem.findMany({
-    where: { isEstimate: true, opportunity: { stage: "IDENTIFIED" } }, take: 3, orderBy: { createdAt: "desc" }, select: { id: true, opportunityId: true },
+    where: { isEstimate: true, opportunity: { stage: "QUALIFIED" } }, take: 3, orderBy: { createdAt: "desc" }, select: { id: true, opportunityId: true },
   });
   for (const l of tbdEstimates) {
     await db.opportunityLineItem.update({ where: { id: l.id }, data: { oemId: oemTbd, description: "Estimate · OEM to be decided" } });

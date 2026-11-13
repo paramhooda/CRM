@@ -23,7 +23,7 @@ export function costHeading(sources: string[]): string {
 /** `rateCard`: the line's category uses the rate card (Cloud, NOC, SOC today) */
 export type SourceFacts = { ownBrand: boolean; standardCost: number | null; isProduct: boolean; rateCard: boolean };
 
-const onRateCard = (f: SourceFacts) => f.rateCard && f.isProduct && f.standardCost !== null;
+export const onRateCard = (f: SourceFacts) => f.rateCard && f.isProduct && f.standardCost !== null;
 
 /** Own-brand catalogue items in a rate card category with a standard cost use the rate card; other own-brand lines are costed by presales. */
 export function defaultCostSource(f: SourceFacts): CostSourceKey {
@@ -31,10 +31,14 @@ export function defaultCostSource(f: SourceFacts): CostSourceKey {
   return onRateCard(f) ? "RATE_CARD" : "PRESALES";
 }
 
-/** Sources a line may use: internal costing is only for own brand, and the rate card only in its categories, where it has a cost. */
+/**
+ * Sources a line may use: third-party lines go to purchase; a rate card item is always costed from the rate card
+ * (nobody changes it; a lower price is a sales discount, approved through the approval rules); other own-brand
+ * lines are costed by presales, or bought in through purchase.
+ */
 export function allowedCostSources(f: SourceFacts): CostSourceKey[] {
   if (!f.ownBrand) return ["PURCHASE"];
-  return onRateCard(f) ? ["RATE_CARD", "PRESALES", "PURCHASE"] : ["PRESALES", "PURCHASE"];
+  return onRateCard(f) ? ["RATE_CARD"] : ["PRESALES", "PURCHASE"];
 }
 
 /** The requested source if it is allowed for the line, otherwise its default. */

@@ -28,7 +28,7 @@ export const opportunitySchema = z
     contractTermMonths: optInt,
     contractStartDate: optDate,
     expectedMarginPct: optNum.refine((v) => v === undefined || (v > -100 && v < 100), "Margin must be between -100 and 100"),
-    stage: z.preprocess((v) => (v === "" ? undefined : v), z.enum(STAGES).default("IDENTIFIED")),
+    stage: z.preprocess((v) => (v === "" ? undefined : v), z.enum(STAGES).default("QUALIFIED")),
     probability: optInt,
     forecastCategory: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["COMMIT", "UPSIDE", "PIPELINE", "OMITTED"]).default("PIPELINE")),
     expectedCloseDate: z.coerce.date({ invalid_type_error: "Expected close date is required" }),

@@ -77,8 +77,16 @@ export function DocumentsPanel({
   return (
     <div className="grid max-w-5xl gap-6 lg:grid-cols-3">
       <Card className="lg:col-span-2">
-        <CardHeader title="Documents" description="Statements of work, solution documents, BOQ sheets, and supplier and OEM quotes" />
+        <CardHeader title="Documents" description="Statements of work, solution documents, and supplier and OEM quotes" />
         <CardContent className="px-0 pb-0">
+          {/* The BOQ is never uploaded: it is the line items, so it is always current */}
+          <a href={`/opportunities/${oppId}/boq`} target="_blank" rel="noreferrer" className="flex items-center gap-3 border-b border-border px-5 py-3 hover:bg-surface-hover">
+            <Paperclip className="size-4 text-ink-3" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-medium">Bill of quantities</span>
+              <span className="block text-xs text-ink-3">Generated from the line items · always current · view or print</span>
+            </span>
+          </a>
           {documents.length === 0 ? (
             <p className="flex flex-col items-center gap-2 px-5 py-10 text-center text-sm text-ink-3">
               <Paperclip className="size-5" /> No documents yet.
@@ -100,7 +108,11 @@ export function DocumentsPanel({
                       </div>
                       {d.note && <p className="mt-0.5 text-xs text-ink-2">{d.note}</p>}
                       <p className="mt-0.5 text-xs text-ink-3">
-                        {[d.uploadedBy.name, fmtDate(d.createdAt), request, fmtSize(d.sizeBytes)].filter(Boolean).join(" · ")}
+                        {[
+                          d.uploadedBy.name, fmtDate(d.createdAt), request,
+                          d.lines?.length ? `covers line${d.lines.length > 1 ? "s" : ""} ${d.lines.map((x) => x.lineItem.lineNo).sort((a, b) => a - b).join(", ")}` : null,
+                          fmtSize(d.sizeBytes),
+                        ].filter(Boolean).join(" · ")}
                       </p>
                     </div>
                     <a href={`/api/documents/${d.id}`} className="shrink-0 text-xs text-primary hover:underline" aria-label={`Download ${d.fileName}`}>Download</a>

@@ -15,8 +15,9 @@ export const STAGES = [
 ] as const;
 export type StageKey = (typeof STAGES)[number];
 
-export const OPEN_STAGES: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
-export const ACTIVE_STAGES: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
+// Identified is retired (opportunities start at Qualified); the value stays for old history
+export const OPEN_STAGES: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
+export const ACTIVE_STAGES: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
 export const CLOSED_STAGES: StageKey[] = ["WON", "LOST", "DROPPED"];
 
 export const STAGE_META: Record<

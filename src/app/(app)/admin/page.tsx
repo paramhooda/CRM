@@ -1,3 +1,4 @@
+import { ApprovalRules } from "@/components/admin/approval-rules";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -16,7 +17,7 @@ import { fmtDateTime, relativeDays, toNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Settings" };
-const TABS = [["users", "Users & roles"], ["picklists", "Picklists"], ["targets", "Targets"], ["rules", "Rules"], ["system", "Email & system"], ["audit", "Audit log"]] as const;
+const TABS = [["users", "Users & roles"], ["picklists", "Picklists"], ["targets", "Targets"], ["approvals", "Approvals"], ["rules", "Rules"], ["system", "Email & system"], ["audit", "Audit log"]] as const;
 const ROLE_TONE: Record<string, Tone> = { ADMIN: "red", SALES_HEAD: "violet", SALES: "blue", PRESALES: "aqua", PURCHASE: "amber" };
 
 export default async function AdminPage({ searchParams }: { searchParams: Promise<{ tab?: string; entity?: string }> }) {
@@ -30,6 +31,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
         {tab === "users" && <Users />}
         {tab === "picklists" && <Picklists />}
         {tab === "targets" && <Targets />}
+        {tab === "approvals" && <Approvals />}
         {tab === "rules" && <Rules />}
         {tab === "system" && <System adminEmail={me.email} />}
         {tab === "audit" && <Audit entity={entity} />}
@@ -110,6 +112,25 @@ async function Picklists() {
         ))}
       </div>
     </div>
+  );
+}
+
+async function Approvals() {
+  const [rules, bus, approvers] = await Promise.all([
+    db.approvalRule.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], include: { steps: { orderBy: { position: "asc" } } } }),
+    db.businessUnit.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" }, select: { id: true, name: true } }),
+    // Named approvers see every deal: sales heads and admins
+    db.user.findMany({ where: { active: true, role: { in: ["SALES_HEAD", "ADMIN"] } }, orderBy: { name: "asc" }, select: { id: true, name: true, role: true } }),
+  ]);
+  return (
+    <ApprovalRules
+      bus={bus} approvers={approvers}
+      rules={rules.map((r) => ({
+        id: r.id, name: r.name, active: r.active, rateCardDiscount: r.rateCardDiscount, businessUnitIds: r.businessUnitIds,
+        gmBelowPct: r.gmBelowPct === null ? null : toNumber(r.gmBelowPct), minDealValue: r.minDealValue === null ? null : toNumber(r.minDealValue),
+        steps: r.steps.map((x) => ({ kind: x.kind, role: x.role, userId: x.userId })),
+      }))}
+    />
   );
 }
 

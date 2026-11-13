@@ -4,7 +4,7 @@
 import { useState } from "react";
 import {
   UserPlus, Send, Calculator, FileText, PlayCircle, CheckCircle2, GitBranch, MessageCircleQuestion, Reply, Undo2,
-  UserCog, XCircle, MessageSquare, ChevronDown, CalendarClock, CalendarPlus,
+  UserCog, XCircle, MessageSquare, ChevronDown, CalendarClock, CalendarPlus, ShieldCheck,
 } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Dropdown, DropdownTrigger, DropdownContent, DropdownItem } from "@/components/ui/dropdown";
@@ -13,14 +13,19 @@ import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
 import {
   requestPresales, startPresales, submitBoq, requestPricing, startPricing, completePricing,
-  askSales, answerPresales, returnToPresales, reassignRequest, cancelRequest, recordQuoteResponse, extendQuoteValidity, changeDueDate,
+  askSales, answerPresales, returnToPresales, reassignRequest, cancelRequest, recordQuoteResponse, extendQuoteValidity, changeDueDate, decideApproval,
 } from "@/server/actions/workflow";
+import { gmSummary } from "@/lib/boq";
+import { COST_SOURCE_META, type CostSourceKey } from "@/lib/costing";
+import type { ResolvedStep } from "@/lib/approvals";
+import { inr, pct } from "@/lib/format";
 import { fmtDate, isoDate } from "@/lib/format";
-import { AttachFiles, uploadAll, type ExistingDoc, type PickedFile } from "@/components/opportunities/attach-files";
+import { AttachFiles, LineToggles, uploadAll, type ExistingDoc, type PickedFile } from "@/components/opportunities/attach-files";
 import { MoreOptions } from "@/components/ui/more-options";
-import { PricingForm, type PricingAction } from "@/components/opportunities/pricing-form";
+import { PricingForm, type PricingAction, type PriceLine } from "@/components/opportunities/pricing-form";
+import { setDocumentLines } from "@/server/actions/documents";
 import type { ActionResult } from "@/lib/validation";
-import { PRESALES_DELIVERABLES } from "@/lib/deal-setup";
+import { PRESALES_DELIVERABLES, DELIVERABLE_LABEL } from "@/lib/deal-setup";
 import { cn } from "@/lib/utils";
 
 const plusDays = (n: number) => isoDate(new Date(Date.now() + n * 86_400_000));
@@ -40,7 +45,13 @@ export type DealAction = Base &
     | { kind: "askSales"; requestId: string }
     | { kind: "answer"; requestId: string; question: string; askedBy: string }
     | (Docs & { kind: "requestPricing"; purchase: U[]; toPrice: number; first: boolean; expired?: number })
-    | (Docs & { kind: "completePricing"; requestId: string; quotesAttached?: number })
+    | (Docs & {
+        kind: "completePricing"; requestId: string; quotesAttached?: number;
+        /** Lines priced in this request that need a supplier quote */
+        quoteLines: { id: string; lineNo: number; description: string }[];
+        /** Supplier and OEM quotes already attached to this request, and the lines each covers */
+        requestQuotes: { id: string; fileName: string; lineIds: string[] }[];
+      })
     | { kind: "sendBack"; requestId: string; presalesName: string | null }
     | { kind: "reassign"; reqKind: "presales" | "pricing"; requestId: string; people: U[]; currentId: string; due: Date; overdue: boolean }
     | { kind: "cancel"; reqKind: "presales" | "pricing"; requestId: string }
@@ -48,19 +59,20 @@ export type DealAction = Base &
     | PricingAction
     | { kind: "response"; quoteId: string; version: number }
     | { kind: "extend"; quoteId: string; version: number; validTill: Date; maxValidTill: Date | null }
+    | { kind: "approve"; approvalId: string; reasons: string[]; steps: ResolvedStep[]; currentStep: number; requestedBy: string; lines: PriceLine[] }
   );
 
 const ICON: Record<DealAction["kind"], React.ReactNode> = {
   pullPresales: <UserPlus />, submitBoq: <Send />, askSales: <MessageCircleQuestion />, answer: <Reply />, requestPricing: <Calculator />,
   completePricing: <CheckCircle2 />, sendBack: <Undo2 />, reassign: <UserCog />, cancel: <XCircle />, quote: <FileText />, response: <MessageSquare />,
-  dueDate: <CalendarClock />, extend: <CalendarPlus />,
+  dueDate: <CalendarClock />, extend: <CalendarPlus />, approve: <ShieldCheck />,
 };
 
 /** Kinds each hand-over offers to attach */
 const ATTACH: Record<"pullPresales" | "submitBoq" | "requestPricing" | "completePricing", Parameters<typeof AttachFiles>[0]["kinds"]> = {
   pullPresales: ["CUSTOMER_RFP", "SOW", "OTHER"],
-  submitBoq: ["SOLUTION_DOC", "BOQ_SHEET", "PRESENTATION", "SITE_SURVEY", "SOW", "OTHER"],
-  requestPricing: ["BOQ_SHEET", "OEM_QUOTE", "OTHER"],
+  submitBoq: ["SOLUTION_DOC", "PRESENTATION", "SITE_SURVEY", "SOW", "OTHER"],
+  requestPricing: ["OEM_QUOTE", "OTHER"],
   completePricing: ["SUPPLIER_QUOTE", "OEM_QUOTE", "OTHER"],
 };
 
@@ -141,9 +153,6 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
     const kinds = ATTACH[kind].filter((k) => !("canAdd" in a) || !a.canAdd || a.canAdd.includes(k));
     return kinds.length ? <AttachFiles kinds={kinds} files={files} onChange={setFiles} existing={docs} /> : null;
   };
-  // A gentle reminder stays in view even when the attachments are tucked under More options
-  const reminder = (text: string | null | undefined) =>
-    text && !files.length ? <p className="text-xs text-[var(--t-amber)]">{text} Add it under More options, or carry on without.</p> : null;
   const filesHint = files.length ? `${files.length} file${files.length > 1 ? "s" : ""} attached` : undefined;
   const submit = (fn: (f: Record<string, FormDataEntryValue>) => Parameters<typeof run>[0], success: string, onOk?: (data: unknown) => void) =>
     (e: React.FormEvent<HTMLFormElement>) => {
@@ -156,41 +165,61 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
   switch (a.kind) {
     case "pullPresales":
       return <PresalesRequestForm a={a} close={close} />;
-    case "submitBoq":
+    case "submitBoq": {
+      // Documents sales asked for are required; files picked here count as soon as they're picked
+      const stillMissing = (a.missingDocs ?? []).filter((m) => !files.some((f) => DELIVERABLE_LABEL[f.kind] === m));
       return (
         <DialogContent
           title="Submit BOQ"
           description={a.toPrice ? `${a.toPrice} of ${a.lineCount} lines go to purchase for a supplier price. The deal moves to Pricing.` : `None of the ${a.lineCount} lines needs a price from purchase. Sales can quote straight away.`}
         >
-          <form className={form} onSubmit={submit((f) => () => withFiles(a.oppId, files, () => setFiles([]), () => submitBoq(a.requestId, f)), a.toPrice ? "BOQ submitted. Purchase notified." : "BOQ submitted. Sales notified.")}>
-            {a.asked && a.asked.length > 0 && <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">Sales asked for: {a.asked.join(", ")}</p>}
+          <form
+            className={form}
+            onSubmit={(e) => {
+              if (stillMissing.length) {
+                e.preventDefault();
+                setErrors({ docs: `Attach the ${stillMissing.join(" and the ").toLowerCase()} sales asked for.` });
+                return;
+              }
+              submit((f) => () => withFiles(a.oppId, files, () => setFiles([]), () => submitBoq(a.requestId, f)), a.toPrice ? "BOQ submitted. Purchase notified." : "BOQ submitted. Sales notified.")(e);
+            }}
+          >
+            <p className="text-xs text-ink-2">
+              The BOQ is the line items: <a href={`/opportunities/${a.oppId}/boq`} target="_blank" rel="noreferrer" className="text-primary hover:underline">view or print it</a>.
+            </p>
             <Field label="Solution summary" required error={errors.solutionSummary}>
               <Textarea name="solutionSummary" placeholder="What was designed and how it was sized" />
             </Field>
-            {reminder(a.missingDocs?.length ? `Asked for but not attached yet: ${a.missingDocs.join(", ")}.` : null)}
-            <MoreOptions hint={filesHint} forceOpen={!!errors.assumptions || !!errors.dueDate}>
+            {(a.missingDocs?.length ?? 0) > 0 && (
+              <div className="flex flex-col gap-2 rounded-lg border border-border p-3" aria-label="Required documents">
+                <p className="text-[13px] font-medium">Sales asked for</p>
+                <ul className="flex flex-col gap-1 text-xs">
+                  {a.missingDocs!.map((m) => (
+                    <li key={m} className={cn("flex items-center gap-1.5", stillMissing.includes(m) ? "text-[var(--t-amber)]" : "text-[var(--t-green)]")}>
+                      {stillMissing.includes(m) ? "○" : "✓"} {m}
+                    </li>
+                  ))}
+                </ul>
+                {attach("submitBoq", a.docs)}
+                {errors.docs && <p className="text-xs text-[var(--t-red)]">{errors.docs}</p>}
+              </div>
+            )}
+            <MoreOptions hint={a.missingDocs?.length ? undefined : filesHint} forceOpen={!!errors.assumptions || !!errors.dueDate}>
               <Field label="Assumptions and exclusions" error={errors.assumptions}>
                 <Textarea name="assumptions" className="min-h-14" placeholder="e.g. Customer provides rack space and power; cabling excluded" />
               </Field>
               {a.toPrice > 0 && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Purchase owner">
-                    <Select name="purchaseUserId" defaultValue="">
-                      <option value="">Auto-assign</option>
-                      {a.purchase.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </Select>
-                  </Field>
-                  <Field label="Pricing needed by" error={errors.dueDate}>
-                    <Input name="dueDate" type="date" defaultValue={plusDays(5)} min={isoDate(new Date())} />
-                  </Field>
-                </div>
+                <Field label="Pricing needed by" error={errors.dueDate} hint="Purchase is assigned automatically">
+                  <Input name="dueDate" type="date" defaultValue={plusDays(5)} min={isoDate(new Date())} className="w-44" />
+                </Field>
               )}
-              {attach("submitBoq", a.docs)}
+              {!a.missingDocs?.length && attach("submitBoq", a.docs)}
             </MoreOptions>
             <Footer onCancel={close} pending={pending} label="Submit" icon={<Send />} />
           </form>
         </DialogContent>
       );
+    }
     case "askSales":
       return (
         <DialogContent title="Ask sales a question" description="Your due date pauses until sales answers.">
@@ -251,24 +280,9 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
       );
     }
     case "completePricing":
-      return (
-        <DialogContent title="Pricing complete" description="Sales is notified to add margin and send the quote. Set each supplier's validity on its lines; this date applies to lines without one.">
-          <form className={form} onSubmit={submit((f) => () => withFiles(a.oppId, files, () => setFiles([]), () => completePricing(a.requestId, f)), "Pricing sent to sales")}>
-            {!!a.quotesAttached && (
-              <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">{a.quotesAttached} supplier or OEM quote{a.quotesAttached > 1 ? "s" : ""} attached to this request.</p>
-            )}
-            <Field label="Valid till, for lines without their own date" required error={errors.quoteValidTill}>
-              <Input name="quoteValidTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} className="w-44" />
-            </Field>
-            {reminder(a.quotesAttached ? null : "No supplier quote attached yet.")}
-            <MoreOptions hint={filesHint}>
-              {attach("completePricing", [])}
-              <Field label="Notes for sales"><Textarea name="responseNotes" className="min-h-14" placeholder="Stock, price hold, lead times" /></Field>
-            </MoreOptions>
-            <Footer onCancel={close} pending={pending} label="Send to sales" icon={<Send />} />
-          </form>
-        </DialogContent>
-      );
+      return <CompletePricingForm a={a} close={close} />;
+    case "approve":
+      return <ApproveForm a={a} close={close} />;
     case "sendBack":
       return (
         <DialogContent title={a.presalesName ? "Send back to presales" : "Send back to sales"} description={a.presalesName ? `${a.presalesName} gets the BOQ back to fix. The deal returns to the BOQ stage.` : "Sales fixes the lines and requests pricing again."}>
@@ -492,6 +506,143 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
         <input type="hidden" name="priority" value="NORMAL" />
         <Footer onCancel={close} pending={pending} label="Send to presales" icon={<Send />} />
       </form>
+    </DialogContent>
+  );
+}
+
+/**
+ * Purchase hands the prices to sales. Every line priced in this request needs a supplier or OEM quote; one quote can
+ * cover several lines. Quotes already attached can be pointed at their lines here too.
+ */
+function CompletePricingForm({ a, close }: { a: Extract<DealAction, { kind: "completePricing" }>; close: () => void }) {
+  const [files, setFiles] = useState<PickedFile[]>([]);
+  const [attached, setAttached] = useState(a.requestQuotes);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const { pending, run } = useAction();
+  const choices = a.quoteLines.map((l) => ({ id: l.id, lineNo: l.lineNo }));
+  const covered = new Set([...attached.flatMap((d) => d.lineIds), ...files.flatMap((f) => (f.kind === "SUPPLIER_QUOTE" || f.kind === "OEM_QUOTE" ? f.lineIds ?? [] : []))]);
+  const open = a.quoteLines.filter((l) => !covered.has(l.id));
+  const kinds = ATTACH.completePricing.filter((k) => !a.canAdd || a.canAdd.includes(k));
+  const point = (docId: string, ids: string[]) => {
+    setAttached((xs) => xs.map((d) => (d.id === docId ? { ...d, lineIds: ids } : d)));
+    run(() => setDocumentLines(docId, ids), {});
+  };
+  return (
+    <DialogContent title="Pricing complete" description="Sales is notified to set the sales prices. Each supplier's validity stays on its lines; the date here applies to lines without one.">
+      <form
+        className="flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (open.length) return setErrors({ quotes: `Attach the supplier quote for line ${open.map((l) => l.lineNo).join(", ")}, and mark which lines it covers.` });
+          const f = Object.fromEntries(new FormData(e.currentTarget).entries());
+          run(() => withFiles(a.oppId, files, () => setFiles([]), () => completePricing(a.requestId, f)), {
+            success: "Pricing sent to sales", onOk: close, onError: (r) => setErrors({ ...(r.fieldErrors ?? {}), quotes: r.error ?? "" }),
+          });
+        }}
+      >
+        {a.quoteLines.length > 0 && (
+          <div className="flex flex-col gap-2 rounded-lg border border-border p-3" aria-label="Supplier quotes">
+            <p className="text-[13px] font-medium">Supplier quotes <span className="font-normal text-ink-3">· one quote can cover several lines</span></p>
+            <ul className="flex flex-col gap-0.5 text-xs">
+              {a.quoteLines.map((l) => (
+                <li key={l.id} className={covered.has(l.id) ? "text-[var(--t-green)]" : "text-[var(--t-amber)]"}>
+                  {covered.has(l.id) ? "✓" : "○"} Line {l.lineNo} · {l.description}
+                </li>
+              ))}
+            </ul>
+            {attached.map((d) => (
+              <div key={d.id} className="rounded-md border border-border px-2 py-1">
+                <p className="truncate text-xs">{d.fileName} <span className="text-ink-3">· attached</span></p>
+                <LineToggles name={d.fileName} choices={choices} selected={d.lineIds} onChange={(ids) => point(d.id, ids)} />
+              </div>
+            ))}
+            {kinds.length > 0 && (
+              <AttachFiles kinds={kinds} files={files} onChange={setFiles} label="Add supplier quotes" required lineChoices={choices} defaultLineIds={open.map((l) => l.id)} />
+            )}
+            {errors.quotes && <p className="text-xs text-[var(--t-red)]">{errors.quotes}</p>}
+          </div>
+        )}
+        <Field label="Valid till, for lines without their own date" required error={errors.quoteValidTill}>
+          <Input name="quoteValidTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} className="w-44" />
+        </Field>
+        <MoreOptions label="Notes for sales">
+          <Textarea name="responseNotes" aria-label="Notes for sales" className="min-h-14" placeholder="Stock, price hold, lead times" />
+        </MoreOptions>
+        <Footer onCancel={close} pending={pending} label="Send to sales" icon={<Send />} />
+      </form>
+    </DialogContent>
+  );
+}
+
+/** An approver reviews the prices the owner asked approval for: lines, GM, why approval is needed, and the steps. */
+function ApproveForm({ a, close }: { a: Extract<DealAction, { kind: "approve" }>; close: () => void }) {
+  const [note, setNote] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const { pending, run } = useAction();
+  const gm = gmSummary(a.lines.map((l) => ({ ...l, unitCost: l.cost, unitPrice: l.price })));
+  const decide = (decision: "APPROVED" | "REJECTED") =>
+    run(() => decideApproval(a.approvalId, { decision, note }), {
+      success: decision === "APPROVED" ? "Prices approved" : "Sent back to the owner",
+      onOk: close,
+      onError: (r) => setErrors(r.fieldErrors ?? {}),
+    });
+  return (
+    <DialogContent title="Approve prices" description={`${a.requestedBy} asks for approval before sending the quote.`} wide className="max-w-4xl">
+      <div className="flex flex-col gap-4">
+        <ul className="list-inside list-disc rounded-lg border border-[var(--t-amber)] px-3 py-2 text-xs text-ink-2" aria-label="Why approval is needed">
+          {a.reasons.map((r) => <li key={r}>{r}</li>)}
+        </ul>
+        <div className="-mx-5 overflow-x-auto border-y border-border scrollbar-thin">
+          <table className="w-full min-w-[640px] text-[13px]" aria-label="Prices to approve">
+            <thead>
+              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-3">
+                <th className="px-5 py-2 font-medium">Item</th><th className="px-2 py-2 text-right font-medium">Qty</th>
+                <th className="px-2 py-2 text-right font-medium">Cost</th><th className="px-2 py-2 text-right font-medium">Sales price</th>
+                <th className="px-5 py-2 text-right font-medium">GM %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {a.lines.map((l) => {
+                const g = l.price ? ((l.price - l.cost) / l.price) * 100 : null;
+                const disc = l.costSource === "RATE_CARD" && l.listPrice !== null && l.price !== null && l.price < l.listPrice - 0.005;
+                return (
+                  <tr key={l.id} className="border-t border-border align-top">
+                    <td className="px-5 py-2"><span className="mr-2 text-xs text-ink-3">{l.n}</span>{l.description}</td>
+                    <td className="px-2 py-2 text-right tabular">{l.quantity.toLocaleString("en-IN")} <span className="text-xs text-ink-3">{l.unit}</span></td>
+                    <td className="px-2 py-2 text-right tabular text-ink-2">{l.cost.toLocaleString("en-IN")}<span className="block text-[11px] text-ink-3">{COST_SOURCE_META[l.costSource as CostSourceKey]?.costLabel}</span></td>
+                    <td className="px-2 py-2 text-right tabular">
+                      {l.price?.toLocaleString("en-IN") ?? "—"}
+                      {disc && <span className="block text-[11px] text-[var(--t-amber)]">rate card {l.listPrice!.toLocaleString("en-IN")}</span>}
+                    </td>
+                    <td className={cn("px-5 py-2 text-right tabular", g !== null && g < 0 && "text-[var(--t-red)]")}>{g === null ? "—" : pct(g, 1)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <dl className="grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
+          <div><dt className="text-xs text-ink-3">Contract value</dt><dd className="font-semibold tabular">{inr(gm.contract.value)}</dd></div>
+          <div><dt className="text-xs text-ink-3">Cost</dt><dd className="font-semibold tabular">{inr(gm.contract.cost)}</dd></div>
+          <div><dt className="text-xs text-ink-3">Contract GM</dt><dd className="font-semibold tabular">{inr(gm.contract.gm)} <span className="text-xs font-normal text-ink-3">{gm.contract.gmPct === null ? "" : pct(gm.contract.gmPct, 1)}</span></dd></div>
+          {gm.monthly && <div><dt className="text-xs text-ink-3">Monthly GM</dt><dd className="font-semibold tabular">{inr(gm.monthly.gm)}</dd></div>}
+        </dl>
+        <ol className="flex flex-col gap-1 text-xs" aria-label="Approval steps">
+          {a.steps.map((st, i) => (
+            <li key={i} className={cn(i === a.currentStep ? "font-medium text-ink" : "text-ink-3")}>
+              {i + 1}. {st.label}{st.decision ? ` · ${st.decision === "APPROVED" ? "approved" : "rejected"} by ${st.decidedByName}` : i === a.currentStep ? " · your step" : ""}
+            </li>
+          ))}
+        </ol>
+        <Field label="Note" error={errors.note} hint="Required when you send it back">
+          <Textarea value={note} onChange={(e) => setNote(e.target.value)} aria-label="Approval note" className="min-h-14" placeholder="e.g. Keep NOC at the rate card; the hardware margin is fine" />
+        </Field>
+        <div className="flex justify-end gap-2">
+          <Button type="button" onClick={close}>Cancel</Button>
+          <Button type="button" variant="danger" disabled={pending} onClick={() => decide("REJECTED")}><XCircle /> Send back</Button>
+          <Button type="button" variant="primary" disabled={pending} onClick={() => decide("APPROVED")}><ShieldCheck /> Approve</Button>
+        </div>
+      </div>
     </DialogContent>
   );
 }

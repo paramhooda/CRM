@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DEAL_TYPE_LABEL } from "@/lib/constants";
 import { Pencil, Building2, User, FileText, ExternalLink, History as HistoryIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getOpportunityDetail, type OppDetail } from "@/server/queries/opportunity-detail";
@@ -77,11 +78,15 @@ export default async function OpportunityPage({ params, searchParams }: { params
         }))}
         title={o.name}
         description={
-          sales ? (
-            <Link href={`/accounts/${o.account.id}`} className="inline-flex items-center gap-1 hover:text-primary"><Building2 className="size-3.5" />{o.account.name}</Link>
-          ) : (
-            <span className="inline-flex items-center gap-1"><Building2 className="size-3.5" />{o.account.name}</span>
-          )
+          <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+            {/* The deal ID people quote in mails and calls */}
+            <span aria-label="Deal ID" title="Deal ID" className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-ink-2 select-all">{o.code}</span>
+            {sales ? (
+              <Link href={`/accounts/${o.account.id}`} className="inline-flex items-center gap-1 hover:text-primary"><Building2 className="size-3.5" />{o.account.name}</Link>
+            ) : (
+              <span className="inline-flex items-center gap-1"><Building2 className="size-3.5" />{o.account.name}</span>
+            )}
+          </span>
         }
         actions={
           d.perms.edit && (!closed || user.role === "ADMIN" || user.role === "SALES_HEAD") && (
@@ -112,8 +117,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
               label="Value"
               value={
                 o.amount > 0 || closed ? <span className="text-lg font-semibold">{inr(o.amount)}</span>
-                : d.perms.price ? <Link href={`/opportunities/${o.id}?tab=boq&edit=1`} className="text-[13px] font-normal text-primary hover:underline">Not known yet · add value</Link>
-                : <span className="text-[13px] font-normal text-ink-3">Not known yet</span>
+                : <span className="text-[13px] font-normal text-ink-3" title="The value comes from the sales prices, set once purchase has priced the lines">Set at pricing</span>
               }
               sub={o.revenueModel === "ARR" && o.arrAmount ? `${inr(o.arrAmount)} a year` : undefined}
             />
@@ -237,6 +241,7 @@ function Overview({ d }: { d: OppDetail }) {
       {(c.phone || c.email) && <span className="block text-xs text-ink-3">{[c.phone, c.email].filter(Boolean).join(" · ")}</span>}
     </span>
   ) : <span className="text-ink-3">No contact yet</span>]);
+  rows.push(["Deal type", DEAL_TYPE_LABEL[o.dealType as keyof typeof DEAL_TYPE_LABEL] ?? o.dealType]);
   rows.push(["Team", team.map(([role, name]) => `${name} (${role.toLowerCase()})`).join(" · ")]);
   if (flags.length) rows.push(["Needs attention", (
     <ul key="flags" className="flex flex-col gap-1">

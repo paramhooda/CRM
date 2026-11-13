@@ -16,7 +16,7 @@ export type Card = {
   healthScore: number; flags: string[]; expectedCloseDate: string; owner: string; salesOwnerId: string; forecastCategory: string;
 };
 
-const COLUMNS: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
+const COLUMNS: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
 
 /**
  * `drops[cardId][stage]` is null when the card may be dropped there, or the reason it may not (the process rules in

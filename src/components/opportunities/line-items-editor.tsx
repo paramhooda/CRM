@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Save, Lock, Tag, Wand2, RefreshCw, Pencil, X } from "lucide-react";
+import { Plus, Trash2, Save, Lock, RefreshCw, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -25,9 +25,6 @@ const UNITS = ["Nos", "Lot", "Users", "Cores", "Devices", "VMs", "TB", "Racks", 
 const MIX_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s7)", "var(--ink-3)"];
 let keySeq = 0;
 const k = () => `new-${++keySeq}`;
-
-/** Sales prices of costed lines are set in the pricing step (after purchase prices the BOQ), not here */
-const priceLocked = (l: Line) => !l.isEstimate && l.unitCost !== null && l.pricingStatus === "QUOTED";
 
 const mult = (l: Pick<Line, "quantity" | "billingFrequency" | "termMonths">) =>
   (Number(l.quantity) || 0) * billingPeriods({ billingFrequency: l.billingFrequency as BillingFrequencyKey, termMonths: l.termMonths });
@@ -69,16 +66,14 @@ export function LineItemsEditor({
   }, [initial, initialVersion]);
   // What this person may change; fields are only editable in edit mode, which they open with the Edit button
   const allowed = { spec: perms.spec && !locked && !lockReason, cost: perms.cost && !locked, internal: perms.internalCost && !locked, price: perms.price && !locked };
-  const editable = allowed.spec || allowed.cost || allowed.internal || allowed.price;
+  // Sales prices are set in the pricing step, so the price alone doesn't open edit mode
+  const editable = allowed.spec || allowed.cost || allowed.internal;
   const [editing, setEditing] = useState(startEditing && editable);
   const can = editing ? allowed : { spec: false, cost: false, internal: false, price: false };
-  const editLabel = allowed.spec ? "Edit line items" : (allowed.cost || allowed.internal) && !allowed.price ? "Enter costs" : allowed.price && !allowed.cost ? "Set prices" : "Edit";
+  const editLabel = allowed.spec ? "Edit line items" : "Enter costs";
   // Who enters a line's cost: purchase for purchase lines, presales for own-brand lines (editing a rate card cost
   // makes it a presales cost for this deal); rate card lines take the catalogue's standard cost
-  const costEditable = (l: Line) => (l.costSource === "PURCHASE" ? can.cost : can.internal);
   const sourcesFor = (l: Line) => allowedCostSources({ ownBrand: l.ownBrand, standardCost: l.standardCost, isProduct: !!l.productId, rateCard: l.rateCard });
-  const setSource = (l: Line, src: CostSourceKey) =>
-    set(l._key, { costSource: src, ...(src === "RATE_CARD" ? { unitCost: l.standardCost } : {}) });
   const stopEditing = () => { setLines(start()); setDirty(false); setErrors({}); setEditing(false); };
 
   const set = (key: string, patch: Partial<Line>) => {
@@ -105,17 +100,13 @@ export function LineItemsEditor({
         _key: k(), _custom: false, isEstimate: false, id: "", lineNo: ls.length + 1, productId: null, businessUnitId: "", categoryId: "", oemId: "",
         oemName: "", buName: "", categoryName: "", partNumber: "", description: "", quantity: 1, unit: "Nos", billingFrequency: "ONE_TIME",
         termMonths: null, hsnSac: null, gstRatePct: 18, unitCost: null, distributor: null, oemQuoteRef: null, leadTimeDays: null,
-        pricingStatus: "PENDING", costStale: false, ownBrand: false, rateCard: false, costSource: "PURCHASE", costValidTill: null, costNote: null, costExpired: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
+        pricingStatus: "PENDING", costStale: false, ownBrand: false, rateCard: false, costSource: "PURCHASE", costValidTill: null, costSetAt: null, costNote: null, costExpired: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
       },
     ]);
     setDirty(true);
   };
   const remove = (key: string) => {
     setLines((ls) => ls.filter((l) => l._key !== key));
-    setDirty(true);
-  };
-  const fill = (field: "unitPrice" | "unitCost", from: "listPrice" | "standardCost", only: (l: Line) => boolean = () => true) => {
-    setLines((ls) => ls.map((l) => (only(l) && l[field] === null && l[from] !== null ? { ...l, [field]: l[from] } : l)));
     setDirty(true);
   };
 
@@ -196,8 +187,6 @@ export function LineItemsEditor({
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {!editing && editable && <Button size="sm" variant="primary" onClick={() => setEditing(true)}><Pencil /> {editLabel}</Button>}
-          {can.cost && <Button size="sm" variant="ghost" onClick={() => fill("unitCost", "standardCost", (l) => l.costSource === "PURCHASE")} title="Fill empty purchase costs with the catalogue standard cost"><Wand2 /> Standard costs</Button>}
-          {can.price && lines.some((l) => !priceLocked(l)) && <Button size="sm" variant="ghost" onClick={() => fill("unitPrice", "listPrice", (l) => !priceLocked(l))} title="Fill empty sales prices on lines not yet costed with the catalogue list price"><Tag /> List prices</Button>}
           {can.spec && <Button size="sm" onClick={add}><Plus /> Add line</Button>}
           {editing && <Button size="sm" variant="ghost" onClick={stopEditing}><X /> Cancel</Button>}
           {editing && <Button size="sm" variant="primary" disabled={!dirty || pending} onClick={save}><Save /> Save</Button>}
@@ -224,21 +213,16 @@ export function LineItemsEditor({
               <th scope="col" className="px-2 py-2.5 font-medium">Product</th>
               <th scope="col" className="w-[136px] px-2 py-2.5 font-medium">Quantity</th>
               <th scope="col" className="w-[128px] px-2 py-2.5 font-medium">Billing</th>
-              <th scope="col" className="w-[80px] px-2 py-2.5 font-medium">HSN/SAC</th>
-              {perms.viewCost && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-amber)" }}>{costHeading(lines.map((l) => l.costSource))}</th>}
-              {perms.viewCost && <th scope="col" className="w-[164px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>Cost from</th>}
-              {perms.sales && <th scope="col" className="w-[104px] px-2 py-2.5 text-right font-medium" style={{ color: "var(--t-green)" }}>Sales price</th>}
-              {perms.sales && <th scope="col" className="w-[100px] px-2 py-2.5 text-right font-medium">Value</th>}
-              {perms.sales && perms.viewCost && <th scope="col" className="w-[56px] px-2 py-2.5 text-right font-medium">GM %</th>}
-              {!perms.sales && <th scope="col" className="w-[110px] px-2 py-2.5 text-right font-medium">Cost total</th>}
+              {/* One cost column, only for who enters costs: purchase prices third-party lines, presales costs own-brand
+                  lines off the rate card. Rate card lines are fixed. Sales prices are set in the pricing step, not here. */}
+              {(can.cost || can.internal) && (
+                <th scope="col" className="w-[260px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>{can.cost && !can.internal ? "Purchase price" : "Cost"}</th>
+              )}
               {can.spec && <th scope="col" className="w-9" />}
             </tr>
           </thead>
           <tbody>
             {lines.map((l, i) => {
-              const unit = l.unitPrice ?? l.listPrice;
-              const value = unit === null ? null : mult(l) * unit;
-              const gm = l.unitPrice && l.unitCost !== null ? ((l.unitPrice - l.unitCost) / l.unitPrice) * 100 : null;
               const cats = categories.filter((c) => c.buId === l.businessUnitId);
               const recurring = l.billingFrequency !== "ONE_TIME";
               return (
@@ -280,6 +264,7 @@ export function LineItemsEditor({
                             const ownBrand = !!oem?.ownBrand;
                             set(l._key, { oemId: v, oemName: oem?.name ?? oemTbd?.name ?? "", ownBrand, costSource: defaultCostSource({ ownBrand, standardCost: null, isProduct: false, rateCard: false }) });
                           }, l.isEstimate && oemTbd ? [oemTbd, ...oems] : oems, `Line ${i + 1} OEM`, "OEM")}
+                          <Input value={l.hsnSac ?? ""} onChange={(e) => set(l._key, { hsnSac: e.target.value || null })} className="h-7 w-24 shrink-0 font-mono text-xs" placeholder="HSN/SAC" aria-label={`Line ${i + 1} HSN/SAC`} />
                         </div>
                       ) : (
                         <span className="text-[11px] text-ink-3">
@@ -326,51 +311,13 @@ export function LineItemsEditor({
                       <span className="text-xs text-ink-2">{BILLING_FREQUENCY_LABEL[l.billingFrequency]}{recurring && ` × ${billingPeriods({ billingFrequency: l.billingFrequency, termMonths: l.termMonths })}`}</span>
                     )}
                   </td>
-                  <td className="px-2 py-2">
-                    {can.spec && l._custom ? (
-                      <Input value={l.hsnSac ?? ""} onChange={(e) => set(l._key, { hsnSac: e.target.value || null })} className="h-8 font-mono text-xs" placeholder="e.g. 998313" aria-label={`Line ${i + 1} HSN/SAC`} />
-                    ) : (
-                      <span className={cn("font-mono text-xs", !l.hsnSac && "text-ink-3")}>{l.hsnSac ?? "—"}</span>
-                    )}
-                  </td>
-                  {perms.viewCost && (
+                  {(can.cost || can.internal) && (
                     <td className="px-2 py-2">
-                      {numIn(
-                        l.unitCost,
-                        (n) => set(l._key, { unitCost: n, ...(l.costSource === "RATE_CARD" ? { costSource: "PRESALES" as const } : {}) }),
-                        !costEditable(l),
-                        `Line ${i + 1} unit cost`,
-                        l.standardCost,
-                      )}
-                    </td>
-                  )}
-                  {perms.viewCost && (
-                    <td className="px-2 py-2">
-                      <CostSourceCell
-                        line={l} n={i + 1} sources={sourcesFor(l)} distributors={distributors}
-                        canChoose={can.spec || can.internal} canPurchase={can.cost && l.costSource === "PURCHASE"} canNote={can.internal && l.costSource === "PRESALES"}
-                        onSource={(src) => setSource(l, src)} onChange={(patch) => set(l._key, patch)}
+                      <EditCostCell
+                        line={l} n={i + 1} distributors={distributors} canPurchase={can.cost} canInternal={can.internal}
+                        canSubcontract={sourcesFor(l).includes("PURCHASE") && sourcesFor(l).includes("PRESALES")}
+                        onChange={(patch) => set(l._key, patch)}
                       />
-                    </td>
-                  )}
-                  {perms.sales && (
-                    <td className="px-2 py-2" title={can.price && priceLocked(l) ? "Costed: set the sales price in the pricing step on the deal" : undefined}>
-                      {numIn(l.unitPrice, (n) => set(l._key, { unitPrice: n }), !can.price || priceLocked(l), `Line ${i + 1} unit price`, l.listPrice)}
-                    </td>
-                  )}
-                  {perms.sales && (
-                    <td className="px-2 py-2.5 text-right tabular">
-                      {value === null ? <span className="text-ink-3">—</span> : (
-                        <span className={cn("font-medium", l.unitPrice === null && "text-ink-3")} title={l.unitPrice === null ? "Estimated at list price" : undefined}>{inr(value)}</span>
-                      )}
-                    </td>
-                  )}
-                  {!perms.sales && (
-                    <td className="px-2 py-2.5 text-right font-medium tabular">{l.unitCost === null ? <span className="text-ink-3">—</span> : inr(mult(l) * l.unitCost)}</td>
-                  )}
-                  {perms.sales && perms.viewCost && (
-                    <td className="px-2 py-2.5 text-right tabular" style={{ color: gm !== null && gm < 0 ? "var(--t-red)" : undefined }}>
-                      {gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}
                     </td>
                   )}
                   {can.spec && (
@@ -441,49 +388,64 @@ function SourceBadge({ line: l }: { line: Line }) {
   );
 }
 
-/** Edit mode: choose the cost source (own-brand lines), and the supplier details or costing note it needs. */
-function CostSourceCell({
-  line: l, n, sources, distributors, canChoose, canPurchase, canNote, onSource, onChange,
+/**
+ * Edit mode cost cell. Rate card lines are fixed (no input). Purchase enters the purchase price, supplier and validity
+ * on purchase lines; presales enters the internal cost of own-brand lines off the rate card, or sends one to purchase
+ * (subcontracted work). Anything else reads as who prices it.
+ */
+function EditCostCell({
+  line: l, n, distributors, canPurchase, canInternal, canSubcontract, onChange,
 }: {
-  line: Line; n: number; sources: CostSourceKey[]; distributors: string[];
-  canChoose: boolean; canPurchase: boolean; canNote: boolean;
-  onSource: (s: CostSourceKey) => void; onChange: (patch: Partial<Line>) => void;
+  line: Line; n: number; distributors: string[]; canPurchase: boolean; canInternal: boolean; canSubcontract: boolean;
+  onChange: (patch: Partial<Line>) => void;
 }) {
-  const src = l.costSource as CostSourceKey;
   const field = "h-7 w-full rounded-md border border-border bg-surface px-1.5 text-xs";
-  return (
-    <div className="flex flex-col gap-1">
-      {canChoose && sources.length > 1 ? (
-        <select value={src} onChange={(e) => onSource(e.target.value as CostSourceKey)} aria-label={`Line ${n} cost source`} className={field} title={COST_SOURCE_META[src].hint}>
-          {sources.map((s) => <option key={s} value={s}>{s === "PURCHASE" ? "Source via purchase" : COST_SOURCE_META[s].label}</option>)}
-        </select>
-      ) : (
-        <span className="text-xs" title={COST_SOURCE_META[src].hint}>{COST_SOURCE_META[src].label}</span>
-      )}
-      {src === "PURCHASE" && (canPurchase ? (
-        <>
+  const num = (label: string) => (
+    <Input
+      type="number" inputMode="decimal" min={0} step="any" value={l.unitCost ?? ""} aria-label={label}
+      onChange={(e) => onChange({ unitCost: e.target.value === "" ? null : Number(e.target.value) })} className="h-8 w-full text-right tabular"
+    />
+  );
+  const muted = (text: string) => <span className="text-xs text-ink-3">{text}</span>;
+  if (l.costSource === "RATE_CARD") return muted("Rate card");
+  if (l.costSource === "PURCHASE") {
+    if (!canPurchase)
+      return (
+        <div className="flex flex-col gap-1">
+          {muted("Priced by purchase")}
+          {canInternal && canSubcontract && (
+            <button type="button" onClick={() => onChange({ costSource: "PRESALES", unitCost: null })} className="w-fit text-[11px] text-primary hover:underline cursor-pointer">Cost it here instead</button>
+          )}
+        </div>
+      );
+    return (
+      <div className="flex flex-col gap-1">
+        {num(`Line ${n} unit cost`)}
+        <div className="flex gap-1">
           <select value={l.distributor ?? ""} onChange={(e) => onChange({ distributor: e.target.value || null })} aria-label={`Line ${n} distributor`} className={field}>
-            <option value="">Distributor</option>
+            <option value="">Supplier</option>
             {[...new Set([...(l.distributor ? [l.distributor] : []), ...distributors])].map((d) => <option key={d}>{d}</option>)}
           </select>
-          <label className="flex items-center gap-1 text-[11px] text-ink-3">
-            Valid till
-            <input
-              type="date" value={isoDate(l.costValidTill)} aria-label={`Line ${n} supplier validity`}
-              onChange={(e) => onChange({ costValidTill: e.target.value ? new Date(`${e.target.value}T23:59:59+05:30`) : null })}
-              className="h-7 min-w-0 flex-1 rounded-md border border-border bg-surface px-1 text-xs tabular"
-            />
-          </label>
-        </>
-      ) : (
-        <span className={cn("text-[11px]", l.costExpired ? "text-[var(--t-red)]" : "text-ink-3")}>
-          {[l.distributor, l.costValidTill && `${l.costExpired ? "expired" : "valid till"} ${fmtDate(l.costValidTill, "short")}`].filter(Boolean).join(" · ") || "—"}
-        </span>
-      ))}
-      {src === "PRESALES" && (canNote ? (
-        <Input value={l.costNote ?? ""} onChange={(e) => onChange({ costNote: e.target.value || null })} className="h-7 text-xs" placeholder="How it was costed" aria-label={`Line ${n} costing note`} />
-      ) : l.costNote ? <span className="line-clamp-2 text-[11px] text-ink-3" title={l.costNote}>{l.costNote}</span> : null)}
-      {src === "RATE_CARD" && <span className="text-[11px] text-ink-3">Catalogue standard cost</span>}
+          <input
+            type="date" value={isoDate(l.costValidTill)} aria-label={`Line ${n} supplier validity`} title="Price valid till"
+            onChange={(e) => onChange({ costValidTill: e.target.value ? new Date(`${e.target.value}T23:59:59+05:30`) : null })}
+            className="h-7 w-[118px] shrink-0 rounded-md border border-border bg-surface px-1 text-xs tabular"
+          />
+        </div>
+      </div>
+    );
+  }
+  // Presales cost (own brand, off the rate card)
+  if (!canInternal) return l.unitCost === null ? muted("Costed by presales") : <span className="block text-right text-xs tabular text-ink-2">{l.unitCost.toLocaleString("en-IN")}</span>;
+  return (
+    <div className="flex flex-col gap-1">
+      {num(`Line ${n} unit cost`)}
+      <Input value={l.costNote ?? ""} onChange={(e) => onChange({ costNote: e.target.value || null })} className="h-7 text-xs" placeholder="How it was costed" aria-label={`Line ${n} costing note`} />
+      {canSubcontract && (
+        <button type="button" onClick={() => onChange({ costSource: "PURCHASE", unitCost: null, costNote: null })} className="w-fit text-[11px] text-primary hover:underline cursor-pointer" aria-label={`Line ${n} source via purchase`}>
+          Bought in? Send to purchase
+        </button>
+      )}
     </div>
   );
 }

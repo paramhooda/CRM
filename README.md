@@ -85,7 +85,7 @@ Each team owns a pipeline stage, and the deal moves on automatically as work is 
 1. Sales clicks **Request BOQ from presales**. The deal moves to **BOQ**, and presales sees it on their **My work** home.
 2. Presales builds the BOQ from the catalogue and clicks **Submit BOQ**. The deal moves to **Pricing**, and purchase is notified (the previous buyer is kept, or the request auto-assigns to the least-loaded one).
 3. Purchase enters costs (or **Standard costs** from the catalogue), grouped by OEM for batching RFQs, then clicks **Pricing complete**.
-4. Sales sets the sales price of each line against its purchase price or internal cost (**Set sales prices**, with GM per line, contract GM and monthly GM) and hands it to their manager. The sales manager reviews it and clicks **Create & send quote**. The deal moves to **Proposal Submitted**, and the quote opens as a printable page with HSN/SAC and billing terms.
+4. Sales sets the sales price of each line against its purchase price or internal cost (GM per line, contract GM and monthly GM). When an admin-defined approval rule applies (low GM, a rate card discount, a large deal), the approvers sign off in order first. Then sales clicks **Create & send quote**. The deal moves to **Proposal Submitted**, and the quote opens as a printable page with HSN/SAC and billing terms.
 5. Sales records the **customer response**. **Won** needs the PO, accepts the latest quote and locks the lines for billing (see below).
 
 Every deal page shows one status line under the stage path: where the deal is, who has it, the due date, anything blocking it, and the viewer's own next action (other actions are under **More**). Changes are handled at any point:
@@ -153,7 +153,9 @@ No finance integration is built yet, but the data is shaped so one is a thin add
 | BOQ specification | ✓ | ✓ | Own | Assigned | – |
 | BOQ cost, distributor | ✓ | – | – | – | ✓ |
 | BOQ sales prices | ✓ | ✓ | Own | – | – |
-| Send quotes | ✓ | ✓ | – | – | – |
+| Send quotes (after any approval a rule asks for) | ✓ | ✓ | Own | – | – |
+| Approve prices | When a rule names them | When a rule names them | – | – | – |
+| Approval rules | ✓ | – | – | – | – |
 | Record the customer's response, extend a quote | ✓ | ✓ | Own | – | – |
 | See cost | ✓ | ✓ | ✓ | ✓ | ✓ |
 | See sell prices, margin, quotes, forecast, health | ✓ | ✓ | ✓ | – | – |

@@ -1,15 +1,17 @@
 "use client";
 // The pricing step: once purchase has priced the BOQ, the deal owner sets the sales price of each line against its
-// purchase price (or internal cost for rate card and presales lines) and sees the GM as they type. A sales manager
-// reviews the same table and sends the quote. Rate-to-rate lines (0% GM) are allowed.
+// purchase price (or internal cost for rate card and presales lines) and sees the GM as they type. Rate card items
+// start at their rate card price. When an admin-defined approval rule applies (low GM, a rate card discount, a large
+// deal…), the owner asks for approval first; otherwise, or once approved, the owner sends the quote.
 import { useEffect, useMemo, useState } from "react";
-import { Send, UserCheck } from "lucide-react";
+import { Send, ShieldCheck, Clock } from "lucide-react";
 import { DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea, Field } from "@/components/ui/input";
 import { MoreOptions } from "@/components/ui/more-options";
 import { useAction } from "@/components/crm/use-action";
-import { createQuote, savePrices } from "@/server/actions/workflow";
+import { createQuote, requestApproval } from "@/server/actions/workflow";
+import { matchRules, priceFingerprint, rateCardDiscountLines, type ResolvedStep, type RuleInput } from "@/lib/approvals";
 import { gmSummary, priceAtMargin, type BillingFrequencyKey } from "@/lib/boq";
 import { COST_SOURCE_META, costHeading, type CostSourceKey } from "@/lib/costing";
 import { BILLING_FREQUENCY_LABEL } from "@/lib/constants";
@@ -32,7 +34,11 @@ export type PriceLine = {
   cost: number;
   costSource: string;
   price: number | null;
+  /** Catalogue list price; for a rate card item, its rate card price */
   listPrice: number | null;
+  businessUnitId: string;
+  /** What changed since the last quote ("New since quote v1", "On quote v1: 1,200 × 10"), to re-check after a revision */
+  sinceQuote?: string | null;
 };
 
 export type PricingAction = {
@@ -42,19 +48,22 @@ export type PricingAction = {
   version: number;
   /** BOQ version the page was loaded at: a save is refused if the lines changed since */
   boqVersion: number;
-  /** The viewer is a sales manager: reviews the prices and sends the quote */
-  send: boolean;
-  /** Who the deal owner hands the prices to */
-  managerName: string | null;
   lines: PriceLine[];
   maxValidTill?: Date | null;
+  /** Active approval rules: the table shows live whether these prices need approval */
+  rules: RuleInput[];
+  /** The latest approval request, if any */
+  approval: { id: string; status: string; fingerprint: string; reasons: string[]; steps: ResolvedStep[]; currentStep: number; note: string | null } | null;
 };
 
 const plusDays = (n: number) => isoDate(new Date(Date.now() + n * 86_400_000));
 const asPrice = (s: string | undefined) => (s === undefined || s.trim() === "" || !Number.isFinite(Number(s)) ? null : Number(s));
 
 export function PricingForm({ a, close }: { a: PricingAction; close: () => void }) {
-  const [prices, setPrices] = useState<Record<string, string>>(() => Object.fromEntries(a.lines.map((l) => [l.id, l.price === null ? "" : String(l.price)])));
+  // Rate card items start at their rate card price; a lower price is a discount the approval rules may catch
+  const [prices, setPrices] = useState<Record<string, string>>(() =>
+    Object.fromEntries(a.lines.map((l) => [l.id, l.price !== null ? String(l.price) : l.costSource === "RATE_CARD" && l.listPrice !== null ? String(l.listPrice) : ""])),
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { pending, run } = useAction();
   const phone = usePhone();
@@ -74,10 +83,21 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
   const gm = gmSummary(priced);
   const input = () => priced.map((l) => ({ id: l.id, unitPrice: l.unitPrice ?? 0 }));
 
-  const title = a.send ? (a.version > 1 ? `Send revised quote (v${a.version})` : "Create & send quote") : "Set sales prices";
-  const description = a.send
-    ? "Check the sales prices and GM, then send. The quote opens as a printable page to save as PDF, and the deal moves to Proposal Submitted."
-    : `Set the sales price of each line. ${a.managerName ?? "A sales manager"} reviews it and sends the quote.`;
+  // Approval: which rules these prices meet, and whether this exact set of prices is already approved or waiting
+  const matched = unpriced ? [] : matchRules(a.rules, {
+    gmPct: gm.contract.gmPct, value: gm.contract.value, businessUnitIds: [...new Set(a.lines.map((l) => l.businessUnitId))],
+    rateCardDiscountLines: rateCardDiscountLines(priced.map((l) => ({ lineNo: l.n, costSource: l.costSource, unitPrice: l.unitPrice, listPrice: l.listPrice }))),
+  });
+  const fingerprint = priceFingerprint(priced.map((l) => ({ id: l.id, quantity: l.quantity, unitPrice: l.unitPrice, unitCost: l.cost, billingFrequency: l.billingFrequency, termMonths: l.termMonths })));
+  const same = a.approval?.fingerprint === fingerprint;
+  const approved = same && a.approval?.status === "APPROVED";
+  const waiting = same && a.approval?.status === "PENDING";
+  const rejected = same && a.approval?.status === "REJECTED";
+  const needsApproval = matched.length > 0 && !approved;
+  const step = waiting ? a.approval!.steps[a.approval!.currentStep] : null;
+
+  const title = a.version > 1 ? `Send revised quote (v${a.version})` : "Create & send quote";
+  const description = "Set the sales price of each line against its cost. The quote opens as a printable page to save as PDF, and the deal moves to Proposal Submitted.";
 
   return (
     <DialogContent title={title} description={description} wide className="max-w-5xl">
@@ -88,7 +108,13 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
           if (unpriced) return setErrors({ prices: `Set a sales price on ${unpriced} more line${unpriced > 1 ? "s" : ""}.` });
           if (negative.length) return setErrors({ prices: `A sales price can't be negative (line ${negative.join(", ")}).` });
           const f = Object.fromEntries(new FormData(e.currentTarget).entries());
-          if (a.send)
+          if (needsApproval)
+            run(() => requestApproval(a.oppId, { prices: input(), version: a.boqVersion }), {
+              success: "Approval requested. You'll be notified when it's decided.",
+              onOk: close,
+              onError: (r) => setErrors(r.fieldErrors ?? {}),
+            });
+          else
             run(() => createQuote(a.oppId, { validTill: f.validTill, terms: f.terms, prices: input(), version: a.boqVersion }), {
               success: "Quote created",
               onOk: (r) => {
@@ -96,12 +122,6 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
                 const id = (r.data as { id: string } | undefined)?.id;
                 if (id) window.open(`/opportunities/${a.oppId}/quotes/${id}`, "_blank");
               },
-              onError: (r) => setErrors(r.fieldErrors ?? {}),
-            });
-          else
-            run(() => savePrices(a.oppId, { prices: input(), version: a.boqVersion }), {
-              success: `Prices saved. ${a.managerName ?? "A sales manager"} has been asked to send the quote.`,
-              onOk: close,
               onError: (r) => setErrors(r.fieldErrors ?? {}),
             });
         }}
@@ -121,6 +141,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
                   return (
                     <div key={l.id} className="border-t border-border px-5 py-3">
                       <p className="text-[13px] font-medium">{l.n}. {l.description}</p>
+                      {l.sinceQuote && <p className="w-fit rounded bg-[var(--t-amber-bg)] px-1 text-[11px] text-[var(--t-amber)]">{l.sinceQuote}</p>}
                       <p className="text-xs text-ink-3">
                         {l.quantity.toLocaleString("en-IN")} {l.unit} · {l.billingFrequency === "ONE_TIME" ? "One-time" : `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo`}
                       </p>
@@ -173,6 +194,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
                             <p className="text-xs text-ink-3">
                               {[l.partNumber, recurring ? `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo` : "One-time"].filter(Boolean).join(" · ")}
                             </p>
+                            {l.sinceQuote && <p className="mt-0.5 w-fit rounded bg-[var(--t-amber-bg)] px-1 text-[11px] text-[var(--t-amber)]">{l.sinceQuote}</p>}
                           </div>
                         </div>
                       </td>
@@ -187,6 +209,11 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
                           placeholder={l.listPrice !== null ? l.listPrice.toLocaleString("en-IN") : undefined} title={l.listPrice !== null ? "List price" : undefined}
                           onChange={(e) => setPrice(l.id, e.target.value)} className="h-8 text-right tabular" aria-invalid={price !== null && price < 0}
                         />
+                        {l.costSource === "RATE_CARD" && l.listPrice !== null && (
+                          <span className={cn("block text-right text-[11px]", price !== null && price < l.listPrice - 0.005 ? "text-[var(--t-amber)]" : "text-ink-3")}>
+                            Rate card {l.listPrice.toLocaleString("en-IN")}{price !== null && price < l.listPrice - 0.005 ? " · discount" : ""}
+                          </span>
+                        )}
                       </td>
                       <td className="px-2 py-2"><MarginInput cost={l.cost} price={price} onPrice={(p) => setPrice(l.id, p)} label={`Line ${l.n} GM %`} /></td>
                       <td className={cn("px-5 py-2.5 text-right tabular", lineGm !== null && lineGm < 0 && "text-[var(--t-red)]")}>{lineGm === null ? <span className="text-ink-3">—</span> : inr(lineGm)}</td>
@@ -207,7 +234,19 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
         </dl>
         {(errors.prices || unpriced > 0) && <p role="status" className={cn("text-xs", errors.prices ? "text-[var(--t-red)]" : "text-[var(--t-amber)]")}>{errors.prices || `${unpriced} line${unpriced > 1 ? "s" : ""} still need${unpriced > 1 ? "" : "s"} a sales price.`}</p>}
 
-        {a.send && (
+        {matched.length > 0 && (
+          <div
+            role="note" aria-label="Approval"
+            className={cn("rounded-lg border px-3 py-2 text-xs", approved ? "border-[var(--t-green)] text-[var(--t-green)]" : rejected ? "border-[var(--t-red)] text-[var(--t-red)]" : "border-[var(--t-amber)] text-[var(--t-amber)]")}
+          >
+            <p className="flex items-center gap-1.5 font-medium">
+              {approved ? <ShieldCheck className="size-3.5" /> : waiting ? <Clock className="size-3.5" /> : <ShieldCheck className="size-3.5" />}
+              {approved ? "These prices are approved" : waiting ? `Waiting for approval: ${step?.label ?? ""}` : rejected ? `Not approved: ${a.approval?.note ?? ""}` : "These prices need approval before the quote goes out"}
+            </p>
+            {!approved && <ul className="mt-1 list-inside list-disc text-ink-2">{matched.map((m) => <li key={m.rule.id}>{m.rule.name}: {m.reasons.join("; ")}</li>)}</ul>}
+          </div>
+        )}
+        {!needsApproval && (
           <>
             <Field label="Valid till" required error={errors.validTill} hint={a.maxValidTill ? `Supplier prices hold until ${fmtDate(a.maxValidTill)}; the quote can't promise longer.` : undefined}>
               <Input
@@ -222,9 +261,9 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
         )}
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" onClick={close}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={pending}>
-            {a.send ? <Send /> : <UserCheck />}
-            {a.send ? (a.version > 1 ? "Send revised quote" : "Create & send quote") : `Save and send to ${a.managerName ?? "manager"}`}
+          <Button type="submit" variant="primary" disabled={pending || waiting}>
+            {needsApproval ? <ShieldCheck /> : <Send />}
+            {needsApproval ? (waiting ? "Waiting for approval" : rejected ? "Ask for approval again" : "Ask for approval") : a.version > 1 ? "Send revised quote" : "Create & send quote"}
           </Button>
         </div>
       </form>

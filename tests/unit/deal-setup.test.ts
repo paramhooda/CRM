@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { dealTypesFor, dealTypeFor, suggestPresales, needsBidDate, dealRegOems } from "@/lib/deal-setup";
-import { draftLineErrors, typicalBilling } from "@/lib/deal-setup";
+import { draftLineErrors, typicalBilling, autoDealType } from "@/lib/deal-setup";
 
 describe("deal setup", () => {
   it("deal type follows the account type", () => {
@@ -53,5 +53,15 @@ describe("new deal lines", () => {
     expect(typicalBilling("hosting", products)).toBe("RECURRING");
     expect(typicalBilling("server", products)).toBe("ONE_TIME");
     expect(typicalBilling("unknown", products)).toBe("ONE_TIME");
+  });
+});
+
+describe("deal type is worked out", () => {
+  it("new logo, then renewal / upsell / cross-sell from what the customer already bought", () => {
+    expect(autoDealType("NEW_LOGO", ["c1"], [{ categoryId: "c1", recurring: true }])).toBe("NEW_BUSINESS");
+    expect(autoDealType("EXISTING", ["c1"], [{ categoryId: "c1", recurring: true }])).toBe("RENEWAL");
+    expect(autoDealType("EXISTING", ["c1"], [{ categoryId: "c1", recurring: false }, { categoryId: "c2", recurring: true }])).toBe("UPSELL");
+    expect(autoDealType("EXISTING", ["c1"], [{ categoryId: "c2", recurring: true }])).toBe("CROSS_SELL");
+    expect(autoDealType("EXISTING", [], [{ categoryId: "c2", recurring: false }])).toBe("CROSS_SELL");
   });
 });

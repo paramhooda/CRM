@@ -41,6 +41,9 @@ export const PRESALES_DELIVERABLES = [
   { key: "SITE_SURVEY", label: "Site survey" },
   { key: "POC", label: "PoC / demo" },
 ] as const;
+/** Deliverables that are documents: when sales asks for one, presales attaches it before submitting the BOQ */
+export const DOC_DELIVERABLES = ["SOLUTION_DOC", "PRESENTATION", "SITE_SURVEY"];
+
 export const DELIVERABLE_LABEL: Record<string, string> = Object.fromEntries(PRESALES_DELIVERABLES.map((d) => [d.key, d.label]));
 
 /** A line on the New opportunity form, as far as checking it goes */
@@ -82,4 +85,21 @@ export function typicalBilling(categoryId: string, products: { categoryId: strin
   const inCat = products.filter((p) => p.categoryId === categoryId);
   const recurring = inCat.filter((p) => p.billingFrequency !== "ONE_TIME").length;
   return inCat.length > 0 && recurring * 2 > inCat.length ? "RECURRING" : "ONE_TIME";
+}
+
+/**
+ * Deal type, worked out instead of asked: a new logo is new business. For an existing customer, buying again in a
+ * category they already bought (a won deal) is a renewal when it recurs and an upsell otherwise; a category they
+ * never bought is a cross-sell. Sales can correct it on the edit form.
+ */
+export function autoDealType(
+  accountType: AccountTypeKey,
+  boughtCategoryIds: string[],
+  lines: { categoryId: string; recurring: boolean }[],
+): DealTypeKey {
+  if (accountType === "NEW_LOGO") return "NEW_BUSINESS";
+  const bought = new Set(boughtCategoryIds);
+  const again = lines.filter((l) => bought.has(l.categoryId));
+  if (!again.length) return "CROSS_SELL";
+  return again.some((l) => l.recurring) ? "RENEWAL" : "UPSELL";
 }

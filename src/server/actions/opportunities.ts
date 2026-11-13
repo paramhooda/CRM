@@ -6,7 +6,7 @@ import { requireUser, type CurrentUser } from "@/lib/auth";
 import { accountScope, can, isManager, opportunityScope } from "@/lib/authz";
 import { dealFieldErrors, checkSkip } from "@/lib/stage-rules";
 import { loadStageFacts } from "@/server/domain/stage-facts";
-import { dealTypeFor, needsBidDate, suggestPresales } from "@/lib/deal-setup";
+import { autoDealType, dealTypeFor, needsBidDate, suggestPresales } from "@/lib/deal-setup";
 import type { AccountType, DealType, RevenueModel } from "@prisma/client";
 import { recordChanges, recordEvent } from "@/lib/audit";
 import { nextCode } from "@/lib/sequence";
@@ -174,10 +174,10 @@ export const createOpportunity = safeAction("createOpportunity", async function 
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const input = parsed.data;
   // New deals enter the funnel at the top; every later stage is earned through the process
-  if (input.stage !== "IDENTIFIED" && input.stage !== "QUALIFIED")
-    return { ok: false, error: "New deals start at Identified or Qualified.", fieldErrors: { stage: "Choose Identified or Qualified" } };
-  if (input.stage === "QUALIFIED" && !input.primaryContactId)
-    return { ok: false, error: "Add the customer contact to create a qualified deal.", fieldErrors: { primaryContactId: "Required for a qualified deal" } };
+  // Every opportunity starts at Qualified (leads carry the earlier qualification): it needs the customer contact
+  input.stage = "QUALIFIED";
+  if (!input.primaryContactId)
+    return { ok: false, error: "Pick the customer contact. Add one to the account first if it has none.", fieldErrors: { primaryContactId: "Pick the customer contact" } };
   const fieldErrors = {
     ...dealFieldErrors(input.stage, { forecastCategory: "", expectedCloseDate: new Date(0), nextStepDate: null }, { forecastCategory: input.forecastCategory, expectedCloseDate: input.expectedCloseDate, nextStepDate: input.nextStepDate ?? null }),
   };
@@ -189,10 +189,6 @@ export const createOpportunity = safeAction("createOpportunity", async function 
       error: drafts.error ?? "Add what is being sold: a catalogue product, or a quick estimate with business unit, category and OEM.",
       fieldErrors: drafts.fieldErrors,
     };
-  // A qualified deal needs its estimated value (a new deal may start without one)
-  const draftValue = (d: DraftLine) => (d.kind === "estimate" ? d.value : (d.unitPrice ?? 0) * d.quantity);
-  if (input.stage === "QUALIFIED" && !drafts.lines.some((d) => draftValue(d) > 0 || d.kind === "product"))
-    return { ok: false, error: "Add the estimated value to create a qualified deal." };
   const account = await db.account.findFirst({ where: { AND: [{ id: input.accountId }, accountScope(user)] }, select: { accountType: true } });
   if (!account) return { ok: false, error: "Select one of your accounts.", fieldErrors: { accountId: "Select an account" } };
   const people = await checkPeople(input.accountId, input.primaryContactId, user.role === "SALES" || !input.salesOwnerId ? user.id : input.salesOwnerId);
@@ -201,15 +197,23 @@ export const createOpportunity = safeAction("createOpportunity", async function 
   // from the lines (refined by the roll-up), presales from the categories unless they chose, owner and probability.
   const productCats = await db.product.findMany({
     where: { id: { in: drafts.lines.flatMap((d) => (d.kind === "product" ? [d.productId] : [])) } },
-    select: { categoryId: true },
+    select: { id: true, categoryId: true },
   });
+  // Deal type is worked out from what the customer already bought (won deals' categories), never asked
+  const bought = account.accountType === "EXISTING"
+    ? (await db.opportunityLineItem.findMany({ where: { opportunity: { accountId: input.accountId, stage: "WON", deletedAt: null } }, select: { categoryId: true }, distinct: ["categoryId"] })).map((l) => l.categoryId)
+    : [];
+  const typed = autoDealType(account.accountType, bought, drafts.lines.map((d) => ({
+    categoryId: d.kind === "estimate" ? d.categoryId : productCats.find((p) => p.id === d.productId)?.categoryId ?? "",
+    recurring: d.billingFrequency !== "ONE_TIME",
+  })));
   const categoryIds = [...drafts.lines.flatMap((d) => (d.kind === "estimate" ? [d.categoryId] : [])), ...productCats.map((p) => p.categoryId)];
   const categories = await db.category.findMany({ where: { id: { in: categoryIds } }, select: { id: true, needsPresales: true } });
   const recurring = drafts.lines.filter((d) => d.billingFrequency !== "ONE_TIME");
   const v: Resolved = {
     ...input,
     accountType: account.accountType,
-    dealType: dealTypeFor(account.accountType, input.dealType),
+    dealType: typed,
     revenueModel: recurring.length ? "ARR" : "ONE_TIME",
     contractTermMonths: recurring.length ? Math.max(...recurring.map((d) => d.termMonths ?? 12)) : undefined,
     salesOwnerId: user.role === "SALES" || !input.salesOwnerId ? user.id : input.salesOwnerId,

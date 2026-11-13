@@ -1,5 +1,6 @@
 import { quoteMatchesLines, quotedLine } from "@/lib/quote";
 import "server-only";
+import type { ResolvedStep, RuleInput } from "@/lib/approvals";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth";
@@ -34,6 +35,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
       presalesRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { id: true, name: true } }, assignedTo: { select: { id: true, name: true } } } },
       pricingRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { id: true, name: true } }, assignedTo: { select: { id: true, name: true } } } },
       quotes: { orderBy: { version: "desc" } },
+      priceApprovals: { orderBy: { createdAt: "desc" }, take: 1 },
       activities: { orderBy: [{ occurredAt: "desc" }], take: 100, include: { owner: { select: { name: true } }, contact: { select: { firstName: true, lastName: true } } } },
       stageHistory: { orderBy: { changedAt: "asc" }, include: { changedBy: { select: { name: true } } } },
     },
@@ -84,6 +86,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     rateCard: l.category.rateCard,
     costSource: l.costSource,
     costValidTill: l.costValidTill,
+    costSetAt: l.costSetAt,
     costNote: showCost ? l.costNote : null,
     /** Costed once, but the specification changed since: the cost must be re-confirmed */
     costStale: !l.isEstimate && l.pricingStatus === "PENDING" && l.unitCost !== null && (l.needsReprice || l.costSource !== "PURCHASE"),
@@ -121,6 +124,8 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     select: {
       id: true, kind: true, fileName: true, mimeType: true, sizeBytes: true, note: true, createdAt: true,
       uploadedBy: { select: { id: true, name: true } }, presalesRequest: { select: { id: true, revision: true } }, pricingRequest: { select: { id: true, kind: true } },
+      /** The line items a supplier or OEM quote covers */
+      lines: { select: { lineItemId: true, lineItem: { select: { lineNo: true } } } },
     },
   });
   const actor = { canEdit: can.editOpportunity(user, o), isManager: isManager(user) };
@@ -160,6 +165,13 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     evaluation: sales ? evaluation : null,
     audit,
     accountContacts,
+    /** The latest price approval (sell side only), with its steps */
+    approval: sales && o.priceApprovals[0]
+      ? { ...o.priceApprovals[0], gmPct: o.priceApprovals[0].gmPct === null ? null : toNumber(o.priceApprovals[0].gmPct), totalValue: toNumber(o.priceApprovals[0].totalValue), steps: o.priceApprovals[0].steps as unknown as ResolvedStep[] }
+      : null,
+    approvalRequester: sales && o.priceApprovals[0] ? (await db.user.findUnique({ where: { id: o.priceApprovals[0].requestedById }, select: { name: true } }))?.name ?? null : null,
+    /** Active approval rules, so the pricing step shows live whether the prices need approval */
+    approvalRules: sales ? await activeRules() : [],
     viewer: { id: user.id, role: user.role, isManager: isManager(user) },
     perms: {
       edit: can.editOpportunity(user, o),
@@ -172,11 +184,20 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
       sales,
       quote: can.createQuote(user, o),
       /** Send quotes: sales managers. The deal owner sets the prices and hands them over. */
-      sendQuote: can.sendQuote(user) && sales,
+      sendQuote: can.sendQuote(user, o) && sales,
       delete: can.deleteRecords(user),
       addDocument: can.addDocument(user, { ...o, closed: CLOSED_STAGES.includes(o.stage as StageKey) }),
     },
   };
+}
+
+async function activeRules(): Promise<RuleInput[]> {
+  const rules = await db.approvalRule.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], include: { steps: { orderBy: { position: "asc" } } } });
+  return rules.map((r) => ({
+    id: r.id, name: r.name, active: r.active, gmBelowPct: r.gmBelowPct === null ? null : toNumber(r.gmBelowPct), rateCardDiscount: r.rateCardDiscount,
+    minDealValue: r.minDealValue === null ? null : toNumber(r.minDealValue), businessUnitIds: r.businessUnitIds,
+    steps: r.steps.map((x) => ({ kind: x.kind, role: x.role, userId: x.userId })),
+  }));
 }
 
 export type OppDetail = Awaited<ReturnType<typeof getOpportunityDetail>>;

@@ -25,23 +25,26 @@ describe("needs your action", () => {
     expect(kind({ expectedCloseDate: days(-3) })).toBe("CLOSE_DATE_PASSED");
     expect(kind({ nextStep: "Call", nextStepDate: days(-1) })).toBe("NEXT_STEP_OVERDUE");
     expect(kind({ healthLabel: "DYING" })).toBe("NO_ACTIVITY");
-    expect(kind({ amount: 0 })).toBe("ADD_VALUE");
-    expect(kind({ amount: 250000 })).toBeUndefined();
+    expect(kind({ amount: 0 })).toBeUndefined(); // the value comes at pricing
   });
   it("priced deals already quoted since, or with work still open, are not 'ready to quote'", () => {
     expect(actionItems([deal({ pricedAt: days(-5), quote: { status: "SUBMITTED", validTill: days(20), createdAt: days(-2) } })], now)).toEqual([]);
     expect(actionItems([deal({ pricedAt: days(-5), workOpen: true })], now)).toEqual([]);
   });
-  it("once the owner sets the prices, a manager sends the quote and the owner has nothing to do", () => {
-    const priced = deal({ pricedAt: days(-3), pricesReadyAt: days(-1) });
-    expect(actionItems([priced], now)).toEqual([]);
-    expect(actionItems([priced], now, true)[0].kind).toBe("SEND_QUOTE");
-    // A customer change after the quote: the owner revises the prices again, then a manager sends it
-    const changes = { quote: { status: "CHANGES_REQUESTED", validTill: days(10), createdAt: days(-5) } };
-    expect(actionItems([deal({ ...changes, pricesReadyAt: days(-6) })], now, true)[0].kind).toBe("REVISE_QUOTE");
-    expect(actionItems([deal({ ...changes, pricesReadyAt: days(-1) })], now, true)[0].kind).toBe("SEND_QUOTE");
-    // Prices set before purchase re-priced the deal are stale
-    expect(actionItems([deal({ pricedAt: days(-1), pricesReadyAt: days(-3) })], now, true)[0].kind).toBe("READY_TO_QUOTE");
+  it("price approvals: the approver approves, then the owner sends (or revises)", () => {
+    const at = days(-1);
+    const kinds = (approval: ActionDeal["approval"]) => actionItems([deal({ pricedAt: days(-3), approval })], now)[0]?.kind;
+    expect(kinds({ status: "PENDING", waitingOnMe: true, at })).toBe("APPROVE_PRICES");
+    expect(kinds({ status: "PENDING", waitingOnMe: false, at })).toBeUndefined(); // the owner waits
+    expect(kinds({ status: "APPROVED", waitingOnMe: false, at })).toBe("PRICES_APPROVED");
+    expect(kinds({ status: "REJECTED", waitingOnMe: false, at })).toBe("PRICES_REJECTED");
+    // An approval older than the latest quote is history
+    const quote = { status: "SUBMITTED", validTill: days(20), createdAt: days(-1) };
+    expect(actionItems([deal({ quote, approval: { status: "APPROVED", waitingOnMe: false, at: days(-2) } })], now)).toEqual([]);
+  });
+
+  it("after a revision is re-priced, the owner re-checks the prices", () => {
+    expect(actionItems([deal({ pricedAt: days(-1), quote: { status: "SUBMITTED", validTill: days(20), createdAt: days(-5) } })], now)[0]?.label).toBe("Re-priced: re-check the sales prices");
   });
 
   it("held and closed deals are left alone", () => {

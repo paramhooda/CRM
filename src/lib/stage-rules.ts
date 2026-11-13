@@ -1,7 +1,7 @@
 // Stage rules: which stage moves a person may make, and why not. Pure and unit-tested; enforced on the server for
 // every path (stage bar, pipeline board, edit form) and used by the UI to show only the moves that are allowed.
 //
-// Funnel: Identified → Qualified → BOQ → Pricing → Proposal Submitted → Negotiation → Won
+// Funnel: Qualified → BOQ → Pricing → Proposal Submitted → Negotiation → Won (Identified is retired; leads carry it)
 // Resale deals (no presales) follow the same path without BOQ, the way Salesforce gives each sales process its own path.
 // - Deals move one stage at a time, with one "advance" action; nobody can jump ahead.
 // - A stage can be skipped only once the deal is in it (today: BOQ, when presales turns out not to be needed).
@@ -14,7 +14,7 @@
 // - Hold needs a reason and resumes to the stage it was held from. Reopening a closed deal is for managers only.
 import { STAGE_META, type StageKey } from "./constants";
 
-export const FUNNEL: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
+export const FUNNEL: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
 /** Stages only the workflow can move a deal into */
 export const WORKFLOW_STAGES: StageKey[] = ["BOQ", "PRICING", "PROPOSAL"];
 const LIVE_QUOTE = ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"];
@@ -26,8 +26,6 @@ export type StageFacts = {
   /** Last open stage before the deal was closed (where a reopen returns to) */
   lastOpenStage: StageKey | null;
   hasContact: boolean;
-  /** The deal has an estimated value (a new deal may start without one). Omitted means yes. */
-  hasValue?: boolean;
   closeDatePast: boolean;
   realLines: number;
   openPresales: boolean;
@@ -128,7 +126,6 @@ export function checkMove(f: StageFacts, a: Actor, to: StageKey): Move {
     if (WORKFLOW_STAGES.includes(to)) return no("forward", AUTOMATIC[to]!);
     if (to === "QUALIFIED") {
       if (!f.hasContact) return no("forward", "Add the customer contact before qualifying the deal.");
-      if (f.hasValue === false) return no("forward", "Add the estimated value on Line items before qualifying the deal.");
       if (f.closeDatePast) return no("forward", "The expected close date has passed. Update it before moving the deal on.");
       return yes("forward");
     }

@@ -28,7 +28,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const f = parseOppFilters(sp);
   const [rows, options] = await Promise.all([
     db.opportunity.findMany({
-      where: { AND: [opportunityScope(user), oppWhere(f, { ignore: ["stage"] }), { stage: { in: ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"] } }] },
+      where: { AND: [opportunityScope(user), oppWhere(f, { ignore: ["stage"] }), { stage: { in: ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"] } }] },
       select: {
         id: true, name: true, code: true, amount: true, stage: true, probability: true, healthLabel: true, healthScore: true, flags: true,
         expectedCloseDate: true, salesOwnerId: true, presalesOwnerId: true, forecastCategory: true,
@@ -50,7 +50,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const editableIds = rows.filter((r) => can.editOpportunity(user, r)).map((r) => r.id);
   // Where each card may be dropped. Moves that need input (hold reason, PO, loss reason) are made on the deal itself.
   const facts = await loadStageFacts(db, editableIds);
-  const BOARD: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
+  const BOARD: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION", "HOLD"];
   const drops: Record<string, Partial<Record<StageKey, string | null>>> = {};
   for (const [id, f] of facts) {
     drops[id] = Object.fromEntries(

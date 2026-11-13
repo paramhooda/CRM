@@ -10,7 +10,8 @@ export const DOCUMENT_KIND_META: Record<DocumentKindKey, { label: string }> = {
   CUSTOMER_PO: { label: "Customer PO" },
   SOW: { label: "Statement of work" },
   SOLUTION_DOC: { label: "Solution document" },
-  BOQ_SHEET: { label: "BOQ sheet" },
+  /** No longer uploaded: the BOQ is generated from the line items. Kept so older files still show. */
+  BOQ_SHEET: { label: "BOQ sheet (uploaded)" },
   PRESENTATION: { label: "Presentation" },
   SITE_SURVEY: { label: "Site survey" },
   SUPPLIER_QUOTE: { label: "Supplier quote" },
@@ -20,10 +21,10 @@ export const DOCUMENT_KIND_META: Record<DocumentKindKey, { label: string }> = {
 
 const ALL = Object.keys(DOCUMENT_KIND_META) as DocumentKindKey[];
 
-/** What each role adds: sales the customer's papers (and the BOQ sheet of a resale deal), presales the design, purchase the supplier pricing */
+/** What each role adds: sales the customer's papers, presales the design, purchase the supplier pricing. The BOQ is never uploaded: it is the line items. */
 const UPLOAD: Record<string, DocumentKindKey[]> = {
-  SALES: ["CUSTOMER_RFP", "CUSTOMER_PO", "SOW", "BOQ_SHEET", "OTHER"],
-  PRESALES: ["SOW", "SOLUTION_DOC", "BOQ_SHEET", "PRESENTATION", "SITE_SURVEY", "OTHER"],
+  SALES: ["CUSTOMER_RFP", "CUSTOMER_PO", "SOW", "OTHER"],
+  PRESALES: ["SOW", "SOLUTION_DOC", "PRESENTATION", "SITE_SURVEY", "OTHER"],
   PURCHASE: ["SUPPLIER_QUOTE", "OEM_QUOTE", "OTHER"],
 };
 
@@ -38,7 +39,7 @@ const VISIBLE: Record<string, DocumentKindKey[]> = {
 };
 
 export function uploadKinds(role: string): DocumentKindKey[] {
-  return UPLOAD[role] ?? ALL;
+  return UPLOAD[role] ?? ALL.filter((k) => k !== "BOQ_SHEET");
 }
 
 /** Kinds a role sees regardless of who added them; null means every document */

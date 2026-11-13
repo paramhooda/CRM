@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { AlertTriangle, CircleDot, CheckCircle2, PauseCircle, XCircle, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DELIVERABLE_LABEL } from "@/lib/deal-setup";
+import { DELIVERABLE_LABEL, DOC_DELIVERABLES as DOC_DELIVERABLE_KINDS } from "@/lib/deal-setup";
 import type { OppDetail } from "@/server/queries/opportunity-detail";
 import type { Options } from "@/server/queries/options";
 import { DealActions, type DealAction } from "@/components/opportunities/deal-actions";
@@ -13,19 +13,36 @@ import { PRESALES_STATUS_LABEL, PRICING_STATUS_LABEL, STAGE_META, type StageKey,
 import { nextStage, type Needs } from "@/lib/stage-rules";
 import { fmtDate, relativeDays } from "@/lib/format";
 import { lineMultiplier, type BillingFrequencyKey } from "@/lib/boq";
-import { pricesReady } from "@/lib/action-items";
+import { priceFingerprint } from "@/lib/approvals";
+import { snapshotLines } from "@/lib/quote";
+import { linesNeedingQuote } from "@/lib/quote-coverage";
 import { cn } from "@/lib/utils";
 
 /**
- * The owner set the sales prices and a sales manager has yet to send the quote; `manager`: who they handed it to.
+ * The latest price approval, when it is about the deal's current prices (an approval of older prices no longer
+ * counts), and whether the viewer approves its current step.
  */
-export function priceHandover(d: OppDetail) {
-  const o = d.opp;
-  const quote = o.quotes[0];
-  const workOpen = o.presalesRequests.some((r) => (OPEN_PRESALES as readonly string[]).includes(r.status)) || o.pricingRequests.some((r) => (OPEN_PRICING as readonly string[]).includes(r.status));
-  const pricedAt = o.pricingRequests.find((r) => r.status === "QUOTED")?.quotedAt ?? null;
-  const m = o.salesOwner.manager;
-  return { ready: pricesReady({ pricesReadyAt: o.pricesReadyAt, pricedAt, quote: quote ?? null, workOpen }), manager: m && m.active ? m.name : null };
+export function approvalState(d: OppDetail) {
+  const ap = d.approval;
+  if (!ap || ap.status === "CANCELLED") return null;
+  const fp = priceFingerprint(d.lines.filter((l) => !l.isEstimate).map((l) => ({ id: l.id, quantity: l.quantity, unitPrice: l.unitPrice, unitCost: l.unitCost, billingFrequency: l.billingFrequency, termMonths: l.termMonths })));
+  if (ap.fingerprint !== fp) return null;
+  const step = ap.status === "PENDING" ? ap.steps[ap.currentStep] ?? null : null;
+  const mine = !!step && ap.requestedById !== d.viewer.id && (step.approverIds.includes(d.viewer.id) || d.viewer.role === "ADMIN");
+  return { ...ap, step, mine, of: ap.steps.length };
+}
+
+/** What changed on a line since the last quote, so the owner re-checks its price after a revision */
+function sinceQuote(d: OppDetail) {
+  const quote = d.opp.quotes[0];
+  if (!quote) return () => null;
+  const quoted = snapshotLines(quote.snapshot);
+  return (l: OppDetail["lines"][number]) => {
+    const q = quoted.find((x) => x.lineNo === l.lineNo && x.description === l.description) ?? quoted.find((x) => x.description === l.description);
+    if (!q) return `New since quote v${quote.version}`;
+    const bits = [q.quantity !== l.quantity ? `qty was ${q.quantity.toLocaleString("en-IN")}` : null, q.unitPrice !== null ? `quoted at ${q.unitPrice.toLocaleString("en-IN")}` : null].filter(Boolean);
+    return q.quantity !== l.quantity ? `Changed since quote v${quote.version}: ${bits.join(", ")}` : `On quote v${quote.version}: ${bits.join(", ")}`;
+  };
 }
 
 export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
@@ -51,8 +68,7 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   switch (w.state) {
     case "ESTIMATE":
       headline = solution ? "Estimate only · needs presales" : "Estimate only · resale";
-      detail = o.stage === "IDENTIFIED" ? o.amount > 0 ? "Next: qualify the deal (customer contact and a current close date), then advance it to Qualified." : "Next: add the estimated value on Line items, then qualify the deal (customer contact and a current close date)."
-        : solution ? "Next: request a BOQ from presales." : "Next: pick the catalogue products on Line items, then request pricing.";
+      detail = solution ? "Next: request a BOQ from presales." : "Next: pick the catalogue products on Line items, then request pricing.";
       who = { name: sales, role: "Sales" };
       break;
     case "WITH_PRESALES":
@@ -88,19 +104,28 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
       who = o.presalesOwner ? { name: o.presalesOwner.name, role: "Presales" } : { name: sales, role: "Sales" };
       break;
     case "READY_TO_QUOTE": {
-      const p = priceHandover(d);
-      if (p.ready) {
-        headline = "Prices set · waiting for the quote";
-        detail = `${p.manager ?? "A sales manager"} reviews the sales prices and sends the quote.`;
-        who = { name: p.manager ?? "Sales manager", role: "Sales manager" };
+      const ap = approvalState(d);
+      if (ap?.status === "PENDING") {
+        headline = "Waiting for price approval";
+        detail = <>{ap.of > 1 ? `Step ${ap.currentStep + 1} of ${ap.of}. ` : ""}{ap.reasons.join(" · ")}</>;
+        who = { name: ap.step?.label ?? "Approver", role: "Approver" };
+      } else if (ap?.status === "APPROVED") {
+        headline = "Prices approved · send the quote";
+        detail = "Next: send the quote at the approved prices.";
+        who = { name: sales, role: "Sales" };
+      } else if (ap?.status === "REJECTED") {
+        headline = "Prices not approved";
+        detail = <>{ap.note ? `“${ap.note}”. ` : ""}Revise the sales prices and ask again.</>;
+        who = { name: sales, role: "Sales" };
       } else if (quote?.status === "REJECTED") {
         // The customer said no: the deal stays open in case they come back
         headline = `Customer rejected quote v${quote.version}`;
         detail = <>{quote.responseNote ? `“${quote.responseNote}”. ` : ""}Close the deal as lost (stage menu), or revise the prices if they come back.</>;
         who = { name: sales, role: "Sales" };
       } else {
-        headline = quote ? "BOQ changed · send a revised quote" : "Priced · set the sales prices";
-        detail = "Next: set the sales price of each line. A sales manager sends the quote.";
+        // After a revision (BOQ change or re-pricing) the owner re-checks the prices against the new costs
+        headline = quote ? "Revised pricing ready · re-check the sales prices" : "Priced · set the sales prices";
+        detail = quote ? "Purchase and presales finished the revision. Review each line's sales price, then send the revised quote." : "Next: set the sales price of each line and send the quote.";
         who = { name: sales, role: "Sales" };
       }
       break;
@@ -176,7 +201,7 @@ export type Advance =
 
 const SHORT: Partial<Record<StageKey, string>> = { PROPOSAL: "Proposal" };
 /** Presales deliverables that arrive as a document of the same kind */
-const DOC_DELIVERABLES: string[] = ["SOLUTION_DOC", "PRESENTATION", "SITE_SURVEY"];
+const DOC_DELIVERABLES: string[] = DOC_DELIVERABLE_KINDS;
 
 /**
  * Every action this viewer can take on the deal, and the one "advance" step that moves it to its next stage (the
@@ -231,8 +256,8 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       "It becomes a solution deal: presales owns the BOQ from here, and BOQ is added to the stage path.",
       ...(realLines.length ? [`Presales starts from your ${realLines.length} line item${realLines.length > 1 ? "s" : ""}. Only the lines they change go back to purchase.`] : []),
       ...(openPq ? [`${openPq.assignedTo.name}'s pricing request is stopped. Pricing is requested again when presales submits the BOQ.`] : []),
-      ...(o.stage === "QUALIFIED" ? ["The deal moves to the BOQ stage."] : o.stage === "PRICING" ? ["The deal moves back to the BOQ stage."] : []),
-      ...(liveQuote ? [`Quote v${liveQuote.version} stays with the customer. Send a revised quote once presales submits the BOQ.`] : []),
+      ...(o.stage === "QUALIFIED" ? ["The deal moves to the BOQ stage."] : ["PRICING", "PROPOSAL", "NEGOTIATION"].includes(o.stage) ? ["The deal moves back to the BOQ stage, and follows the usual path to a revised quote."] : []),
+      ...(liveQuote ? [`Quote v${liveQuote.version} stays with the customer until the revised quote replaces it.`] : []),
     ],
   });
   const pricing = (label: string, toPrice: number, primary = false): DealAction => ({
@@ -242,21 +267,24 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
   // A quote can't promise prices for longer than the earliest supplier validity behind it
   const supplierUntil = purchaseLines.map((l) => (l.costValidTill ? new Date(l.costValidTill) : null)).filter((x): x is Date => !!x);
   const maxValidTill = supplierUntil.length ? new Date(Math.min(...supplierUntil.map((x) => x.getTime()))) : null;
-  // Pricing step: the deal owner sets the sales prices once purchase has priced the BOQ; a sales manager sends the quote
-  const sends = d.perms.sendQuote;
-  const priceState = priceHandover(d);
+  // Pricing step: the deal owner sets the sales prices once the lines are costed and sends the quote, after any
+  // approval the prices need
+  const ap = approvalState(d);
+  const changed = sinceQuote(d);
   const quoteAction = (primary: boolean): DealAction => ({
-    id: "quote", kind: "quote", oppId: o.id, version: (quote?.version ?? 0) + 1, boqVersion: o.boqVersion, send: sends, managerName: priceState.manager,
-    // Once the owner handed the prices over, editing them again is not their main step
-    primary: primary && (sends || !priceState.ready),
-    label: sends ? (quote ? "Send revised quote" : "Create & send quote") : priceState.ready ? "Edit sales prices" : quote ? "Revise sales prices" : "Set sales prices",
+    id: "quote", kind: "quote", oppId: o.id, version: (quote?.version ?? 0) + 1, boqVersion: o.boqVersion,
+    primary: primary && ap?.status !== "PENDING",
+    label: ap?.status === "PENDING" ? "Review prices" : quote ? "Send revised quote" : "Create & send quote",
     disabledReason: w.blockers.find((b) => !b.startsWith("Quote v") && !b.startsWith("The lines changed") && !b.startsWith("The deal is on hold")),
     lines: realLines.map((l) => ({
       id: l.id, n: l.lineNo, description: l.description, partNumber: l.partNumber, buName: l.buName || "Unclassified", quantity: l.quantity, unit: l.unit,
       billingFrequency: l.billingFrequency as BillingFrequencyKey, termMonths: l.termMonths, mult: lineMultiplier(l), cost: l.unitCost ?? 0,
-      costSource: l.costSource, price: l.unitPrice, listPrice: l.listPrice,
+      costSource: l.costSource, price: l.unitPrice, listPrice: l.listPrice, businessUnitId: l.businessUnitId,
+      sinceQuote: quote && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED") ? changed(l) : null,
     })),
     maxValidTill,
+    rules: d.approvalRules,
+    approval: d.approval && { id: d.approval.id, status: d.approval.status, fingerprint: d.approval.fingerprint, reasons: d.approval.reasons, steps: d.approval.steps, currentStep: d.approval.currentStep, note: d.approval.note },
   });
   // Documents count when linked to the request or added to the deal while it was open, whoever added them
   const addedFor = (r: { id: string; createdAt: Date }, link: "presalesRequest" | "pricingRequest", kinds: string[]) =>
@@ -268,6 +296,14 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       : null;
 
   if (!closed) {
+    // Price approval: the approver of the current step reviews the owner's prices
+    if (ap?.mine && !onHold) {
+      const q = quoteAction(false);
+      actions.push({
+        id: "approve", kind: "approve", label: "Review & approve prices", primary: true, approvalId: ap.id, reasons: ap.reasons, steps: ap.steps,
+        currentStep: ap.currentStep, requestedBy: d.approvalRequester ?? "The deal owner", lines: q.kind === "quote" ? q.lines : [],
+      });
+    }
     if (openPs) {
       if (openPs.status === "NEEDS_INFO" && isSales)
         actions.push({ id: "answer", kind: "answer", label: "Answer presales", primary: true, requestId: openPs.id, question: openPs.infoQuestion ?? "", askedBy: openPs.assignedTo.name });
@@ -297,6 +333,10 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
         const quotesAttached = addedFor(openPq, "pricingRequest", ["SUPPLIER_QUOTE", "OEM_QUOTE"]).length;
         actions.push({
           id: "done", kind: "completePricing", label: "Pricing complete", primary: true, requestId: openPq.id, oppId: o.id, quotesAttached, canAdd,
+          // Lines priced in this request need a supplier quote each (one quote can cover several)
+          quoteLines: linesNeedingQuote(d.lines.map((l) => ({ ...l, costSetAt: l.costSetAt ? new Date(l.costSetAt) : null, costValidTill: l.costValidTill ? new Date(l.costValidTill) : null })), openPq.createdAt, now)
+            .map((l) => ({ id: l.id, lineNo: l.lineNo, description: l.description })),
+          requestQuotes: addedFor(openPq, "pricingRequest", ["SUPPLIER_QUOTE", "OEM_QUOTE"]).map((x) => ({ id: x.id, fileName: x.fileName, lineIds: x.lines.map((y) => y.lineItemId) })),
           disabledReason: missing ? `Enter a unit cost on ${missing} more line${missing > 1 ? "s" : ""} in Line items`
             : stale ? `${stale} line${stale > 1 ? "s" : ""} changed after costing: enter the new cost or tick "Price unchanged" in Line items` : undefined,
         });
@@ -358,8 +398,8 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
       // Nothing for purchase to price (own-brand lines on the rate card): the next real step is the quote
       const skipPricing = next === "PRICING" && !needsBoq && realLines.length > 0 && w.state === "READY_TO_QUOTE";
       const action = next === "BOQ" ? find("pull") : skipPricing ? find("quote") : next === "PRICING" ? (stage === "BOQ" && solution ? find("submit") : find("price")) : find("quote");
-      if (action?.id === "quote" && !sends && priceState.ready)
-        advance = { kind: "blocked", label: to("PROPOSAL"), reason: `Waiting for ${priceState.manager ?? "a sales manager"} to send the quote.` };
+      if (action?.id === "quote" && ap?.status === "PENDING")
+        advance = { kind: "blocked", label: to("PROPOSAL"), reason: `Waiting for price approval from ${ap.step?.label ?? "the approver"}.` };
       else if (action && !action.disabledReason) advance = { kind: "action", label: to(skipPricing ? "PROPOSAL" : next), action };
       else {
         const reason =
@@ -373,7 +413,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
             : w.state === "NEEDS_COSTING" ? "Own-brand lines need a cost from presales first."
             : next === "PRICING" ? "The deal owner requests pricing from purchase."
             : w.needsCost ? "Lines need a current cost from purchase first."
-            : "A sales manager sends the quote.");
+            : "The deal owner sends the quote.");
         advance = { kind: "blocked", label: to(next), reason };
       }
     }

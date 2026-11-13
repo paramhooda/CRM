@@ -7,7 +7,8 @@ import { Paperclip, X, FileText } from "lucide-react";
 import { Select } from "@/components/ui/input";
 import { ACCEPT, DOCUMENT_KIND_META, MAX_DOCUMENT_BYTES, checkUpload, fmtSize, type DocumentKindKey } from "@/lib/documents";
 
-export type PickedFile = { file: File; kind: DocumentKindKey };
+/** `lineIds`: for a supplier or OEM quote, the line items it covers */
+export type PickedFile = { file: File; kind: DocumentKindKey; lineIds?: string[] };
 export type ExistingDoc = { id: string; fileName: string; kind: DocumentKindKey };
 
 /** Upload one file to a deal, optionally linked to a request. Never throws. */
@@ -22,6 +23,7 @@ export async function uploadDocument(
   if (link.note) fd.set("note", link.note);
   if (link.presalesRequestId) fd.set("presalesRequestId", link.presalesRequestId);
   if (link.pricingRequestId) fd.set("pricingRequestId", link.pricingRequestId);
+  if (f.lineIds?.length) fd.set("lineIds", f.lineIds.join(","));
   try {
     const res = await fetch(`/api/opportunities/${oppId}/documents`, { method: "POST", body: fd });
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -42,8 +44,12 @@ export async function uploadAll(oppId: string, files: PickedFile[], link: Parame
 }
 
 export function AttachFiles({
-  files, onChange, kinds, existing = [], hint, label = "Attach documents", required = false,
+  files, onChange, kinds, existing = [], hint, label = "Attach documents", required = false, lineChoices, defaultLineIds = [],
 }: {
+  /** Supplier and OEM quotes say which of these lines they cover */
+  lineChoices?: { id: string; lineNo: number }[];
+  /** Lines a newly picked quote covers to start with */
+  defaultLineIds?: string[];
   files: PickedFile[];
   onChange: (f: PickedFile[]) => void;
   /** Kinds offered here; the first is the default for a new file */
@@ -65,7 +71,7 @@ export function AttachFiles({
         alert(`${file.name}: ${c.error}`);
         continue;
       }
-      next.push({ file, kind: kinds[0]! });
+      next.push({ file, kind: kinds[0]!, ...(lineChoices ? { lineIds: defaultLineIds } : {}) });
     }
     onChange(next);
     if (input.current) input.current.value = "";
@@ -92,7 +98,8 @@ export function AttachFiles({
       {files.length > 0 && (
         <ul className="flex flex-col gap-1" aria-label="Files to attach">
           {files.map((f, i) => (
-            <li key={`${f.file.name}-${i}`} className="flex items-center gap-2 rounded-md border border-border px-2 py-1">
+            <li key={`${f.file.name}-${i}`} className="flex flex-col gap-1 rounded-md border border-border px-2 py-1">
+              <div className="flex items-center gap-2">
               <FileText className="size-3.5 shrink-0 text-ink-3" />
               <span className="min-w-0 flex-1 truncate text-xs">{f.file.name} <span className="text-ink-3">· {fmtSize(f.file.size)}</span></span>
               {kinds.length > 1 && (
@@ -108,12 +115,40 @@ export function AttachFiles({
               <button type="button" aria-label={`Remove ${f.file.name}`} onClick={() => onChange(files.filter((_, j) => j !== i))} className="rounded p-0.5 text-ink-3 hover:text-ink cursor-pointer">
                 <X className="size-3.5" />
               </button>
+              </div>
+              {lineChoices && (f.kind === "SUPPLIER_QUOTE" || f.kind === "OEM_QUOTE") && (
+                <LineToggles
+                  name={f.file.name} choices={lineChoices} selected={f.lineIds ?? []}
+                  onChange={(ids) => onChange(files.map((x, j) => (j === i ? { ...x, lineIds: ids } : x)))}
+                />
+              )}
             </li>
           ))}
         </ul>
       )}
       {files.length === 0 && onFile.length === 0 && hint && <p className="text-xs text-[var(--t-amber)]">{hint}</p>}
       {files.length === 0 && <p className="text-[11px] text-ink-3">PDF, Office, images, email or zip, up to {fmtSize(MAX_DOCUMENT_BYTES)} each</p>}
+    </div>
+  );
+}
+
+/** "Covers lines 1 2 3": which line items a supplier quote covers; one quote can cover several */
+export function LineToggles({ name, choices, selected, onChange }: { name: string; choices: { id: string; lineNo: number }[]; selected: string[]; onChange: (ids: string[]) => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 pl-5 text-[11px] text-ink-3">
+      Covers line
+      {choices.map((c) => {
+        const on = selected.includes(c.id);
+        return (
+          <button
+            key={c.id} type="button" aria-pressed={on} aria-label={`${name} covers line ${c.lineNo}`}
+            onClick={() => onChange(on ? selected.filter((x) => x !== c.id) : [...selected, c.id])}
+            className={on ? "rounded border border-primary bg-primary-soft px-1.5 font-medium text-ink cursor-pointer" : "rounded border border-border px-1.5 hover:border-border-strong cursor-pointer"}
+          >
+            {c.lineNo}
+          </button>
+        );
+      })}
     </div>
   );
 }

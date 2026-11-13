@@ -29,16 +29,17 @@ describe("cost source", () => {
     expect(costHeading(["PURCHASE", "RATE_CARD"])).toBe("Purchase price / internal cost");
   });
 
-  it("internal costing is only for own brand; any own-brand line may go via purchase (subcontracting)", () => {
+  it("internal costing is only for own brand; own-brand lines off the rate card may go via purchase (subcontracting)", () => {
     expect(allowedCostSources(thirdParty)).toEqual(["PURCHASE"]);
-    expect(allowedCostSources(rateCarded)).toEqual(["RATE_CARD", "PRESALES", "PURCHASE"]);
+    expect(allowedCostSources(rateCarded)).toEqual(["RATE_CARD"]); // the rate card is fixed
     expect(allowedCostSources(ownCustom)).toEqual(["PRESALES", "PURCHASE"]);
   });
 
   it("a source the line cannot use falls back to its default", () => {
     expect(resolveCostSource("PRESALES", thirdParty)).toBe("PURCHASE");
     expect(resolveCostSource("RATE_CARD", ownCustom)).toBe("PRESALES");
-    expect(resolveCostSource("PURCHASE", rateCarded)).toBe("PURCHASE");
+    expect(resolveCostSource("PURCHASE", rateCarded)).toBe("RATE_CARD");
+    expect(resolveCostSource("PRESALES", rateCarded)).toBe("RATE_CARD");
     expect(resolveCostSource(undefined, rateCarded)).toBe("RATE_CARD");
   });
 });

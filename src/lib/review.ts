@@ -5,7 +5,7 @@ import { STAGE_META, FORECAST_LABEL, HEALTH_LABEL, THRESHOLDS, type StageKey, ty
 import { inr, fmtDate } from "./format";
 
 const DAY = 86_400_000;
-export const ACTIVE: StageKey[] = ["IDENTIFIED", "QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
+export const ACTIVE: StageKey[] = ["QUALIFIED", "BOQ", "PRICING", "PROPOSAL", "NEGOTIATION"];
 const FC_RANK: Record<string, number> = { OMITTED: 0, PIPELINE: 1, UPSIDE: 2, COMMIT: 3 };
 
 // ───────────── Windows and baselines ─────────────

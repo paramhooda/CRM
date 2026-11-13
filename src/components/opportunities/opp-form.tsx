@@ -137,14 +137,14 @@ export function OppForm({
     if (!needsBidDate(v.procurementMode)) fd.set("submissionDueDate", "");
     if (!regOems.length && mode === "create") fd.set("dealRegStatus", "NOT_REQUIRED");
     if (mode === "create") {
-      fd.set("stage", "IDENTIFIED");
+      fd.set("stage", "QUALIFIED");
       fd.set("forecastCategory", "PIPELINE");
       // Lines left completely empty are ignored; the rest must say what is sold. The value may be left for later.
       const sent = drafts.map((d, i) => ({ d, i })).filter(({ d }) => (d.kind === "product" ? !!d.productId : !!(d.buId || d.categoryId || d.oemId || d.value)));
       if (!sent.length) {
         setErrors({
           "lines.0.buId": "Choose what is being sold: a business unit, category and OEM",
-          ...(!v.accountId ? { accountId: "Select an account" } : {}),
+          ...(!v.accountId ? { accountId: "Select an account" } : !v.primaryContactId ? { primaryContactId: "Pick the customer contact" } : {}),
           ...((v.name ?? "").trim().length < 3 ? { name: "Give the deal a name" } : {}),
           ...(!v.expectedCloseDate ? { expectedCloseDate: "Pick the expected close date" } : {}),
         });
@@ -154,6 +154,7 @@ export function OppForm({
       // Everything missing is shown at once: the deal's own fields and each line's
       const head: Record<string, string> = {};
       if (!v.accountId) head.accountId = "Select an account";
+      else if (!v.primaryContactId) head.primaryContactId = account?.contacts.length ? "Pick the customer contact" : "Add a contact to this account first";
       if ((v.name ?? "").trim().length < 3) head.name = "Give the deal a name";
       if (!v.expectedCloseDate) head.expectedCloseDate = "Pick the expected close date";
       else if (v.expectedCloseDate < today) head.expectedCloseDate = "Can't be in the past";
@@ -249,9 +250,12 @@ export function OppForm({
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </Select>
         </Field>
-        <Field htmlFor="primaryContactId" error={errors.primaryContactId} label="Customer contact" hint={account && !account.contacts.length ? "No contacts on this account yet" : "Needed to qualify the deal"}>
-          <Select id="primaryContactId" value={v.primaryContactId} onChange={(e) => set("primaryContactId", e.target.value)} disabled={!account}>
-            <option value="">{account ? "None yet" : "Choose the account first"}</option>
+        <Field
+          htmlFor="primaryContactId" error={errors.primaryContactId} label="Customer contact" required={mode === "create"}
+          hint={account && !account.contacts.length ? "This account has no contacts yet: add one on the account page first" : undefined}
+        >
+          <Select id="primaryContactId" value={v.primaryContactId} onChange={(e) => set("primaryContactId", e.target.value)} disabled={!account} aria-invalid={!!errors.primaryContactId}>
+            <option value="">{account ? (account.contacts.length ? "Select a contact" : "No contacts yet") : "Choose the account first"}</option>
             {account?.contacts.map((c) => <option key={c.id} value={c.id}>{c.name}{c.title ? ` · ${c.title}` : ""}</option>)}
           </Select>
         </Field>
@@ -414,7 +418,8 @@ export function OppForm({
               <Field htmlFor="nextStepDate" error={errors.nextStepDate} label="Next step date">{text("nextStepDate", { type: "date", min: today })}</Field>
             </>
           )}
-          {accountType === "EXISTING" && (
+          {/* Worked out automatically on a new deal; correctable afterwards */}
+          {mode === "edit" && accountType === "EXISTING" && (
             <Field label="Deal type" className="sm:col-span-3">
               <Segmented
                 label="Deal type"

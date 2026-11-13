@@ -86,11 +86,11 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("Cisco", { exact: false }).first()).toBeVisible();
     await expect(page.getByText("By OEM")).toBeVisible();
 
-    // One click per stage: qualify, then advancing to BOQ is the BOQ request itself
-    await expect(currentStage(page)).toHaveText("Identified");
+    // Opportunities start at Qualified; advancing to BOQ is the BOQ request itself
+    await expect(currentStage(page)).toHaveText("Qualified");
+    await expect(page.getByRole("list", { name: "Stage" }).getByText("Identified")).toHaveCount(0);
     await expect(page.getByRole("list", { name: "Stage" }).getByRole("button")).toHaveCount(0); // stages are not clickable
-    await page.getByRole("button", { name: "Advance to Qualified" }).click();
-    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+    await expect(page.getByLabel("Deal ID")).toHaveText(/^OPP-/);
     await page.getByRole("button", { name: "Advance to BOQ" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Request BOQ from presales")).toBeVisible();
@@ -140,9 +140,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Add line" }).click();
     await pickProduct(page, 2, "PRG-NOC-02");
     await page.getByLabel("Line 3 quantity").fill("1");
-    // Progression NOC is our own brand in a rate card category: its cost comes from the rate card, not from purchase
-    await expect(page.getByLabel("Line 3 cost source")).toHaveValue("RATE_CARD");
-    await expect(page.getByLabel("Line 1 cost source")).toHaveCount(0); // Cisco: purchase only
+    // Progression NOC is on the rate card: its cost is fixed, nobody types it (not even presales)
+    await expect(page.getByLabel("Line 3 unit cost")).toHaveCount(0);
+    await expect(page.getByLabel("Line 1 unit cost")).toHaveCount(0); // Cisco: purchase prices it
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await expect(page.getByLabel("Line items").getByText("Internal cost · rate card", { exact: true })).toBeVisible();
@@ -168,8 +168,10 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(dlg.getByText("Submit BOQ")).toBeVisible();
     await expect(dlg.getByText("2 of 3 lines go to purchase")).toBeVisible();
     await dlg.locator("textarea[name=solutionSummary]").fill("Cisco SD-WAN edge with Fortinet NGFW at hub, sized for 40 branches.");
+    // The BOQ is the line items (no upload), and purchase is assigned automatically
+    await expect(dlg.getByRole("link", { name: "view or print it" })).toHaveAttribute("href", `${oppUrl}/boq`);
     await dlg.getByRole("button", { name: /More options/ }).click();
-    await dlg.locator("select[name=purchaseUserId]").selectOption({ label: PURCHASE.name });
+    await expect(dlg.locator("select[name=purchaseUserId]")).toHaveCount(0);
     await dlg.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
     await expect(currentStage(page)).toHaveText("Pricing");
@@ -185,14 +187,15 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByTestId("work-queue").locator("li")).toHaveCount(1);
     await page.getByTestId("work-queue").locator("li", { hasText: dealName }).getByRole("link", { name: /Price it/ }).click();
     await page.waitForURL(/tab=boq/);
-    await page.getByRole("button", { name: "Standard costs" }).click();
+    await page.getByLabel("Line 1 unit cost").fill("230000");
+    await page.getByLabel("Line 2 unit cost").fill("850000");
     // The rate-carded Progression line is not purchase's to cost
     await expect(page.getByLabel("Line 3 unit cost")).toHaveCount(0);
     // Each supplier quotes its own validity
     await page.getByLabel("Line 2 supplier validity").fill(inDays(12));
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Unit price" })).toHaveCount(0); // no sell side
+    await expect(page.getByRole("columnheader", { name: "Sales price" })).toHaveCount(0); // no sell side
 
     // Purchase sees presales' SoW and attaches the supplier's quote; files a browser could run are refused
     await page.goto(`${oppUrl}?tab=documents`);
@@ -211,10 +214,22 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     expect(file.headers()["content-disposition"]).toMatch(/^attachment;/);
 
     await page.goto(`${oppUrl}?tab=boq`);
+    // Every priced line needs a supplier quote: the one attached covers line 1 only, so line 2 is still open
     await page.getByRole("button", { name: "Pricing complete" }).click();
-    await expect(page.getByRole("dialog").getByText("1 supplier or OEM quote attached to this request.")).toBeVisible();
-    await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
+    const done = page.getByRole("dialog");
+    await expect(done.getByLabel("Supplier quotes")).toContainText("Line 1");
+    await expect(done.getByLabel("Supplier quotes")).toContainText("Line 2");
+    await expect(done.getByLabel("Supplier quotes")).not.toContainText("Line 3"); // rate card: no quote
+    await done.getByRole("button", { name: "Ingram quote Q-7781.pdf covers line 1" }).click();
+    await done.getByRole("button", { name: "Send to sales" }).click();
+    await expect(done.getByText(/Attach the supplier quote for line 2/)).toBeVisible();
+    // One quote can cover several lines
+    await done.getByRole("button", { name: "Ingram quote Q-7781.pdf covers line 2" }).click();
+    await done.getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
+    await page.goto(`${oppUrl}?tab=documents`);
+    await expect(page.getByText(/covers lines 1, 2/)).toBeVisible();
+    await page.goto(`${oppUrl}?tab=boq`);
     // Line 1 took the dialog's date (30 days), line 2 kept the supplier's own
     await expect(page.getByText(/^Purchase price · valid till/)).toHaveCount(2);
     await expect(page.getByText(new RegExp(`valid till ${shortDate(12)}`))).toBeVisible();
@@ -232,6 +247,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     let dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Request BOQ change (revision 2)")).toBeVisible();
     await dlg.locator("textarea[name=reason]").fill("Customer wants 12 Cisco edge devices instead of 10.");
+    // Sales asks for a solution document with the revision: presales can't submit without it
+    await dlg.getByRole("button", { name: /More options/ }).click();
+    await dlg.getByRole("button", { name: "Solution document", exact: true }).click();
     await dlg.getByRole("button", { name: "Send to presales" }).click();
     await expect(page.getByText("Presales notified")).toBeVisible();
     await expect(page.getByLabel("Deal status")).toContainText("BOQ revision 2 with presales");
@@ -245,15 +263,12 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0);
     await page.getByRole("button", { name: "Edit line items" }).click();
     await page.getByLabel("Line 1 quantity").fill("12");
-    // Presales reworks the rate card for this deal: the line becomes a presales cost
-    await page.getByLabel("Line 3 unit cost").fill("4500");
-    await expect(page.getByLabel("Line 3 cost source")).toHaveValue("PRESALES");
-    await page.getByLabel("Line 3 costing note").fill("Smaller device count than the standard onboarding");
+    // The rate card line stays on the rate card
+    await expect(page.getByLabel("Line 3 unit cost")).toHaveCount(0);
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Line items saved")).toBeVisible();
     await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0); // back to the read view
     await expect(page.getByText("Needs re-pricing")).toBeVisible();
-    await expect(page.getByLabel("Line items").getByText("Internal cost · presales", { exact: true })).toBeVisible();
     await statusMenu(page, "Ask sales a question");
     dlg = page.getByRole("dialog");
     await dlg.locator("textarea[name=question]").fill("Do the two extra devices need their own licence?");
@@ -275,6 +290,10 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     dlg = page.getByRole("dialog");
     await expect(dlg.getByText("1 of 3 lines go to purchase")).toBeVisible(); // unchanged and own-brand lines keep their cost
     await dlg.locator("textarea[name=solutionSummary]").fill("Revision 2: 12 edge devices with licences.");
+    await expect(dlg.getByLabel("Required documents")).toContainText("Solution document");
+    await dlg.getByRole("button", { name: "Submit" }).click();
+    await expect(dlg.getByText(/Attach the solution document/)).toBeVisible();
+    await dlg.getByLabel("Attach documents").setInputFiles({ name: "Solution - SD-WAN r2.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 design") });
     await dlg.getByRole("button", { name: "Submit" }).click();
     await expect(page.getByText("BOQ submitted. Purchase notified.")).toBeVisible();
   });
@@ -312,40 +331,100 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("Line items saved")).toBeVisible();
     await expect(page.getByText("Needs re-pricing")).toHaveCount(0);
     await page.getByRole("button", { name: "Pricing complete" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "Send to sales" }).click();
+    dlg = page.getByRole("dialog");
+    // Only the re-priced line needs a new quote; a newly attached quote covers what is still open
+    await expect(dlg.getByLabel("Supplier quotes")).toContainText("Line 1");
+    await expect(dlg.getByLabel("Supplier quotes")).not.toContainText("Line 2");
+    await dlg.getByLabel("Add supplier quotes").setInputFiles({ name: "Ingram quote Q-7790.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 quote 2") });
+    await dlg.getByRole("button", { name: "Send to sales" }).click();
     await expect(page.getByText("Pricing sent to sales")).toBeVisible();
   });
 
-  test("sales sets the prices after purchase, the manager sends the quote, and it closes as won; lines lock for billing", async ({ page }) => {
+  test("an admin-defined approval chain signs off low-margin prices; the owner sends the quote", async ({ page }) => {
+    const rule = `E2E big low margin ${Date.now().toString().slice(-6)}`;
+    // The admin defines the rule: big deals (₹40 L or more) below 20% GM go to the owner's manager, then an admin
+    await login(page, ADMIN);
+    await page.goto("/admin?tab=approvals");
+    await page.getByRole("button", { name: "New rule" }).click();
+    let dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Rule name").fill(rule);
+    await dlg.getByLabel("GM threshold %").fill("20");
+    await dlg.getByLabel("Deal value threshold").fill("4000000");
+    await dlg.getByRole("button", { name: "Add approver" }).click();
+    await dlg.getByLabel("Approver 2").selectOption({ label: "Any Admin" });
+    await dlg.getByRole("button", { name: "Save rule" }).click();
+    await expect(page.getByText("Rule saved")).toBeVisible();
+    await expect(page.getByLabel("Approval rules")).toContainText("Deal owner's manager → Any Admin");
+
     await login(page, SALES);
     await page.goto(oppUrl);
     // A second tab opened on the same deal cannot overwrite newer prices
     const other = await page.context().newPage();
     await other.goto(oppUrl);
-    // Purchase priced it: sales sets each sales price (here one GM on every line) and hands it to the manager
     await page.getByRole("button", { name: "Advance to Proposal" }).click();
-    let dlg = page.getByRole("dialog");
-    await expect(dlg.getByRole("columnheader", { name: "Purchase price" })).toBeVisible();
+    dlg = page.getByRole("dialog");
+    await expect(dlg.getByRole("columnheader", { name: "Purchase price / internal cost" })).toBeVisible();
+    // The rate card line starts at its rate card price
+    await expect(dlg.getByLabel("Line 3 sales price")).not.toHaveValue("");
     for (const gm of await dlg.getByLabel(/^Line \d+ GM %$/).all()) await gm.fill("18");
-    await expect(dlg.getByLabel("GM summary")).toContainText("18.0%");
-    await dlg.getByRole("button", { name: /^Save and send to/ }).click();
-    await expect(page.getByText(/Prices saved/)).toBeVisible();
-    await expect(page.getByLabel("Deal status")).toContainText("Prices set · waiting for the quote");
-    // A sales person cannot send the quote, and the stale tab cannot save over the new prices
-    await expect(page.getByRole("button", { name: "Create & send quote" })).toHaveCount(0);
+    await expect(dlg.getByLabel("Approval")).toContainText("need approval");
+    await expect(dlg.getByLabel("Approval")).toContainText(rule);
+    await dlg.getByRole("button", { name: "Ask for approval" }).click();
+    await expect(page.getByText(/Approval requested/)).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("Waiting for price approval");
+    await expect(page.getByLabel("Deal status")).toContainText("owner's manager");
+    // The stale tab cannot save over the newer prices
     await other.getByRole("button", { name: "Advance to Proposal" }).click();
     for (const price of await other.getByRole("dialog").getByLabel(/^Line \d+ sales price$/).all()) await price.fill("1");
-    await other.getByRole("dialog").getByRole("button", { name: /^Save and send to/ }).click();
+    await other.getByRole("dialog").getByRole("button", { name: "Ask for approval" }).click();
     await expect(other.getByText(/The line items changed after you opened this/)).toBeVisible();
     await other.close();
 
-    // The manager sees it on their home page and sends the quote at the prices sales set
+    // Step 1: the owner's manager approves from their home page
     await login(page, HEAD);
-    await expect(page.getByRole("region", { name: "Needs your action" }).getByText(dealName).first()).toBeVisible();
+    await expect(page.getByRole("region", { name: "Needs your action" }).getByText("Approve the prices").first()).toBeVisible();
     await page.goto(oppUrl);
+    await page.getByRole("button", { name: "Review & approve prices" }).click();
+    dlg = page.getByRole("dialog");
+    await expect(dlg.getByLabel("Why approval is needed")).toContainText("GM 18.0% is below 20%");
+    await dlg.getByRole("button", { name: "Approve" }).click();
+    await expect(page.getByText("Prices approved").first()).toBeVisible();
+    await expect(page.getByLabel("Deal status")).toContainText("Step 2 of 2");
+
+    // Step 2: the admin sends it back with a reason
+    await login(page, ADMIN);
+    await page.goto(oppUrl);
+    await page.getByRole("button", { name: "Review & approve prices" }).click();
+    dlg = page.getByRole("dialog");
+    await dlg.getByRole("button", { name: "Send back" }).click();
+    await expect(dlg.getByText(/Say why/)).toBeVisible();
+    await dlg.getByLabel("Approval note").fill("Keep the Fortinet line at 19% at least");
+    await dlg.getByRole("button", { name: "Send back" }).click();
+    await expect(page.getByText("Sent back to the owner")).toBeVisible();
+
+    // The owner revises and asks again; both steps approve; the owner sends the quote
+    await login(page, SALES);
+    await page.goto(oppUrl);
+    await expect(page.getByLabel("Deal status")).toContainText("Prices not approved");
+    await page.getByLabel("Deal status").getByRole("button", { name: "Create & send quote" }).click();
+    dlg = page.getByRole("dialog");
+    for (const gm of await dlg.getByLabel(/^Line \d+ GM %$/).all()) await gm.fill("19");
+    await dlg.getByRole("button", { name: "Ask for approval" }).click();
+    await expect(page.getByText(/Approval requested/)).toBeVisible();
+    for (const who of [HEAD, ADMIN]) {
+      await login(page, who);
+      await page.goto(oppUrl);
+      await page.getByRole("button", { name: "Review & approve prices" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Approve" }).click();
+      await expect(page.getByText("Prices approved").first()).toBeVisible();
+    }
+    await login(page, SALES);
+    await expect(page.getByRole("region", { name: "Needs your action" }).getByText("Prices approved: send the quote").first()).toBeVisible();
+    await page.goto(oppUrl);
+    await expect(page.getByLabel("Deal status")).toContainText("Prices approved");
     await page.getByRole("button", { name: "Advance to Proposal" }).click();
     dlg = page.getByRole("dialog");
-    await expect(dlg.getByLabel("GM summary")).toContainText("18.0%");
+    await expect(dlg.getByLabel("Approval")).toContainText("These prices are approved");
     let popup = page.waitForEvent("popup");
     await dlg.getByRole("button", { name: "Create & send quote" }).click();
     const quote = await popup;
@@ -353,7 +432,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(quote.getByText("85176290").first()).toBeVisible(); // HSN carried onto the quote
     await quote.close();
 
-    // Customer asks for changes: the manager re-prices and sends a new version in the same table
+    // Customer asks for changes: the owner re-prices at a margin no rule catches and sends a new version directly
     await page.goto(`${oppUrl}?tab=boq`);
     await expect(currentStage(page)).toHaveText("Proposal Submitted");
     await page.getByRole("button", { name: "Record customer response" }).click();
@@ -365,8 +444,9 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByLabel("Deal status")).toContainText("Customer wants changes");
     await page.getByLabel("Deal status").getByRole("button", { name: "Send revised quote" }).click();
     dlg = page.getByRole("dialog");
-    for (const gm of await dlg.getByLabel(/^Line \d+ GM %$/).all()) await gm.fill("16");
-    await expect(dlg.getByLabel("GM summary")).toContainText("16.0%");
+    for (const gm of await dlg.getByLabel(/^Line \d+ GM %$/).all()) await gm.fill("25");
+    await expect(dlg.getByLabel("GM summary")).toContainText("25.0%");
+    await expect(dlg.getByLabel("Approval")).toHaveCount(0);
     popup = page.waitForEvent("popup");
     await dlg.getByRole("button", { name: "Send revised quote" }).click();
     await (await popup).close();
@@ -390,6 +470,13 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.goto(`${oppUrl}?tab=boq`);
     await expect(page.getByText(/Locked for billing/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Add line" })).toHaveCount(0);
+
+    // Clean up the rule so it doesn't catch later runs
+    await login(page, ADMIN);
+    await page.goto("/admin?tab=approvals");
+    page.once("dialog", (d) => d.accept());
+    await page.getByRole("button", { name: `Delete ${rule}` }).click();
+    await expect(page.getByText("Rule deleted")).toBeVisible();
   });
 
   test("line-item export carries billing columns", async ({ page }) => {
@@ -419,37 +506,28 @@ test.describe("Cost sources", () => {
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     const url = new URL(page.url()).pathname;
-    await page.getByRole("button", { name: "Advance to Qualified" }).click();
-    await expect(page.getByText("Moved to Qualified")).toBeVisible();
 
     await page.goto(`${url}?tab=boq`);
     await expect(page.getByLabel("Line items").getByText("Internal cost · rate card", { exact: true })).toBeVisible();
     await expect(page.getByLabel("Deal status")).toContainText("Priced · set the sales prices");
     // Nothing for purchase to price: the next step is the sales price against the rate card cost
     await page.getByRole("button", { name: "Advance to Proposal" }).click();
-    let dlg = page.getByRole("dialog");
+    const dlg = page.getByRole("dialog");
     await expect(dlg.getByRole("columnheader", { name: "Internal cost" })).toBeVisible();
     await dlg.getByLabel("Line 1 GM %").fill("20");
     await expect(dlg.getByLabel("GM summary")).toContainText("20.0%");
     await expect(dlg.getByLabel("GM summary")).toContainText("Monthly GM"); // a monthly hosting line
-    await dlg.getByRole("button", { name: /^Save and send to/ }).click();
-    await expect(page.getByText(/Prices saved/)).toBeVisible();
-    await login(page, HEAD);
-    await page.goto(url);
-    await page.getByRole("button", { name: "Advance to Proposal" }).click();
-    dlg = page.getByRole("dialog");
+    // No approval rule applies: the owner sends the quote
     const popup = page.waitForEvent("popup");
     await dlg.getByRole("button", { name: "Create & send quote" }).click();
     await (await popup).close();
     await expect(page.getByLabel("Deal status")).toContainText("Quote v1 with customer");
-    await login(page, SALES);
-    await page.goto(url);
     await expect(currentStage(page)).toHaveText("Proposal Submitted");
-    // Presales can still be brought in after the quote went out; the dialog says the quote stays where it is
+    // Presales can still be brought in after the quote went out: the deal goes back through BOQ to a revised quote
     await statusMenu(page, "Involve presales");
     const inv = page.getByRole("dialog");
-    await expect(inv.getByText("Quote v1 stays with the customer. Send a revised quote once presales submits the BOQ.")).toBeVisible();
-    await expect(inv.getByText(/moves .*BOQ stage/)).toHaveCount(0);
+    await expect(inv.getByText("Quote v1 stays with the customer until the revised quote replaces it.")).toBeVisible();
+    await expect(inv.getByText(/moves back to the BOQ stage/)).toBeVisible();
     await inv.getByRole("button", { name: "Cancel" }).click();
     // The customer says no: the deal says so, and the next steps are closing it or re-pricing
     await page.getByRole("button", { name: "Record customer response" }).click();
@@ -478,8 +556,6 @@ test.describe("Bringing presales into a resale deal", () => {
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     const url = new URL(page.url()).pathname;
-    await page.getByRole("button", { name: "Advance to Qualified" }).click();
-    await expect(page.getByText("Moved to Qualified")).toBeVisible();
     await expect(page.getByRole("list", { name: "Stage" })).not.toContainText("BOQ"); // resale path
     await page.getByRole("button", { name: "Advance to Pricing" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Send to purchase" }).click();
@@ -603,7 +679,7 @@ test.describe("Process guardrails", () => {
   test("a new deal cannot jump stages; hold needs a reason and resumes where it was; the edit form cannot change the stage", async ({ page }) => {
     await login(page, SALES);
     await page.goto("/opportunities/new");
-    await expect(page.locator("#stage")).toHaveCount(0); // new deals always start at Identified
+    await expect(page.locator("#stage")).toHaveCount(0); // new deals always start at Qualified
     const name = `E2E Guardrails ${Date.now().toString().slice(-6)}`;
     await page.fill("#name", name);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
@@ -619,7 +695,8 @@ test.describe("Process guardrails", () => {
     // Stages show progress only; the one button advances to the next stage. Won is not on offer this early.
     await expect(stages.getByRole("button")).toHaveCount(0);
     await expect(stages.locator("li", { hasText: "Proposal Submitted" })).toHaveAttribute("title", /when the quote is sent/);
-    await expect(page.getByRole("button", { name: "Advance to Qualified" })).toBeEnabled();
+    await expect(currentStage(page)).toHaveText("Qualified");
+    await expect(page.getByRole("button", { name: "Advance to BOQ" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Close as won" })).toHaveCount(0);
 
     // Hold asks for a reason, then the only way back is to resume to the same stage
@@ -628,10 +705,10 @@ test.describe("Process guardrails", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Put on hold" }).click();
     await expect(page.getByText("Moved to Hold")).toBeVisible();
     await expect(page.getByText("On hold: Customer budget frozen until April")).toBeVisible();
-    await expect(currentStage(page)).toHaveText("Identified");
-    await expect(page.getByRole("button", { name: "Advance to Qualified" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Resume to Identified" }).click();
-    await expect(page.getByText("Moved to Identified")).toBeVisible();
+    await expect(currentStage(page)).toHaveText("Qualified");
+    await expect(page.getByRole("button", { name: "Advance to BOQ" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Resume to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
 
     // The edit form shows the stage but cannot change it
     await page.goto(`${url}/edit`);
@@ -662,8 +739,6 @@ test.describe("Process guardrails", () => {
     await pickProduct(page, 0, "CSCO-NET-02");
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
-    await page.getByRole("button", { name: "Advance to Qualified" }).click();
-    await expect(page.getByText("Moved to Qualified")).toBeVisible();
     // Skipping is not offered before the deal reaches the stage
     await page.getByRole("list", { name: "Stage" }).locator("xpath=..").getByRole("button", { name: "More", exact: true }).click();
     await expect(page.getByRole("menuitem", { name: /Skip BOQ/ })).toHaveCount(0);
@@ -716,23 +791,28 @@ test.describe("Deal setup", () => {
     await expect(page.locator("#submissionDueDate")).toHaveCount(0);
     await page.getByRole("radio", { name: "RFP" }).click();
     await expect(page.locator("#submissionDueDate")).toBeVisible();
-    // Deal type follows the account: a new logo is always new business, so it isn't asked
+    // Deal type is worked out from the account and what it already bought: never asked on a new deal
     await page.selectOption("#accountId", { label: "SwiftMove Logistics Pvt Ltd" });
     await expect(page.getByRole("radiogroup", { name: "Deal type" })).toHaveCount(0);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
-    await expect(page.getByRole("radiogroup", { name: "Deal type" }).getByRole("radio")).toHaveText(["Upsell", "Cross-sell", "Renewal"]);
+    await expect(page.getByRole("radiogroup", { name: "Deal type" })).toHaveCount(0);
+    await expect(page.getByText("Deal type")).toHaveCount(0);
   });
 
-  test("a deal can start without a value and gets one before it is qualified; missing fields show on their line", async ({ page }) => {
+  test("a deal starts at Qualified with its contact; the value comes at pricing; missing fields show on their line", async ({ page }) => {
     await login(page, SALES);
     await page.goto("/opportunities/new");
     await page.fill("#name", `E2E No value yet ${Date.now().toString().slice(-6)}`);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    // The customer contact is required: an opportunity is qualified from the start
+    await page.selectOption("#primaryContactId", "");
     await page.getByLabel("Line 1 business unit").selectOption({ label: "Cloud" });
     await page.click("button:has-text('Create opportunity')");
-    // The line says what is missing, and the first missing field is focused
+    await expect(page.getByText("Pick the customer contact").first()).toBeVisible();
+    await expect(page.locator("#primaryContactId")).toBeFocused();
+    // The line says what is missing
     await expect(page.getByLabel("Line 1 problems")).toContainText("Choose a category");
-    await expect(page.getByLabel("Line 1 category")).toBeFocused();
+    await page.selectOption("#primaryContactId", { index: 1 });
     await page.getByLabel("Line 1 category").selectOption({ label: "Hosting" });
     await expect(page.getByLabel("Line 1 problems")).toHaveCount(0);
     await expect(page.getByLabel("Line 1 billing")).toHaveValue("RECURRING"); // hosting usually bills monthly
@@ -740,20 +820,12 @@ test.describe("Deal setup", () => {
     await expect(page.getByText("not known yet")).toBeVisible(); // no value yet, and that's fine
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
-    const url = new URL(page.url()).pathname;
-    await expect(page.getByLabel("Deal status")).toContainText("add the estimated value");
-    await expect(page.getByRole("button", { name: /Advance to Qualified \(not available: Add the estimated value/ })).toBeVisible();
-    // The value goes on the line; then the deal qualifies
-    await page.getByRole("link", { name: /Not known yet/ }).click();
-    await page.getByLabel("Line 1 unit price").fill("50000");
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(page.getByText("Line items saved")).toBeVisible();
-    await page.goto(url);
-    await page.getByRole("button", { name: "Advance to Qualified" }).click();
-    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+    await expect(currentStage(page)).toHaveText("Qualified");
+    await expect(page.getByText("Set at pricing")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Advance to BOQ" })).toBeEnabled();
   });
 
-  test("a lead converted without a value starts the deal at Identified", async ({ page }) => {
+  test("a lead converted without a value starts the deal at Qualified", async ({ page }) => {
     const company = `E2E No Value Lead ${Date.now().toString().slice(-6)}`;
     await login(page, SALES);
     await page.goto("/leads");
@@ -770,8 +842,8 @@ test.describe("Deal setup", () => {
     await dlg.locator("[name=oemId]").selectOption({ index: 1 });
     await dlg.getByRole("button", { name: "Convert" }).click();
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
-    await expect(currentStage(page)).toHaveText("Identified");
-    await expect(page.getByRole("link", { name: /Not known yet/ })).toBeVisible();
+    await expect(currentStage(page)).toHaveText("Qualified");
+    await expect(page.getByText("Set at pricing")).toBeVisible();
   });
 
   test("choosing No presales is respected everywhere, including a deal already in BOQ", async ({ page }) => {
@@ -790,8 +862,6 @@ test.describe("Deal setup", () => {
     const url = new URL(page.url()).pathname;
     await expect(page.getByLabel("Deal status")).toContainText("resale");
     await expect(page.getByRole("list", { name: "Stage" }).locator("li", { hasText: /^BOQ$/ })).toHaveCount(0);
-    await page.getByRole("button", { name: "Advance to Qualified" }).click();
-    await expect(page.getByText("Moved to Qualified")).toBeVisible();
     await expect(page.getByRole("button", { name: /Advance to Pricing/ })).toBeVisible(); // straight to pricing, no BOQ
     await expect(page.getByRole("button", { name: "Advance to BOQ" })).toHaveCount(0);
 
@@ -806,8 +876,6 @@ test.describe("Deal setup", () => {
     await page.click("button:has-text('Create opportunity')");
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     const url2 = new URL(page.url()).pathname;
-    await page.getByRole("button", { name: "Advance to Qualified" }).click();
-    await expect(page.getByText("Moved to Qualified")).toBeVisible();
     await page.getByRole("button", { name: "Advance to BOQ" }).click();
     let dlg = page.getByRole("dialog");
     await pickPresales(dlg, PRESALES.name);
