@@ -1,0 +1,287 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Every colour in the application is defined here, once, as a token. Components use the Tailwind classes that
+ * map to these tokens (bg-primary, text-muted-foreground, bg-stage-qualified…) and never a raw colour.
+ *
+ * Palette: primary indigo (harmonised with the navy wordmark in the logo), tinted sidebar and cards, semantic
+ * colours for stage and forecast pills, and one colour per business unit for tags and charts. Every pill pair
+ * meets WCAG AA at small text sizes.
+ */
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-card-tint: var(--card-tint);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-red: var(--brand-red);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
+  /* Stage pills: blues for the early stages, amber for proposal and negotiation, slate for hold,
+     green won, red lost, grey dropped */
+  --color-stage-qualified: var(--stage-qualified);
+  --color-stage-qualified-foreground: var(--stage-qualified-fg);
+  --color-stage-boq: var(--stage-boq);
+  --color-stage-boq-foreground: var(--stage-boq-fg);
+  --color-stage-proposal: var(--stage-proposal);
+  --color-stage-proposal-foreground: var(--stage-proposal-fg);
+  --color-stage-negotiation: var(--stage-negotiation);
+  --color-stage-negotiation-foreground: var(--stage-negotiation-fg);
+  --color-stage-hold: var(--stage-hold);
+  --color-stage-hold-foreground: var(--stage-hold-fg);
+  --color-stage-won: var(--stage-won);
+  --color-stage-won-foreground: var(--stage-won-fg);
+  --color-stage-lost: var(--stage-lost);
+  --color-stage-lost-foreground: var(--stage-lost-fg);
+  --color-stage-dropped: var(--stage-dropped);
+  --color-stage-dropped-foreground: var(--stage-dropped-fg);
+
+  /* Forecast pills */
+  --color-forecast-commit: var(--forecast-commit);
+  --color-forecast-commit-foreground: var(--forecast-commit-fg);
+  --color-forecast-upside: var(--forecast-upside);
+  --color-forecast-upside-foreground: var(--forecast-upside-fg);
+  --color-forecast-pipeline: var(--forecast-pipeline);
+  --color-forecast-pipeline-foreground: var(--forecast-pipeline-fg);
+
+  /* One colour per business unit: solid for charts, tinted pair for tags */
+  --color-bu-iti: var(--bu-iti);
+  --color-bu-iti-soft: var(--bu-iti-soft);
+  --color-bu-iti-foreground: var(--bu-iti-fg);
+  --color-bu-cloud: var(--bu-cloud);
+  --color-bu-cloud-soft: var(--bu-cloud-soft);
+  --color-bu-cloud-foreground: var(--bu-cloud-fg);
+  --color-bu-services: var(--bu-services);
+  --color-bu-services-soft: var(--bu-services-soft);
+  --color-bu-services-foreground: var(--bu-services-fg);
+  --color-bu-cyber: var(--bu-cyber);
+  --color-bu-cyber-soft: var(--bu-cyber-soft);
+  --color-bu-cyber-foreground: var(--bu-cyber-fg);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --radius: 0.625rem;
+
+  --background: #ffffff;
+  --foreground: #1c1b2e;
+  --card: #ffffff;
+  --card-foreground: #1c1b2e;
+  --card-tint: #f4f4fd;
+  --popover: #ffffff;
+  --popover-foreground: #1c1b2e;
+  --primary: #5b5bd6;
+  --primary-foreground: #ffffff;
+  --secondary: #ececfa;
+  --secondary-foreground: #292345;
+  --muted: #f3f3f9;
+  --muted-foreground: #5f5e7a;
+  --accent: #e9e9fb;
+  --accent-foreground: #292345;
+  --destructive: #d7262c;
+  --destructive-foreground: #ffffff;
+  --success: #15803d;
+  --success-foreground: #ffffff;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+  --border: #e3e3ef;
+  --input: #d9d9e8;
+  --ring: #5b5bd6;
+  --brand-navy: #292345;
+  --brand-red: #ee3137;
+
+  --chart-1: #4f46e5;
+  --chart-2: #0d9488;
+  --chart-3: #d97706;
+  --chart-4: #e11d48;
+  --chart-5: #64748b;
+
+  --sidebar: #eeeefb;
+  --sidebar-foreground: #292345;
+  --sidebar-primary: #5b5bd6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e1e1f7;
+  --sidebar-accent-foreground: #292345;
+  --sidebar-border: #dcdcf0;
+  --sidebar-ring: #5b5bd6;
+
+  --stage-qualified: #e0e7ff;
+  --stage-qualified-fg: #3730a3;
+  --stage-boq: #dbeafe;
+  --stage-boq-fg: #1e40af;
+  --stage-proposal: #fef3c7;
+  --stage-proposal-fg: #92400e;
+  --stage-negotiation: #fde68a;
+  --stage-negotiation-fg: #78350f;
+  --stage-hold: #e2e8f0;
+  --stage-hold-fg: #334155;
+  --stage-won: #dcfce7;
+  --stage-won-fg: #166534;
+  --stage-lost: #fee2e2;
+  --stage-lost-fg: #991b1b;
+  --stage-dropped: #e5e7eb;
+  --stage-dropped-fg: #374151;
+
+  --forecast-commit: #dcfce7;
+  --forecast-commit-fg: #166534;
+  --forecast-upside: #fef3c7;
+  --forecast-upside-fg: #92400e;
+  --forecast-pipeline: #dbeafe;
+  --forecast-pipeline-fg: #1e40af;
+
+  --bu-iti: #4f46e5;
+  --bu-iti-soft: #e0e7ff;
+  --bu-iti-fg: #3730a3;
+  --bu-cloud: #0d9488;
+  --bu-cloud-soft: #ccfbf1;
+  --bu-cloud-fg: #115e59;
+  --bu-services: #d97706;
+  --bu-services-soft: #ffedd5;
+  --bu-services-fg: #9a3412;
+  --bu-cyber: #e11d48;
+  --bu-cyber-soft: #ffe4e6;
+  --bu-cyber-fg: #9f1239;
+}
+
+.dark {
+  --background: #0f1020;
+  --foreground: #ececf4;
+  --card: #171830;
+  --card-foreground: #ececf4;
+  --card-tint: #1b1c36;
+  --popover: #171830;
+  --popover-foreground: #ececf4;
+  --primary: #8585ee;
+  --primary-foreground: #0f1020;
+  --secondary: #26274a;
+  --secondary-foreground: #ececf4;
+  --muted: #22233f;
+  --muted-foreground: #a5a4c2;
+  --accent: #2a2b52;
+  --accent-foreground: #ececf4;
+  --destructive: #f26b6e;
+  --destructive-foreground: #0f1020;
+  --success: #4ade80;
+  --success-foreground: #0f1020;
+  --warning: #fbbf24;
+  --warning-foreground: #0f1020;
+  --border: #2b2c4c;
+  --input: #34355c;
+  --ring: #8585ee;
+
+  --chart-1: #818cf8;
+  --chart-2: #2dd4bf;
+  --chart-3: #fbbf24;
+  --chart-4: #fb7185;
+  --chart-5: #94a3b8;
+
+  --sidebar: #131430;
+  --sidebar-foreground: #d9d9f0;
+  --sidebar-primary: #8585ee;
+  --sidebar-primary-foreground: #0f1020;
+  --sidebar-accent: #22234a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #2b2c4c;
+  --sidebar-ring: #8585ee;
+
+  --stage-qualified: #312e81;
+  --stage-qualified-fg: #c7d2fe;
+  --stage-boq: #1e3a8a;
+  --stage-boq-fg: #bfdbfe;
+  --stage-proposal: #78350f;
+  --stage-proposal-fg: #fde68a;
+  --stage-negotiation: #92400e;
+  --stage-negotiation-fg: #fef3c7;
+  --stage-hold: #334155;
+  --stage-hold-fg: #e2e8f0;
+  --stage-won: #14532d;
+  --stage-won-fg: #bbf7d0;
+  --stage-lost: #7f1d1d;
+  --stage-lost-fg: #fecaca;
+  --stage-dropped: #374151;
+  --stage-dropped-fg: #e5e7eb;
+
+  --forecast-commit: #14532d;
+  --forecast-commit-fg: #bbf7d0;
+  --forecast-upside: #78350f;
+  --forecast-upside-fg: #fde68a;
+  --forecast-pipeline: #1e3a8a;
+  --forecast-pipeline-fg: #bfdbfe;
+
+  --bu-iti: #818cf8;
+  --bu-iti-soft: #312e81;
+  --bu-iti-fg: #c7d2fe;
+  --bu-cloud: #2dd4bf;
+  --bu-cloud-soft: #134e4a;
+  --bu-cloud-fg: #99f6e4;
+  --bu-services: #fbbf24;
+  --bu-services-soft: #7c2d12;
+  --bu-services-fg: #fed7aa;
+  --bu-cyber: #fb7185;
+  --bu-cyber-soft: #881337;
+  --bu-cyber-fg: #fecdd3;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  html {
+    @apply font-sans;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
