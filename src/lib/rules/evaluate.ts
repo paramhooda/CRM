@@ -109,11 +109,12 @@ export function evaluateOpportunity(o: RuleInput, now: Date = new Date()): RuleR
 
   // Workflow SLAs
   if (order >= STAGE_ORDER.BOQ && !isHold && !o.presalesOwnerId) flags.add("NO_PRESALES");
-  if (o.openPricingDueDate && days(o.openPricingDueDate, now) > 0) {
+  // A held deal's requests are paused, not late
+  if (!isHold && o.openPricingDueDate && days(o.openPricingDueDate, now) > 0) {
     flags.add("PRICING_PENDING");
     score -= 5;
   }
-  if (o.openPresalesDueDate && days(o.openPresalesDueDate, now) > 0) {
+  if (!isHold && o.openPresalesDueDate && days(o.openPresalesDueDate, now) > 0) {
     flags.add("PRESALES_OVERDUE");
     score -= 5;
   }

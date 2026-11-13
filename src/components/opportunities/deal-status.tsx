@@ -173,7 +173,10 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
   const isSales = d.perms.requestPresales;
   const isPresales = !!openPs && (openPs.assignedTo.id === d.viewer.id || admin);
   const isPurchase = !!openPq && (openPq.assignedTo.id === d.viewer.id || admin);
-  const revision = lastPs
+  const onHold = o.stage === "HOLD";
+  const boqSubmitted = o.presalesRequests.some((r) => r.status === "BOQ_SUBMITTED");
+  // Revisions follow a submitted BOQ; a BOQ request cancelled before any BOQ is simply asked for again
+  const revision = lastPs && boqSubmitted
     ? {
         number: Math.max(...o.presalesRequests.map((r) => r.revision)) + 1,
         assigneeId: o.presalesOwner?.id ?? lastPs.assignedTo.id,
@@ -181,13 +184,20 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
         note: quote?.status === "CHANGES_REQUESTED" ? quote.responseNote : null,
       }
     : undefined;
-  const boqChange = (): DealAction => ({ id: "rev", kind: "pullPresales", label: "Request BOQ change", oppId: o.id, presales: options.presales, revision });
+  // Documents already on the deal, by kind, so dialogs show them instead of asking for them again
+  const docs = (kinds: string[]) => d.documents.filter((x) => kinds.includes(x.kind)).map((x) => ({ id: x.id, fileName: x.fileName, kind: x.kind }));
+  const customerDocs = docs(["CUSTOMER_RFP", "SOW"]);
+  const tender = o.procurementMode === "RFP" || o.procurementMode === "TENDER";
+  const rfpHint = tender && !customerDocs.some((x) => x.kind === "CUSTOMER_RFP") ? "This is an RFP/tender deal and no RFP is on file. Attach it so presales designs to it." : null;
+  const canAdd = d.perms.addDocument ? (d.documentKinds as string[]) : [];
+  const presalesAsk = { oppId: o.id, presales: options.presales, docs: customerDocs, docHint: rfpHint, canAdd };
+  const boqChange = (): DealAction => ({ id: "rev", kind: "pullPresales", label: "Request BOQ change", ...presalesAsk, revision });
   // A resale deal can bring presales in at any point before it closes; the dialog says what that changes
-  const qualified = o.stage !== "IDENTIFIED" && o.stage !== "HOLD";
+  const qualified = o.stage !== "IDENTIFIED" && !onHold;
   const liveQuote = quote && ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"].includes(quote.status) ? quote : null;
   const involve = (): DealAction => ({
-    id: "involve", kind: "pullPresales", label: "Involve presales", oppId: o.id, presales: options.presales,
-    revision: revision && { ...revision, note: null },
+    id: "involve", kind: "pullPresales", label: "Involve presales", ...presalesAsk,
+    revision: lastPs ? { number: Math.max(...o.presalesRequests.map((r) => r.revision)) + 1, assigneeId: o.presalesOwner?.id ?? lastPs.assignedTo.id, scope: lastPs.scope, note: null } : undefined,
     involve: [
       "It becomes a solution deal: presales owns the BOQ from here, and BOQ is added to the stage path.",
       ...(realLines.length ? [`Presales starts from your ${realLines.length} line item${realLines.length > 1 ? "s" : ""}. Only the lines they change go back to purchase.`] : []),
@@ -198,63 +208,91 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
   });
   const pricing = (label: string, toPrice: number, primary = false): DealAction => ({
     id: `price-${toPrice}`, kind: "requestPricing", label, primary, oppId: o.id, purchase: options.purchase, toPrice,
-    first: !o.pricingRequests.some((r) => r.status !== "CANCELLED"), expired: w.expiredCost,
+    first: !o.pricingRequests.some((r) => r.status !== "CANCELLED"), expired: w.expiredCost, docs: docs(["BOQ_SHEET", "OEM_QUOTE"]), canAdd,
   });
+  // A quote can't promise prices for longer than the earliest supplier validity behind it
+  const supplierUntil = purchaseLines.map((l) => (l.costValidTill ? new Date(l.costValidTill) : null)).filter((x): x is Date => !!x);
+  const maxValidTill = supplierUntil.length ? new Date(Math.min(...supplierUntil.map((x) => x.getTime()))) : null;
   const quoteAction = (primary: boolean): DealAction => ({
     id: "quote", kind: "quote", primary, oppId: o.id, version: (quote?.version ?? 0) + 1,
     label: quote ? "Send revised quote" : "Create & send quote",
-    disabledReason: w.blockers.find((b) => !b.startsWith("Quote v")),
+    disabledReason: w.blockers.find((b) => !b.startsWith("Quote v") && !b.startsWith("The lines changed") && !b.startsWith("The deal is on hold")),
     lines: realLines.map((l) => ({ cost: l.unitCost ?? 0, price: l.unitPrice, mult: lineMultiplier(l) })),
+    maxValidTill,
   });
+  // Documents count when linked to the request or added to the deal while it was open, whoever added them
+  const addedFor = (r: { id: string; createdAt: Date }, link: "presalesRequest" | "pricingRequest", kinds: string[]) =>
+    d.documents.filter((doc) => kinds.includes(doc.kind) && (doc[link]?.id === r.id || doc.createdAt >= r.createdAt));
+  const now = new Date();
+  const dueChange = (kind: "presales" | "pricing", r: { id: string; dueDate: Date; requestedBy: { id: string }; assignedTo: { id: string } }): DealAction | null =>
+    isSales || r.assignedTo.id === d.viewer.id || r.requestedBy.id === d.viewer.id || d.viewer.isManager
+      ? { id: `due-${kind}`, kind: "dueDate", label: "Change due date", reqKind: kind, requestId: r.id, due: r.dueDate }
+      : null;
 
   if (!closed) {
     if (openPs) {
       if (openPs.status === "NEEDS_INFO" && isSales)
         actions.push({ id: "answer", kind: "answer", label: "Answer presales", primary: true, requestId: openPs.id, question: openPs.infoQuestion ?? "", askedBy: openPs.assignedTo.name });
       if (isPresales) {
+        const have = addedFor(openPs, "presalesRequest", DOC_DELIVERABLES).map((x) => x.kind as string);
         actions.push({
           id: "submit", kind: "submitBoq", label: "Submit BOQ", primary: openPs.status !== "NEEDS_INFO" || !isSales, requestId: openPs.id, purchase: options.purchase,
+          oppId: o.id, docs: docs(["SOLUTION_DOC", "BOQ_SHEET", "PRESENTATION", "SITE_SURVEY"]), canAdd,
           lineCount: d.lines.length, toPrice: w.needsCost, asked: openPs.deliverables.map((k) => DELIVERABLE_LABEL[k] ?? k),
-          // Deliverables that are documents, asked for on this request but not attached to it
-          missingDocs: openPs.deliverables
-            .filter((k) => DOC_DELIVERABLES.includes(k) && !d.documents.some((doc) => doc.kind === k && doc.presalesRequest?.id === openPs.id))
-            .map((k) => DELIVERABLE_LABEL[k] ?? k),
+          // Deliverables that are documents, asked for on this request and not attached yet
+          missingDocs: openPs.deliverables.filter((k) => DOC_DELIVERABLES.includes(k) && !have.includes(k)).map((k) => DELIVERABLE_LABEL[k] ?? k),
           disabledReason: w.needsInternalCost
             ? `Enter the cost of ${w.needsInternalCost} own-brand line${w.needsInternalCost > 1 ? "s" : ""} in Line items, or mark ${w.needsInternalCost > 1 ? "them" : "it"} Source via purchase`
             : undefined,
         });
         if (openPs.status !== "NEEDS_INFO") actions.push({ id: "ask", kind: "askSales", label: "Ask sales a question", requestId: openPs.id });
       }
-      if (isPresales || isSales) actions.push({ id: "re-ps", kind: "reassign", label: "Reassign presales", reqKind: "presales", requestId: openPs.id, people: options.presales, currentId: openPs.assignedTo.id });
+      if (isPresales || isSales)
+        actions.push({ id: "re-ps", kind: "reassign", label: "Reassign presales", reqKind: "presales", requestId: openPs.id, people: options.presales, currentId: openPs.assignedTo.id, due: openPs.dueDate, overdue: openPs.dueDate < now });
+      const due = dueChange("presales", openPs);
+      if (due) actions.push(due);
       if (isSales) actions.push({ id: "x-ps", kind: "cancel", label: "Cancel BOQ request", reqKind: "presales", requestId: openPs.id });
     } else if (openPq) {
       if (isPurchase) {
         const missing = purchaseLines.filter((l) => l.unitCost === null).length;
-        const quotesAttached = d.documents.filter((doc) => (doc.kind === "SUPPLIER_QUOTE" || doc.kind === "OEM_QUOTE") && doc.pricingRequest?.id === openPq.id).length;
-        actions.push({ id: "done", kind: "completePricing", label: "Pricing complete", primary: true, requestId: openPq.id, quotesAttached, disabledReason: missing ? `Enter a unit cost on ${missing} more line${missing > 1 ? "s" : ""} in Line items` : undefined });
+        const stale = purchaseLines.filter((l) => l.costStale).length;
+        const quotesAttached = addedFor(openPq, "pricingRequest", ["SUPPLIER_QUOTE", "OEM_QUOTE"]).length;
+        actions.push({
+          id: "done", kind: "completePricing", label: "Pricing complete", primary: true, requestId: openPq.id, oppId: o.id, quotesAttached, canAdd,
+          disabledReason: missing ? `Enter a unit cost on ${missing} more line${missing > 1 ? "s" : ""} in Line items`
+            : stale ? `${stale} line${stale > 1 ? "s" : ""} changed after costing: enter the new cost or tick "Price unchanged" in Line items` : undefined,
+        });
         actions.push({ id: "back", kind: "sendBack", label: o.presalesOwner ? "Send back to presales" : "Send back to sales", requestId: openPq.id, presalesName: o.presalesOwner?.name ?? null });
       }
       if (isSales && solution && revision) actions.push(boqChange());
       if (isSales && !solution && qualified) actions.push(involve());
-      if (isPurchase || isSales) actions.push({ id: "re-pq", kind: "reassign", label: "Reassign purchase", reqKind: "pricing", requestId: openPq.id, people: options.purchase, currentId: openPq.assignedTo.id });
+      if (isPurchase || isSales)
+        actions.push({ id: "re-pq", kind: "reassign", label: "Reassign purchase", reqKind: "pricing", requestId: openPq.id, people: options.purchase, currentId: openPq.assignedTo.id, due: openPq.dueDate, overdue: openPq.dueDate < now });
+      const due = dueChange("pricing", openPq);
+      if (due) actions.push(due);
       if (isSales) actions.push({ id: "x-pq", kind: "cancel", label: "Cancel pricing request", reqKind: "pricing", requestId: openPq.id });
     } else if (isSales || d.perms.spec) {
       const expired = w.expiredCost > 0;
-      if (solution && (w.state === "ESTIMATE" || w.state === "NEEDS_PRICING" || w.state === "NEEDS_COSTING") && !lastPs && qualified)
-        actions.push({ id: "pull", kind: "pullPresales", label: "Request BOQ from presales", primary: true, oppId: o.id, presales: options.presales });
-      if (w.state === "NEEDS_PRICING" && !needsBoq && qualified) actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
-      if (d.perms.quote && !needsBoq && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
-      if (d.perms.quote && w.state === "QUOTE_SENT" && quote) {
-        actions.push({ id: "resp", kind: "response", label: "Record customer response", primary: true, quoteId: quote.id, version: quote.version });
+      // First BOQ request, or again after the last one was cancelled before presales submitted anything
+      if (solution && !boqSubmitted && qualified && (!lastPs || lastPs.status === "CANCELLED"))
+        actions.push({ id: "pull", kind: "pullPresales", label: "Request BOQ from presales", primary: true, ...presalesAsk });
+      // Lines needing a supplier price: whatever the quote state (a customer change on a resale deal included)
+      if (w.needsCost > 0 && !needsBoq && qualified && w.state !== "ESTIMATE")
+        actions.push(pricing(o.pricingRequests.length ? "Request re-pricing" : "Request pricing", w.needsCost, true));
+      if (d.perms.quote && !needsBoq && !onHold && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED")) actions.push(quoteAction(!expired));
+      if (d.perms.quote && !onHold && w.state === "QUOTE_SENT" && quote) {
+        actions.push({ id: "resp", kind: "response", label: "Record customer response", primary: quote.validTill >= now, quoteId: quote.id, version: quote.version });
         actions.push(quoteAction(false));
       }
-      if (purchaseLines.length && w.needsCost === 0 && ["READY_TO_QUOTE", "CHANGES_REQUESTED", "QUOTE_SENT"].includes(w.state))
+      // Same quote, later date: only while the deal still matches it
+      if (d.perms.quote && quote && (w.state === "QUOTE_SENT" || w.state === "ACCEPTED") && ["SUBMITTED", "ACCEPTED"].includes(quote.status))
+        actions.push({ id: "extend", kind: "extend", label: "Extend quote validity", primary: quote.validTill < now, quoteId: quote.id, version: quote.version, validTill: quote.validTill, maxValidTill });
+      if (purchaseLines.length && w.needsCost === 0 && qualified && ["READY_TO_QUOTE", "CHANGES_REQUESTED", "QUOTE_SENT"].includes(w.state))
         actions.push(pricing("Re-validate costs", 0, expired));
-      if (isSales && solution && revision && w.state !== "ESTIMATE") actions.push(boqChange());
+      if (isSales && solution && revision && w.state !== "ESTIMATE" && qualified) actions.push(boqChange());
       if (isSales && !solution && qualified) actions.push(involve());
     }
   }
-
 
   // ── The advance step ──
   const stage = o.stage as StageKey;
@@ -264,9 +302,11 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
   const next = nextStage({ stage, presalesRequired: solution });
   const to = (s: StageKey) => `Advance to ${SHORT[s] ?? STAGE_META[s].label}`;
   if (stage === "HOLD") {
-    const m = d.moves.find((x) => x.kind === "resume");
+    // The allowed resume is the stage it was held from (the other stages report "resume first")
+    const m = d.moves.find((x) => x.kind === "resume" && x.allowed) ?? d.moves.find((x) => x.kind === "resume");
     if (m) advance = m.allowed ? { kind: "move", to: m.to, label: `Resume to ${STAGE_META[m.to].label}` } : { kind: "blocked", label: "Resume", reason: m.reason ?? "" };
-  } else if (!closed && !next) {
+  } else if (!closed && (!next || (w.state === "ACCEPTED" && byTo.get("WON")?.allowed))) {
+    // Last stage before closing, or the customer already accepted the quote: the next step is the PO
     const m = byTo.get("WON");
     if (m) advance = m.allowed ? { kind: "move", to: "WON", label: "Close as won", needs: "po" } : { kind: "blocked", label: "Close as won", reason: m.reason ?? "" };
   } else if (!closed && next) {
@@ -288,7 +328,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
             : openPs ? `Waiting for ${openPs.assignedTo.name} (presales) to submit the BOQ.`
             : openPq ? `Waiting for ${openPq.assignedTo.name} (purchase) to finish pricing.`
             : next === "BOQ" ? "The deal owner requests the BOQ from presales."
-            : next === "PRICING" && stage === "BOQ" && solution ? "Request a BOQ from presales first."
+            : next === "PRICING" && stage === "BOQ" && solution ? (boqSubmitted ? "Lines need a current cost from purchase first." : "Request a BOQ from presales first.")
             : next === "PRICING" && !realLines.length ? "No presales on this deal: pick the catalogue products on Line items, then request pricing."
             : w.state === "NEEDS_COSTING" ? "Own-brand lines need a cost from presales first."
             : next === "PRICING" ? "The deal owner requests pricing from purchase."

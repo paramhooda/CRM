@@ -16,7 +16,7 @@ import { billingPeriods, type BillingFrequencyKey } from "@/lib/boq";
 import { BILLING_FREQUENCY_LABEL, LINE_BILLING_STATUS_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
-type Line = OppDetail["lines"][number] & { _key: string; _custom?: boolean };
+type Line = OppDetail["lines"][number] & { _key: string; _custom?: boolean; _confirm?: boolean };
 /** `sales`: sees the sell side (unit price, value, margin). Presales and purchase see specification and cost only. */
 type Perms = { spec: boolean; cost: boolean; internalCost: boolean; price: boolean; viewCost: boolean; sales: boolean };
 type Opt = { id: string; name: string };
@@ -156,7 +156,7 @@ export function LineItemsEditor({
             oemId: l.oemId || null, partNumber: l.partNumber, description: l.description, isEstimate: l.isEstimate, quantity: l.quantity, unit: l.unit,
             billingFrequency: l.billingFrequency, termMonths: l.termMonths, hsnSac: l.hsnSac, gstRatePct: l.gstRatePct,
             unitCost: l.unitCost, distributor: l.distributor, oemQuoteRef: l.oemQuoteRef, leadTimeDays: l.leadTimeDays,
-            costSource: l.costSource, costValidTill: l.costValidTill, costNote: l.costNote,
+            costSource: l.costSource, costValidTill: l.costValidTill, costNote: l.costNote, confirmCost: l._confirm || undefined,
             unitPrice: l.unitPrice, notes: l.notes,
           })),
           version,
@@ -263,6 +263,13 @@ export function LineItemsEditor({
                         <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]" title="The product, quantity or term changed after purchase priced it">
                           <RefreshCw className="size-3" /> Changed · needs re-pricing
                         </span>
+                      )}
+                      {l.costStale && can.cost && l.costSource === "PURCHASE" && (
+                        // Purchase either enters the new cost, or confirms the supplier's price holds for the change
+                        <label className="inline-flex w-fit items-center gap-1.5 text-[11px] text-ink-2">
+                          <input type="checkbox" checked={!!l._confirm} onChange={(e) => set(l._key, { _confirm: e.target.checked })} className="accent-[var(--primary)]" aria-label={`Line ${i + 1} price unchanged`} />
+                          Price unchanged for the new spec
+                        </label>
                       )}
                       {l.isEstimate && (
                         <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]">

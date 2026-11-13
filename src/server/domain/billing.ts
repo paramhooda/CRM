@@ -117,13 +117,10 @@ export async function emitEvent(tx: Tx, type: string, aggregateType: string, agg
   });
 }
 
-/** Problems that block closing a deal as won. Every line must be classified, priced and carry HSN/SAC. */
-export async function billingReadinessIssues(tx: Tx, opportunityId: string): Promise<string[]> {
-  const lines = await tx.opportunityLineItem.findMany({
-    where: { opportunityId },
-    select: { lineNo: true, unitPrice: true, hsnSac: true, isEstimate: true, product: { select: { hsnSac: true } } },
-    orderBy: { lineNo: "asc" },
-  });
+export type ReadinessLine = { lineNo: number; unitPrice: unknown; hsnSac: string | null; isEstimate?: boolean; product?: { hsnSac: string | null } | null };
+
+/** Problems that block closing a deal as won (pure). Every line must be classified, priced and carry HSN/SAC. */
+export function readinessIssues(lines: ReadinessLine[]): string[] {
   if (!lines.length) return ["Add at least one line item. Won deals are billed line by line."];
   const issues: string[] = [];
   const estimates = lines.filter((l) => l.isEstimate).map((l) => l.lineNo);
@@ -133,6 +130,15 @@ export async function billingReadinessIssues(tx: Tx, opportunityId: string): Pro
   if (unpriced.length) issues.push(`Set a sell price on line ${unpriced.join(", ")}.`);
   if (noHsn.length) issues.push(`Add HSN/SAC on line ${noHsn.join(", ")} (pick a catalogue product or enter it).`);
   return issues;
+}
+
+export async function billingReadinessIssues(tx: Tx, opportunityId: string): Promise<string[]> {
+  const lines = await tx.opportunityLineItem.findMany({
+    where: { opportunityId },
+    select: { lineNo: true, unitPrice: true, hsnSac: true, isEstimate: true, product: { select: { hsnSac: true } } },
+    orderBy: { lineNo: "asc" },
+  });
+  return readinessIssues(lines);
 }
 
 /** Freeze lines as the billable record and publish opportunity.won to the outbox. */
@@ -169,7 +175,12 @@ export async function lockForBilling(
 export async function unlockForBilling(tx: Tx, opportunityId: string, opts: { now: Date; userId: string }) {
   const held = await tx.opportunityLineItem.count({ where: { opportunityId, billingStatus: { in: ["SENT", "INVOICED"] } } });
   if (held) throw new BillingLockedError("Lines on this deal are already with finance. Raise a change with finance before reopening.");
-  await tx.opportunityLineItem.updateMany({ where: { opportunityId }, data: { billingStatus: "NOT_READY", lockedAt: null } });
+  // Clear what was frozen at the win, so a re-won deal freezes the product names and billing start of the lines as
+  // they are then (HSN and GST stay: they are the line's own classification)
+  await tx.opportunityLineItem.updateMany({
+    where: { opportunityId },
+    data: { billingStatus: "NOT_READY", lockedAt: null, productCode: null, productName: null, billingStartDate: null },
+  });
   await emitEvent(tx, "opportunity.reopened", "Opportunity", opportunityId, { occurredAt: opts.now.toISOString(), actorId: opts.userId });
 }
 

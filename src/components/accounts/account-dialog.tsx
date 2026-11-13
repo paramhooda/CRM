@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
 import { saveAccount } from "@/server/actions/accounts";
-import { SEGMENT_LABEL, ACCOUNT_STATUS_LABEL } from "@/lib/constants";
+import { SEGMENT_LABEL, ACCOUNT_STATUS_LABEL, ACCOUNT_TYPE_LABEL } from "@/lib/constants";
 
 export type AccountValues = Record<string, string>;
 const INDIAN_STATES = [
@@ -52,6 +52,11 @@ export function AccountDialog({
           <Field label="Status">
             <Select name="status" defaultValue={v.status ?? "PROSPECT"}>{Object.entries(ACCOUNT_STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
           </Field>
+          {canReassign && (
+            <Field label="Customer type" hint="Existing: they have bought from us before (deals can be upsell, cross-sell or renewal)">
+              <Select name="accountType" defaultValue={v.accountType ?? "NEW_LOGO"} aria-label="Customer type">{Object.entries(ACCOUNT_TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
+            </Field>
+          )}
           <Field label="Account owner" hint={!canReassign ? "You will own this account" : undefined}>
             <Select name="ownerId" defaultValue={v.ownerId ?? owners[0]?.id} disabled={!canReassign}>{owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
             {!canReassign && <input type="hidden" name="ownerId" value={v.ownerId ?? owners[0]?.id} />}

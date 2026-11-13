@@ -39,7 +39,7 @@ export const PICKLISTS: Record<string, string[]> = {
   ],
   LOSS_REASON: [
     "Price", "Lost to competitor", "Budget cut / frozen", "No decision", "Project deferred", "Technical fit",
-    "OEM preferred another partner", "Relationship", "Disqualified",
+    "OEM preferred another partner", "Relationship", "Disqualified", "Duplicate",
   ],
   COMPETITOR: ["National SI", "Regional SI", "OEM direct", "Hyperscaler direct", "Distributor-led bid", "Telco", "Incumbent MSP"],
   DISTRIBUTOR: ["Redington", "Ingram Micro", "iValue", "Savex", "Rashi Peripherals", "Arrow", "OEM direct"],

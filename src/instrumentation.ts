@@ -9,4 +9,19 @@ export async function register() {
     process.exit(1);
   }
   console.log(JSON.stringify({ time: new Date().toISOString(), level: "info", msg: "Progression CRM started", version: process.env.APP_VERSION ?? "dev", commit: process.env.GIT_SHA ?? "" }));
+
+  // Reminders, escalations and health scores run every 15 minutes even when nobody has the CRM open (overnight,
+  // weekends). ensureRulesFresh claims the run atomically, so several app processes never double-send.
+  if (process.env.DISABLE_SCHEDULER !== "true") {
+    const tick = async () => {
+      try {
+        const [{ db }, { ensureRulesFresh }] = await Promise.all([import("@/lib/db"), import("@/lib/opportunity-service")]);
+        await ensureRulesFresh(db);
+      } catch (e) {
+        console.error(JSON.stringify({ time: new Date().toISOString(), level: "error", msg: "scheduled rules run failed", error: e instanceof Error ? e.message : String(e) }));
+      }
+    };
+    setTimeout(tick, 60_000).unref();
+    setInterval(tick, 15 * 60_000).unref();
+  }
 }

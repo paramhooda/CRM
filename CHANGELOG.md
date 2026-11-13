@@ -2,6 +2,72 @@
 
 Each release says what changed, what happens to existing data, and any steps needed to upgrade.
 
+## 1.2.0: lead to closure, checked end to end
+
+**Documents at every hand-over**
+- Request BOQ, Submit BOQ, Request pricing and Pricing complete each have an optional **Attach documents** section.
+  Files attached there are linked to the request.
+- The dialogs remind you of a missing RFP (RFP/tender deals) or a deliverable that sales asked for, and list what is
+  already on the deal.
+- **Close as won needs the customer's PO document**, not just the number. Purchase can now see the customer's RFP.
+
+**Won only against what the customer agreed**
+- The CRM compares the deal's lines with the quote that went out. If anything the customer would see changed, the
+  deal needs a revised quote before the customer accepts it or it is won.
+- A quote the customer asked to change, or an expired one, can't be won.
+- New **Extend quote validity** action. A quote can't be valid longer than the supplier prices behind it.
+- One PO number closes one deal. The PO date must be real (not in the future, not more than a year ago).
+- The printed quote uses each line's GST rate. Margin pricing rounds to the paisa.
+
+**Pricing that can't go stale**
+- A changed line must get a new cost from purchase, or a ticked **Price unchanged**. Saving it again doesn't
+  confirm the old cost, and Pricing complete waits for every changed line.
+- Re-pricing also sends back lapsed supplier prices. Pricing complete renews validity only for lines in that request.
+
+**Dead ends removed**
+- Request pricing appears whenever a line needs a cost, including after the customer asks for changes on a resale
+  deal.
+- A cancelled BOQ request can be raised again.
+- Once the quote is accepted, the main button is Close as won.
+- New **Change due date** action. Reassigning an overdue request asks for a new date.
+
+**Hold pauses the clock**
+- No reminders, escalations or overdue flags on held deals, and no quotes or new requests while held. Presales and
+  purchase can still finish their work.
+- Resume moves due dates out by the time on hold, restores the forecast, asks for a new close date if it passed, and
+  lands in Pricing if the BOQ was submitted meanwhile.
+
+**Leads, contacts, people**
+- Converting a lead:
+  - happens once;
+  - reuses the contact with that email;
+  - never attaches to an account you can't see;
+  - lets you pick any category and whether presales is needed.
+- Deleting a contact takes them off open deals. A contact on open deals can't be moved to another company.
+- A deal's primary contact must be at its account. A closed deal's account can't change.
+- Deactivating someone, or changing their role, while they have open work asks who takes it over, and moves it all.
+  Deactivated people get no notifications.
+- Managers can mark an account as an existing customer.
+
+**Closing and reopening**
+- Reopening clears the PO and loss reason. The forecast isn't Commit without a live quote.
+- Closing also tells the owner's manager and records every changed field in the audit log.
+- A reason from the list is required for Lost or Dropped. "Duplicate" was added.
+- Managers can correct a PO number on a won deal without reopening it.
+- Win rate is Won ÷ (Won + Lost) on every page.
+- Reminders run every 15 minutes even when nobody has the CRM open.
+
+**Data:** additive only:
+- `OpportunityLineItem.needsReprice` (default false). Lines already waiting on a new cost with an old one kept are
+  set to true, so purchase confirms them.
+- `PresalesRequest.involved` (default false).
+- A "Duplicate" drop reason.
+
+Existing quotes without recorded lines (very old or imported) keep the previous check. New quotes record GST per
+line.
+
+**Upgrade steps:** none.
+
 ## 1.1.0: production basics
 
 **Sign-in and accounts**

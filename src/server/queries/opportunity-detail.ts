@@ -1,3 +1,4 @@
+import { quoteMatchesLines, quotedLine } from "@/lib/quote";
 import "server-only";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
@@ -28,10 +29,10 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
       salesOwner: { select: { id: true, name: true, email: true } },
       presalesOwner: { select: { id: true, name: true } },
       purchaseOwner: { select: { id: true, name: true } },
-      contacts: { include: { contact: { select: { id: true, firstName: true, lastName: true, title: true, email: true, phone: true, mobile: true } } } },
-      lineItems: { orderBy: { lineNo: "asc" }, include: { oem: { select: { name: true, ownBrand: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } }, product: { select: { listPrice: true, standardCost: true } } } },
-      presalesRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true } } } },
-      pricingRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true } } } },
+      contacts: { where: { contact: { deletedAt: null } }, include: { contact: { select: { id: true, firstName: true, lastName: true, title: true, email: true, phone: true, mobile: true } } } },
+      lineItems: { orderBy: { lineNo: "asc" }, include: { oem: { select: { name: true, ownBrand: true } }, businessUnit: { select: { name: true } }, category: { select: { name: true } }, product: { select: { listPrice: true, standardCost: true, gstRatePct: true } } } },
+      presalesRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { id: true, name: true } }, assignedTo: { select: { id: true, name: true } } } },
+      pricingRequests: { orderBy: { createdAt: "desc" }, include: { requestedBy: { select: { id: true, name: true } }, assignedTo: { select: { id: true, name: true } } } },
       quotes: { orderBy: { version: "desc" } },
       activities: { orderBy: [{ occurredAt: "desc" }], take: 100, include: { owner: { select: { name: true } }, contact: { select: { firstName: true, lastName: true } } } },
       stageHistory: { orderBy: { changedAt: "asc" }, include: { changedBy: { select: { name: true } } } },
@@ -83,7 +84,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     costValidTill: l.costValidTill,
     costNote: showCost ? l.costNote : null,
     /** Costed once, but the specification changed since: the cost must be re-confirmed */
-    costStale: !l.isEstimate && l.pricingStatus === "PENDING" && l.unitCost !== null,
+    costStale: !l.isEstimate && l.pricingStatus === "PENDING" && l.unitCost !== null && (l.needsReprice || l.costSource !== "PURCHASE"),
     costExpired: costExpired(l, now),
     unitPrice: sales && l.unitPrice !== null ? toNumber(l.unitPrice) : null,
     listPrice: sales && l.product?.listPrice ? toNumber(l.product.listPrice) : null,
@@ -103,7 +104,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     })),
     presales: ps && { ...ps, assignee: ps.assignedTo.name },
     pricing: pq && { ...pq, assignee: pq.assignedTo.name },
-    quote: o.quotes[0] ?? null,
+    quote: o.quotes[0] ? { ...o.quotes[0], matchesLines: quoteMatchesLines(o.quotes[0].snapshot, o.lineItems.map(quotedLine)) ?? undefined } : null,
     now,
   });
   const openPs = o.presalesRequests.find((r) => (OPEN_PRESALES as readonly string[]).includes(r.status));
@@ -124,6 +125,7 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
   const moves = stageMoves(facts, actor);
   return {
     moves,
+    facts: { closeDatePast: facts.closeDatePast },
     path: pathFor(facts),
     canSkip: checkSkip(facts, actor).allowed,
     workflow,

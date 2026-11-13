@@ -27,7 +27,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const ci = { contains: q, mode: "insensitive" as const };
   const [leads, all, options, accounts] = await Promise.all([
     db.lead.findMany({
-      where: { AND: [leadScope(user), status ? { status: status as never } : { status: { not: "CONVERTED" } }, q ? { OR: [{ company: ci }, { firstName: ci }, { lastName: ci }, { email: ci }] } : {}] },
+      where: { AND: [leadScope(user), status ? { status: status as never } : { status: { notIn: ["CONVERTED", "UNQUALIFIED"] } }, q ? { OR: [{ company: ci }, { firstName: ci }, { lastName: ci }, { email: ci }] } : {}] },
       orderBy: { createdAt: "desc" },
       include: { owner: { select: { name: true } }, businessUnit: { select: { name: true } } },
     }),
@@ -79,7 +79,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                       <div className="flex justify-end gap-1">
                         <LeadDialog
                           id={l.id}
-                          initial={{ firstName: l.firstName, lastName: l.lastName, company: l.company, title: s(l.title), email: s(l.email), phone: s(l.phone), city: s(l.city), source: s(l.source), businessUnitId: s(l.businessUnitId), estimatedValue: l.estimatedValue ? String(toNumber(l.estimatedValue)) : "", status: l.status, ownerId: l.ownerId, requirement: s(l.requirement), disqualifyReason: s(l.disqualifyReason) }}
+                          initial={{ firstName: l.firstName, lastName: l.lastName, company: l.company, title: s(l.title), email: s(l.email), phone: s(l.phone), city: s(l.city), source: s(l.source), businessUnitId: s(l.businessUnitId), estimatedValue: l.estimatedValue ? String(toNumber(l.estimatedValue)) : "", status: l.status, ownerId: l.ownerId, ownerName: l.owner.name, requirement: s(l.requirement), disqualifyReason: s(l.disqualifyReason) }}
                           sources={options.leadSources} bus={options.bus} owners={options.sales} canReassign={isManager(user)} currentUserId={user.id}
                         />
                         {l.status !== "UNQUALIFIED" && (

@@ -91,21 +91,56 @@ These rules apply to the stage bar, the pipeline board and the edit form, and th
 | Identified → Qualified | Owner or manager | Needs a customer contact and a close date that has not passed. BOQ and pricing can only be requested once the deal is qualified. |
 | → BOQ, → Pricing, → Proposal Submitted | Nobody by hand | Set by the workflow: request a BOQ, submit the BOQ (or request pricing), send the quote. |
 | Proposal Submitted → Negotiation | Owner or manager | Needs a quote with the customer and nothing open with presales or purchase. |
-| → Won | Owner or manager | Only from Proposal Submitted or Negotiation, with a quote with the customer, nothing open with presales or purchase, and the customer PO. Lines must be priced with HSN/SAC. |
+| → Won | Owner or manager | Only from Proposal Submitted or Negotiation, with nothing open with presales or purchase. The latest quote must be with the customer or accepted (**not** one they asked to change), the deal's lines must still match it, and it must not have expired. Lines must be priced with HSN/SAC. The customer's PO number **and the PO document** are required; a PO number can close only one deal. |
 | → Lost / Dropped | Owner or manager | From any open stage, with a loss reason. |
 | Skipping a stage | Owner or manager | Only from inside the stage, with a reason. Today that is BOQ: **Skip BOQ (no presales needed)** cancels any open BOQ request, makes it a resale deal and moves it to Pricing. Nobody can jump ahead from an earlier stage. |
 | Moving back | Sales manager only | One stage at a time, as a correction with a reason. Never into BOQ or Pricing (use Request BOQ change), and not while a BOQ or pricing request is open. |
-| Hold | Owner or manager | Needs a reason. While on hold, the only moves are **Resume** (back to the stage it was held from), Lost or Dropped. |
-| Reopen a closed deal | Sales manager only | Needs a reason. Returns to the stage it was closed from. |
+| Hold | Owner or manager | Needs a reason. While on hold, the only moves are **Resume**, Lost or Dropped. See "On hold" below. |
+| Reopen a closed deal | Sales manager only | Needs a reason. Returns to the stage it was closed from. The PO, loss reason and notes are cleared (the history keeps them). If the close date has passed, a new one is asked for. |
 
 Other rules:
 - **Probability** follows the stage and is not edited by hand, so the weighted pipeline is comparable across deals.
 - **Commit** is allowed only once the quote is with the customer (Proposal Submitted or Negotiation).
 - Closed and on-hold deals are omitted from the forecast.
 - A changed close date or next-step date cannot be in the past.
-- **Closed deals are read-only.** Only a sales manager can edit them, for corrections.
+- **Closed deals are read-only.** Only a sales manager can edit them, for corrections (for example a PO number typo on a won deal). A closed deal's account can't change.
+- **Win rate** is Won ÷ (Won + Lost) on every page. Dropped deals (cancelled, duplicates) are not losses.
 - **The edit form never changes the stage.**
 - Every stage change is recorded with who made it and why (hold reason, correction reason, PO or loss reason). The reason shows in the stage journey on the History tab.
+
+## Quotes and the PO
+
+- A quote records the lines as the customer saw them (part, description, quantity, unit, term, price, GST). While the deal's lines still match, the quote stands. When anything the customer would see changes, the status says **send a revised quote**, and neither **Accepted** nor **Won** can be recorded against the old one. Cost changes don't count: they are internal.
+- A quote can't be valid longer than the earliest supplier price behind it.
+- **Extend quote validity** gives the customer more time on the same quote, as long as nothing changed and the supplier prices still hold. Otherwise purchase re-validates the costs first.
+- Sending a revised quote replaces every earlier quote, accepted ones included, so there is only ever one quote to accept.
+- Closing as won accepts the quote that went out and freezes the lines for billing. The customer's PO is attached in the same dialog (or already on the Documents tab).
+- The printed quote charges each line's own GST rate.
+
+## On hold
+
+- Putting a deal on hold tells presales and purchase. **Reminders and escalations stop**, and their work doesn't count as overdue. They can still finish and submit what they are working on.
+- Sales can't send a quote or raise a new request on a held deal.
+- **Resume** moves every open request's due date out by the time the deal was on hold, restores the forecast category the deal had, and asks for a new close date if it passed. If presales submitted the BOQ while the deal was held, it resumes in Pricing.
+
+## Leads
+
+- **Convert** works for any open lead (not one marked Unqualified), once: a second attempt is refused.
+- It reuses an existing account with the same name only if it is one you can see. Otherwise it tells you who owns it.
+- It reuses the contact when the person's email is already known at that account. An email that belongs to another company stops the conversion and says where.
+- You choose the category from any business unit and whether the deal needs presales (defaulted from the category).
+- Saving a lead whose email matches an open lead or a contact shows a warning.
+
+## People leaving or changing role
+
+Deactivating someone, or changing their role, while they still own deals, have open requests (assigned to them or raised by them), support deals as presales or purchase owner, or own open leads, needs a **Hand over to** person in the same line of work. Everything moves in one step; the successor is notified and it is on the audit log. Deactivated people get no more notifications.
+
+## Contacts on deals
+
+- A deal's primary contact must belong to the deal's account.
+- Deleting a contact removes them from the buying group of open deals and clears them as primary contact there. Closed deals keep their record.
+- A contact on open deals can't be moved to another account. Add them at the new company as a new contact.
+- Moving an open deal to another account removes the old company's people from its buying group.
 
 ## Presales and purchase see their work only
 
@@ -125,7 +160,7 @@ Each deal has a **Documents** tab. Files are stored with the deal, up to 15 MB e
 
 | Kind | Added by | Seen by |
 |---|---|---|
-| Customer RFP / requirement | Sales | Sales, presales |
+| Customer RFP / requirement | Sales | Sales, presales, purchase |
 | Customer PO | Sales | Sales |
 | Statement of work | Sales, presales | Everyone on the deal |
 | Solution document, presentation, site survey | Presales | Sales, presales |
@@ -133,8 +168,14 @@ Each deal has a **Documents** tab. Files are stored with the deal, up to 15 MB e
 | Supplier quote, OEM quote | Purchase | Everyone on the deal |
 | Other | Anyone | Sales, and whoever added it |
 
-- A document added while someone works on a request is linked to it ("BOQ revision 2", "Pricing request").
-- **Submit BOQ** points out a solution document, presentation or site survey that sales asked for but that is not attached. **Pricing complete** says how many supplier quotes are attached. Neither blocks the hand-over.
+- **Attach right in the hand-over.** Each hand-over dialog has an optional **Attach documents** section:
+  - **Request BOQ**: the customer's RFP or SoW. An RFP/tender deal with no RFP on file shows a reminder.
+  - **Submit BOQ**: the solution document, BOQ sheet, presentation or site survey. It reminds you of any deliverable sales asked for that isn't attached yet.
+  - **Request pricing**: a BOQ sheet or OEM quote.
+  - **Pricing complete**: the supplier and OEM quotes behind the costs.
+  - **Close as won**: the customer's PO. This is the one document that is **required**.
+- Documents attached in a dialog are linked to that request ("BOQ revision 2", "Pricing request"). So is a document added while someone works on a request.
+- Documents already on the deal are listed in the dialog, so nobody uploads them twice.
 - Whoever added a document can remove it while the deal is open; a sales manager can at any time. Adding and removing are on the History tab.
 
 ## What everyone sees on a deal
@@ -159,8 +200,10 @@ The full trail (every request, revision, question and send-back) is on the **His
 | Customer wants a different price | **Send revised quote** | Re-price at a new margin in the same dialog. The old quote version is superseded. |
 | A supplier price has lapsed | **Re-validate costs** | Purchase re-confirms the lines whose price lapsed (every purchase line, if none has). Quoting is blocked until then. |
 | Own-brand work is subcontracted | Set the line to **Source via purchase** | Purchase prices it with the other bought-in lines. |
-| Someone is away | **Reassign** (More) | The new owner is notified. |
-| Work no longer needed | **Cancel request** (More) | A reason is required, and the assignee is told to stop. |
+| Someone is away | **Reassign** (More) | The new owner is notified. An overdue request needs a new due date for them. |
+| A due date can't be met | **Change due date** (More) | The requester, assignee, deal owner or a manager sets a new date with a reason. The other side is told and reminders restart. |
+| The customer needs more time on a quote | **Extend quote validity** (More) | Same quote, later date, while nothing changed and supplier prices hold. |
+| Work no longer needed | **Cancel request** (More) | The deal owner or a manager, with a reason. The assignee is told to stop. Cancelling **Involve presales** before any BOQ was submitted makes the deal resale again. |
 | Deal closed or put on hold | Automatic | Anyone still working on it is told to stop or pause. |
 
 ## Safeguards
@@ -168,7 +211,10 @@ The full trail (every request, revision, question and send-back) is on the **His
 - Only one BOQ request and one pricing request can be open per deal.
 - Products and quantities are locked while purchase is pricing. While presales is working, only the assigned engineer can change them.
 - If two people edit the line items at once, the second save is rejected instead of overwriting the first.
-- A purchase line whose product, quantity or term changes after it was costed is marked **needs re-pricing**, and the deal cannot be quoted until purchase confirms it. Moving a line to or from purchase is treated the same way.
+- A purchase line whose product, quantity or term changes after it was costed is marked **needs re-pricing**, and the deal cannot be quoted until purchase deals with it: enter the new cost or validity, or tick **Price unchanged for the new spec**. Saving the line without doing either keeps it pending, and **Pricing complete** waits until every changed line is done. Moving a line to or from purchase is treated the same way.
+- Re-pricing also sends back any purchase line whose supplier price has lapsed. **Pricing complete**'s date renews only lines in that request, never a lapsed line outside it.
+- Two clicks or two people can't create the same request, quote or stage change twice.
+- Dates picked in forms mean the end of that day in India, so a request due on the 15th isn't overdue that morning.
 - Quotes need every line costed (by purchase, the rate card or presales), no estimate lines, a real OEM on every line, and no lapsed supplier price on any line.
 
 ## Automatic reminders
@@ -179,6 +225,8 @@ The full trail (every request, revision, question and send-back) is on the **His
 | A BOQ or pricing request is overdue | That person, the sales owner and their manager |
 | A presales question has gone unanswered for 2 days | The sales owner |
 | A quote expires within 3 days | The sales owner |
+
+Reminders run every 15 minutes, whether or not anyone has the CRM open, and skip deals on hold.
 
 The rules are in `src/lib/workflow.ts` (unit-tested), the actions in `src/server/actions/workflow.ts`, and the status line in `src/components/opportunities/deal-status.tsx`.
 

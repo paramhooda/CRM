@@ -71,6 +71,8 @@ export const stageChangeSchema = z.object({
   poDate: optDate,
   /** Reason for a hold, a correction or a reopen */
   note: optStr(500),
+  /** A new close date when resuming or reopening a deal whose date has passed */
+  expectedCloseDate: optDate,
 });
 
 export const accountSchema = z.object({
@@ -96,6 +98,8 @@ export const accountSchema = z.object({
   employees: optInt,
   ownerId: z.string().min(1),
   description: optStr(2000),
+  /** New logo or existing customer: managers set it for customers who bought before the CRM existed */
+  accountType: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["NEW_LOGO", "EXISTING"]).optional()),
 });
 
 export const contactSchema = z.object({

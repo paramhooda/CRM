@@ -8,7 +8,7 @@ import {
   LAST_NAMES, OEMS, PICKLISTS, PRESALES_PEOPLE, PURCHASE_PEOPLE, SALES_HEAD, SALES_PEOPLE, PRODUCT_TEMPLATES, COMPLEMENTS,
   OEM_CODE,
 } from "./seed-data";
-import { billingPeriods } from "../src/lib/boq";
+import { billingPeriods, lineMultiplier } from "../src/lib/boq";
 import { lockForBilling } from "../src/server/domain/billing";
 import { STAGE_META, type StageKey } from "../src/lib/constants";
 import { defaultForecast } from "../src/lib/rules/evaluate";
@@ -17,6 +17,7 @@ import { fiscalPeriod, quarterRange } from "../src/lib/fiscal";
 
 const db = new PrismaClient();
 import { DEMO_PASSWORD } from "../src/lib/demo";
+import { quotedLine } from "../src/lib/quote";
 
 // ── deterministic PRNG ──
 let s = 20261021;
@@ -558,13 +559,21 @@ async function main() {
           const qFy = fiscalPeriod(createdAt).fiscalYear;
           const qKey = `QT-FY${String(qFy).slice(-2)}`;
           fyCounters[qKey] = (fyCounters[qKey] ?? 0) + 1;
+          // The latest quote records the lines as quoted, so the CRM can tell when the deal changes after it
+          const latest = v === versions;
+          const live = latest && !["WON", "LOST", "DROPPED"].includes(p.stage);
+          const snapshot = latest
+            ? (await db.opportunityLineItem.findMany({ where: { opportunityId: opp.id }, orderBy: { lineNo: "asc" }, include: { product: { select: { gstRatePct: true } } } }))
+                .map((l) => ({ ...quotedLine(l), hsnSac: l.hsnSac, extended: lineMultiplier(l) * Number(l.unitPrice ?? 0) }))
+            : [];
           await db.quote.create({
             data: {
               code: `${qKey}-${String(fyCounters[qKey]).padStart(4, "0")}`, opportunityId: opp.id, version: v,
               status: v < versions ? "SUPERSEDED" : p.stage === "WON" ? "ACCEPTED" : p.stage === "LOST" ? "REJECTED" : "SUBMITTED",
               totalPrice: Math.round(price), totalCost: Math.round(amount * (1 - marginTarget)),
               marginPct: Math.round((1 - (amount * (1 - marginTarget)) / price) * 10000) / 100,
-              validTill: new Date(stageEnteredAt.getTime() + 30 * DAY), snapshot: [],
+              // Quotes with the customer are still valid (the stage history can be months old)
+              validTill: live ? daysAhead(int(8, 25)) : new Date(stageEnteredAt.getTime() + 30 * DAY), snapshot,
               terms: "Prices in INR exclusive of GST. Payment 30 days from invoice. Delivery 3-4 weeks from PO.",
               createdById: owner.id, createdAt: new Date(stageEnteredAt.getTime() - (versions - v + 1) * 4 * DAY),
               submittedAt: new Date(stageEnteredAt.getTime() - (versions - v + 1) * 4 * DAY),

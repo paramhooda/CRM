@@ -4,7 +4,8 @@ import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
+import { notify } from "@/lib/notify";
 import { requireUser } from "@/lib/auth";
 import { can } from "@/lib/authz";
 import { recordEvent, recordChanges } from "@/lib/audit";
@@ -30,10 +31,57 @@ const userSchema = z.object({
   title: z.string().max(100).optional(),
   phone: z.string().max(40).optional(),
   password: z.string().max(200).optional(),
+  /** Successor for open work when the user is deactivated or changes role */
+  handoverToId: z.string().optional(),
   active: z.preprocess((v) => v === undefined ? undefined : v === "on" || v === true || v === "true", z.boolean().optional()),
 });
 
 const INVITE_TTL_MS = 72 * 3_600_000;
+const OPEN_DEAL = { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED"] as ("WON" | "LOST" | "DROPPED")[] } };
+const OPEN_PS = { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] as ("REQUESTED" | "IN_PROGRESS" | "NEEDS_INFO")[] };
+const OPEN_PQ = { in: ["REQUESTED", "IN_PROGRESS"] as ("REQUESTED" | "IN_PROGRESS")[] };
+
+/** Open work a person holds: deals they own or support, requests with or from them, leads they own */
+async function openWorkOf(userId: string, tx: Tx = db) {
+  const [deals, supporting, presales, pricing, requested, leads] = await Promise.all([
+    tx.opportunity.count({ where: { ...OPEN_DEAL, salesOwnerId: userId } }),
+    tx.opportunity.count({ where: { ...OPEN_DEAL, OR: [{ presalesOwnerId: userId }, { purchaseOwnerId: userId }] } }),
+    tx.presalesRequest.count({ where: { assignedToId: userId, status: OPEN_PS } }),
+    tx.pricingRequest.count({ where: { assignedToId: userId, status: OPEN_PQ } }),
+    tx.presalesRequest.count({ where: { requestedById: userId, status: OPEN_PS } }).then(async (n) => n + (await tx.pricingRequest.count({ where: { requestedById: userId, status: OPEN_PQ } }))),
+    tx.lead.count({ where: { ownerId: userId, deletedAt: null, status: { notIn: ["CONVERTED", "UNQUALIFIED"] } } }),
+  ]);
+  return { deals, supporting, presales, pricing, requested, leads, total: deals + supporting + presales + pricing + requested + leads };
+}
+
+/** Who can take over someone's work: an active person in the same line of work */
+function canSucceed(from: string, to: string) {
+  const sales = ["SALES", "SALES_HEAD"];
+  return from === to || (sales.includes(from) && sales.includes(to));
+}
+
+/** Move everything open from one person to another, tell the successor, and record it. */
+async function handOver(tx: Tx, from: { id: string; name: string }, to: { id: string; name: string }, by: string) {
+  const moved = {
+    deals: (await tx.opportunity.updateMany({ where: { ...OPEN_DEAL, salesOwnerId: from.id }, data: { salesOwnerId: to.id, version: { increment: 1 } } })).count,
+    presalesDeals: (await tx.opportunity.updateMany({ where: { ...OPEN_DEAL, presalesOwnerId: from.id }, data: { presalesOwnerId: to.id } })).count,
+    purchaseDeals: (await tx.opportunity.updateMany({ where: { ...OPEN_DEAL, purchaseOwnerId: from.id }, data: { purchaseOwnerId: to.id } })).count,
+    presales: (await tx.presalesRequest.updateMany({ where: { assignedToId: from.id, status: OPEN_PS }, data: { assignedToId: to.id, remindedAt: null, escalatedAt: null } })).count,
+    pricing: (await tx.pricingRequest.updateMany({ where: { assignedToId: from.id, status: OPEN_PQ }, data: { assignedToId: to.id, remindedAt: null, escalatedAt: null } })).count,
+    requested: (await tx.presalesRequest.updateMany({ where: { requestedById: from.id, status: OPEN_PS }, data: { requestedById: to.id } })).count
+      + (await tx.pricingRequest.updateMany({ where: { requestedById: from.id, status: OPEN_PQ }, data: { requestedById: to.id } })).count,
+    leads: (await tx.lead.updateMany({ where: { ownerId: from.id, deletedAt: null, status: { notIn: ["CONVERTED", "UNQUALIFIED"] } }, data: { ownerId: to.id } })).count,
+  };
+  const parts = [
+    moved.deals && `${moved.deals} deal${moved.deals > 1 ? "s" : ""}`,
+    moved.presales + moved.pricing && `${moved.presales + moved.pricing} open request${moved.presales + moved.pricing > 1 ? "s" : ""}`,
+    moved.presalesDeals + moved.purchaseDeals && `${moved.presalesDeals + moved.purchaseDeals} deal${moved.presalesDeals + moved.purchaseDeals > 1 ? "s" : ""} they support`,
+    moved.leads && `${moved.leads} lead${moved.leads > 1 ? "s" : ""}`,
+  ].filter(Boolean).join(", ");
+  await recordEvent(tx, { entityType: "User", entityId: from.id, action: "HANDED_OVER", userId: by, newValue: `To ${to.name}: ${parts || "nothing open"}` });
+  if (parts) await notify(tx, [to.id], { type: "ASSIGNMENT", title: `${from.name}'s work handed to you`, body: `${parts} now ${parts.includes(",") ? "are" : "is"} yours. Open My work to see the requests.`, link: "/dashboard" });
+  return parts;
+}
 
 /** Email a new user a link to choose their own password (when email is set up and no password was given) */
 async function sendInvite(user: { id: string; name: string; email: string }) {
@@ -74,18 +122,32 @@ export const saveUser = safeAction("saveUser", async function saveUser(id: strin
     const before = await db.user.findUniqueOrThrow({ where: { id } });
     const active = v.active ?? before.active;
     const signOut = !!v.password || v.role !== before.role || (before.active && !active);
+    // Leaving, or moving to another job, with work still open: it must go to someone, not sit with nobody
+    const leaving = (before.active && !active) || v.role !== before.role;
+    let successor: { id: string; name: string; role: string } | null = null;
+    if (leaving) {
+      const work = await openWorkOf(id);
+      if (work.total) {
+        if (!v.handoverToId) return { ok: false, error: `${before.name} still has open work (${work.total} item${work.total > 1 ? "s" : ""}). Choose who takes it over.`, fieldErrors: { handoverToId: "Choose who takes over" } };
+        successor = await db.user.findFirst({ where: { id: v.handoverToId, active: true, NOT: { id } }, select: { id: true, name: true, role: true } });
+        if (!successor || !canSucceed(before.role, successor.role)) return { ok: false, error: `Hand over to an active ${before.role === "PRESALES" ? "presales engineer" : before.role === "PURCHASE" ? "purchase person" : "sales person"}.`, fieldErrors: { handoverToId: "Not a suitable person" } };
+      }
+    }
     const data = {
       name: v.name, email: v.email, role: v.role, title: v.title || null, phone: v.phone || null, active,
       ...(v.password ? { passwordHash: await bcrypt.hash(v.password, BCRYPT_COST), mustChangePassword: id !== admin.id, lockedUntil: null } : {}),
       ...(signOut ? { sessionVersion: { increment: 1 } } : {}),
     };
+    let handed = "";
     await db.$transaction(async (tx) => {
+      if (successor) handed = await handOver(tx, before, successor, admin.id);
       await tx.user.update({ where: { id }, data });
       await recordChanges(tx, { entityType: "User", entityId: id, before, after: { ...data, sessionVersion: undefined }, fields: ["name", "email", "role", "title", "active"], userId: admin.id });
       if (v.password) await recordEvent(tx, { entityType: "User", entityId: id, action: "PASSWORD_RESET", userId: admin.id });
     });
     revalidatePath("/admin");
-    return { ok: true, ...(signOut && id !== admin.id ? { warning: `${v.name} was signed out of all devices.` } : {}) };
+    const notes = [signOut && id !== admin.id ? `${v.name} was signed out of all devices.` : "", handed && successor ? `${handed} moved to ${successor.name}.` : ""].filter(Boolean);
+    return { ok: true, ...(notes.length ? { warning: notes.join(" ") } : {}) };
   }
   const invite = !v.password;
   if (invite && !(await emailReady())) return { ok: false, error: "Set a temporary password. (Or set up email in Settings → Email to send an invitation link instead.)", fieldErrors: { password: "Required" } };

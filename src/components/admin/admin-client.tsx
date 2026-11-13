@@ -19,8 +19,19 @@ function tempPassword() {
   return [pick(words), ...Array.from({ length: 6 }, () => pick(lower)), pick(digits), pick(digits), pick(digits), pick(words), pick(lower)].join("");
 }
 
-export function UserDialog({ id, initial, emailOn = false }: { id?: string; initial?: { name: string; email: string; role: string; title: string | null; phone: string | null; active: boolean }; emailOn?: boolean }) {
+export function UserDialog({ id, initial, emailOn = false, openWork = 0, people = [] }: {
+  id?: string; initial?: { name: string; email: string; role: string; title: string | null; phone: string | null; active: boolean }; emailOn?: boolean;
+  /** Open deals, requests and leads this person holds */
+  openWork?: number;
+  people?: { id: string; name: string; role: string }[];
+}) {
   const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(initial?.active ?? true);
+  const [role, setRole] = useState(initial?.role ?? "SALES");
+  // Leaving, or changing job, with open work: someone in the same line of work takes it over
+  const leaving = !!id && !!initial && openWork > 0 && ((initial.active && !active) || role !== initial.role);
+  const sameLine = (r: string) => r === initial?.role || (["SALES", "SALES_HEAD"].includes(r) && ["SALES", "SALES_HEAD"].includes(initial?.role ?? ""));
+  const successors = people.filter((p) => p.id !== id && sameLine(p.role));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pw, setPw] = useState("");
   const [shown, setShown] = useState(false);
@@ -39,7 +50,7 @@ export function UserDialog({ id, initial, emailOn = false }: { id?: string; init
           onSubmit={(e) => {
             e.preventDefault();
             const f = Object.fromEntries(new FormData(e.currentTarget).entries());
-            if (id && !f.active) f.active = "false";
+            f.active = active ? "true" : "false";
             run(() => saveUser(id ?? null, f), {
               success: !id && !f.password ? "Invitation sent" : "User saved",
               onOk: () => { setOpen(false); setPw(""); setShown(false); },
@@ -50,7 +61,7 @@ export function UserDialog({ id, initial, emailOn = false }: { id?: string; init
           <Field label="Full name" required error={errors.name}><Input name="name" defaultValue={initial?.name} /></Field>
           <Field label="Email" required error={errors.email}><Input name="email" type="email" defaultValue={initial?.email} /></Field>
           <Field label="Role" required>
-            <Select name="role" defaultValue={initial?.role ?? "SALES"}>{Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
+            <Select name="role" value={role} onChange={(e) => setRole(e.target.value)}>{Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
           </Field>
           <Field label="Title"><Input name="title" defaultValue={initial?.title ?? ""} /></Field>
           <Field label="Phone"><Input name="phone" defaultValue={initial?.phone ?? ""} /></Field>
@@ -65,8 +76,16 @@ export function UserDialog({ id, initial, emailOn = false }: { id?: string; init
           </Field>
           {id && (
             <label className="flex items-center gap-2 text-[13px] text-ink-2 sm:col-span-2">
-              <input type="checkbox" name="active" defaultChecked={initial?.active} className="accent-[var(--primary)]" /> Active (inactive users cannot sign in)
+              <input type="checkbox" name="active" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-[var(--primary)]" /> Active (inactive users cannot sign in)
             </label>
+          )}
+          {leaving && (
+            <Field label={`Hand over ${openWork} open item${openWork > 1 ? "s" : ""} to`} required error={errors.handoverToId} className="sm:col-span-2" hint="Their open deals, requests and leads move to this person, who is notified.">
+              <Select name="handoverToId" defaultValue="" aria-label="Hand over to">
+                <option value="" disabled>Select</option>
+                {successors.map((p) => <option key={p.id} value={p.id}>{p.name} · {ROLE_LABEL[p.role as keyof typeof ROLE_LABEL]}</option>)}
+              </Select>
+            </Field>
           )}
           <div className="flex justify-end gap-2 sm:col-span-2">
             <Button type="button" onClick={() => setOpen(false)}>Cancel</Button>

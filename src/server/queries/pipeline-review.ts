@@ -130,7 +130,8 @@ export async function getPipelineReview(user: CurrentUser, sp: SearchParams) {
     const open = mine.filter((r) => isOpen(r) && ACTIVE.includes(r.deal.stage as never));
     const sum = (xs: Row[], f: (r: Row) => number = (r) => r.deal.amount) => xs.reduce((a, r) => a + f(r), 0);
     const wonW = mine.filter((r) => r.deal.stage === "WON" && closedInWindow(r));
-    const lostW = mine.filter((r) => (r.deal.stage === "LOST" || r.deal.stage === "DROPPED") && closedInWindow(r));
+    // Won ÷ (Won + Lost), as on every page: dropped deals are not losses
+    const lostW = mine.filter((r) => r.deal.stage === "LOST" && closedInWindow(r));
     const pushed = mine.filter((r) => isOpen(r) && r.rec.pushes > 0);
     const past = open.filter((r) => r.deal.expectedCloseDate < now);
     const target = targets.filter((t) => ids.has(t.userId)).reduce((a, t) => a + toNumber(t.targetAmount), 0);

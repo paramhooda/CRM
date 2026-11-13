@@ -75,6 +75,20 @@ export function isoDate(d: Date | string | null | undefined): string {
   return date.toLocaleDateString("en-CA", { timeZone: TZ });
 }
 
+/**
+ * A date picked in a form ("15 Nov") means the whole of that day in India. Stored as 23:59:59 IST, so a request due
+ * on the 15th is not overdue at 05:30 that morning, and a quote valid till the 15th is still valid that afternoon.
+ */
+export function endOfDayIST(d: Date | string): Date {
+  const iso = typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : isoDate(d);
+  return new Date(`${iso}T23:59:59.999+05:30`);
+}
+
+/** Midnight at the start of today in India, for "not in the past" checks on picked dates */
+export function startOfTodayIST(now = new Date()): Date {
+  return new Date(`${isoDate(now)}T00:00:00.000+05:30`);
+}
+
 export function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / 86_400_000);
 }

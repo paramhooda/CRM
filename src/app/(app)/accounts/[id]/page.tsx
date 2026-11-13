@@ -91,7 +91,7 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
                   name: a.name, industry: s(a.industry), segment: a.segment, status: a.status, website: s(a.website), phone: s(a.phone),
                   gstin: s(a.gstin), pan: s(a.pan), addressLine: s(a.addressLine), city: s(a.city), state: s(a.state), pincode: s(a.pincode),
                   annualRevenueCr: a.annualRevenueCr ? String(toNumber(a.annualRevenueCr)) : "", employees: s(a.employees), ownerId: a.ownerId,
-                  description: s(a.description),
+                  description: s(a.description), accountType: a.accountType,
                 }}
               />
             )}

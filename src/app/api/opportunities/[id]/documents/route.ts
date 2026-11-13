@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { can, opportunityScope } from "@/lib/authz";
+import { can, isManager, opportunityScope } from "@/lib/authz";
 import { recordEvent } from "@/lib/audit";
 import { CLOSED_STAGES, type StageKey } from "@/lib/constants";
 import { DOCUMENT_KIND_META, checkUpload, uploadKinds, type DocumentKindKey } from "@/lib/documents";
@@ -37,10 +37,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const check = checkUpload({ name: file.name, size: file.size });
   if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
 
-  // Link it to the request this person is working on, so the request history shows what came with it
+  // Link it to a request, so the request shows what came with it: the one named in the upload (a hand-over dialog
+  // attaching the RFP to the BOQ request it just created) if this person raised it, works on it or manages; otherwise
+  // the open request this person is working on.
+  const mine = (r: { requestedById: string; assignedToId: string } | null) =>
+    !!r && (r.requestedById === user.id || r.assignedToId === user.id || isManager(user) || opp.salesOwnerId === user.id);
+  const askedPs = String(form.get("presalesRequestId") ?? "");
+  const askedPq = String(form.get("pricingRequestId") ?? "");
+  const [namedPs, namedPq] = await Promise.all([
+    askedPs ? db.presalesRequest.findFirst({ where: { id: askedPs, opportunityId: id }, select: { id: true, requestedById: true, assignedToId: true } }) : null,
+    askedPq ? db.pricingRequest.findFirst({ where: { id: askedPq, opportunityId: id }, select: { id: true, requestedById: true, assignedToId: true } }) : null,
+  ]);
+  if ((askedPs && !mine(namedPs)) || (askedPq && !mine(namedPq))) return NextResponse.json({ error: "That request isn't on this deal." }, { status: 400 });
   const [presales, pricing] = await Promise.all([
-    user.role === "PRESALES" ? db.presalesRequest.findFirst({ where: { opportunityId: id, assignedToId: user.id, status: { in: [...OPEN_PRESALES] } }, select: { id: true } }) : null,
-    user.role === "PURCHASE" ? db.pricingRequest.findFirst({ where: { opportunityId: id, assignedToId: user.id, status: { in: [...OPEN_PRICING] } }, select: { id: true } }) : null,
+    namedPs ?? (user.role === "PRESALES" ? db.presalesRequest.findFirst({ where: { opportunityId: id, assignedToId: user.id, status: { in: [...OPEN_PRESALES] } }, select: { id: true } }) : null),
+    namedPq ?? (user.role === "PURCHASE" ? db.pricingRequest.findFirst({ where: { opportunityId: id, assignedToId: user.id, status: { in: [...OPEN_PRICING] } }, select: { id: true } }) : null),
   ]);
   const content = new Uint8Array(await file.arrayBuffer());
   const doc = await db.$transaction(async (tx) => {

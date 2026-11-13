@@ -68,6 +68,10 @@ export function OppForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, start] = useTransition();
   const set = (k: string, val: string) => setV((x) => ({ ...x, [k]: val }));
+  // The owner shown is the owner saved: an admin creating a deal hands it to a sales person, never to themselves
+  const ownerValue = v.salesOwnerId && (mode === "edit" || options.sales.some((u) => u.id === v.salesOwnerId))
+    ? v.salesOwnerId
+    : options.sales.some((u) => u.id === currentUserId) ? currentUserId : options.sales[0]?.id ?? currentUserId;
   const account = accounts.find((a) => a.id === v.accountId);
   const accountType = (account?.accountType ?? v.accountType ?? "NEW_LOGO") as AccountTypeKey;
   const productById = useMemo(() => new Map(options.products.map((p) => [p.id, p])), [options.products]);
@@ -109,6 +113,7 @@ export function OppForm({
     e.preventDefault();
     const fd = new FormData();
     for (const [k, val] of Object.entries(v)) fd.set(k, val ?? "");
+    fd.set("salesOwnerId", ownerValue);
     fd.set("presalesRequired", String(presalesRequired));
     fd.set("dealType", dealTypeFor(accountType, v.dealType));
     if (!needsBidDate(v.procurementMode)) fd.set("submissionDueDate", "");
@@ -402,7 +407,8 @@ export function OppForm({
             </Field>
             {canReassign ? (
               <Field htmlFor="salesOwnerId" error={errors.salesOwnerId} label="Sales person">
-                <Select id="salesOwnerId" value={v.salesOwnerId || currentUserId} onChange={(e) => set("salesOwnerId", e.target.value)}>
+                <Select id="salesOwnerId" value={ownerValue} onChange={(e) => set("salesOwnerId", e.target.value)}>
+                  {mode === "edit" && v.salesOwnerId && !options.sales.some((u) => u.id === v.salesOwnerId) && <option value={v.salesOwnerId}>Current owner (no longer in sales)</option>}
                   {options.sales.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </Select>
               </Field>
@@ -416,7 +422,23 @@ export function OppForm({
               <Textarea id="description" value={v.description ?? ""} onChange={(e) => set("description", e.target.value)} placeholder="Customer context, pain points, how they decide" />
             </Field>
             {(stage === "LOST" || stage === "DROPPED") && (
-              <Field htmlFor="lossNotes" error={errors.lossNotes} label="Loss notes" className="sm:col-span-3">{text("lossNotes")}</Field>
+              <>
+                <Field htmlFor="lossReason" error={errors.lossReason} label="Reason">
+                  <Select id="lossReason" value={v.lossReason ?? ""} onChange={(e) => set("lossReason", e.target.value)}>
+                    {v.lossReason && !options.lossReasons.includes(v.lossReason) && <option value={v.lossReason}>{v.lossReason}</option>}
+                    {!v.lossReason && <option value="">Not recorded</option>}
+                    {options.lossReasons.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </Select>
+                </Field>
+                <Field htmlFor="lossNotes" error={errors.lossNotes} label="Loss notes" className="sm:col-span-2">{text("lossNotes")}</Field>
+              </>
+            )}
+            {stage === "WON" && (
+              // A manager correcting a typo in the PO, without reopening the deal
+              <>
+                <Field htmlFor="poNumber" error={errors.poNumber} label="Customer PO number">{text("poNumber")}</Field>
+                <Field htmlFor="poDate" error={errors.poDate} label="PO date">{text("poDate", { type: "date" })}</Field>
+              </>
             )}
           </div>
         )}

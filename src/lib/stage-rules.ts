@@ -7,7 +7,9 @@
 // - A stage can be skipped only once the deal is in it (today: BOQ, when presales turns out not to be needed).
 // - BOQ, Pricing and Proposal Submitted are entered by the workflow, never by clicking: requesting a BOQ moves the deal
 //   to BOQ, submitting it (or requesting pricing) to Pricing, sending the quote to Proposal Submitted.
-// - Won needs a quote with the customer, nothing still with presales or purchase, and the customer PO.
+// - Won needs the customer's agreement to the deal as it stands: a sent or accepted quote (not one they asked to
+//   change) that still matches the lines and hasn't expired, nothing still with presales or purchase, lines ready for
+//   billing, and the customer PO (number and file).
 // - Moving back is a correction: managers only, with a reason, and never into the workflow stages.
 // - Hold needs a reason and resumes to the stage it was held from. Reopening a closed deal is for managers only.
 import { STAGE_META, type StageKey } from "./constants";
@@ -32,6 +34,13 @@ export type StageFacts = {
   quoteStatus: string | null;
   /** Solution deal (path includes BOQ) or resale deal (path skips it) */
   presalesRequired: boolean;
+  /** The latest quote still matches the deal's lines (src/lib/quote.ts). Omitted means yes. */
+  quoteCurrent?: boolean;
+  quoteVersion?: number | null;
+  /** The latest quote's validity has passed */
+  quoteExpired?: boolean;
+  /** What stops the lines going to billing (HSN, prices…), from src/server/domain/billing.ts */
+  billingIssues?: string[];
 };
 
 /** The stages this deal goes through. A deal already in BOQ keeps BOQ on its path. */
@@ -101,6 +110,11 @@ export function checkMove(f: StageFacts, a: Actor, to: StageKey): Move {
     if (f.stage !== "PROPOSAL" && f.stage !== "NEGOTIATION") return no("close", "A deal can be won only after the quote is sent (Proposal Submitted or Negotiation).");
     if (f.openPresales || f.openPricing) return no("close", "A BOQ or pricing request is still open. Finish or cancel it first.");
     if (!f.quoteStatus || !LIVE_QUOTE.includes(f.quoteStatus)) return no("close", "Send the customer a quote before closing as won.");
+    const v = f.quoteVersion ? ` v${f.quoteVersion}` : "";
+    if (f.quoteStatus === "CHANGES_REQUESTED") return no("close", `The customer asked for changes to quote${v}. Send a revised quote first.`);
+    if (f.quoteCurrent === false) return no("close", `The lines changed after quote${v} was sent. Send a revised quote, so the PO matches what is billed.`);
+    if (f.quoteExpired) return no("close", `Quote${v} has expired. Extend its validity (or send a revised quote) before closing as won.`);
+    if (f.billingIssues?.length) return no("close", f.billingIssues[0]!);
     return yes("close", "po");
   }
 

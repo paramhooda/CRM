@@ -157,7 +157,8 @@ export async function getDashboard(user: CurrentUser, sp: SearchParams) {
       r.won += o.amount;
       r.wonN++;
     }
-    if ((o.stage === "LOST" || o.stage === "DROPPED") && inRange(o.closedAt, bookingsRange)) r.lostN++;
+    // Win rate is Won ÷ (Won + Lost) everywhere: a dropped deal (cancelled, duplicate) was not lost to anyone
+    if (o.stage === "LOST" && inRange(o.closedAt, bookingsRange)) r.lostN++;
     if (isActive(o)) {
       r.open += o.amount;
       r.weighted += (o.amount * o.probability) / 100;

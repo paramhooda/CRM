@@ -40,7 +40,11 @@ export type WorkflowInput = {
   lines: { lineNo?: number; pricingStatus: string; unitCost: number | null; unitPrice: number | null; isEstimate: boolean; costSource?: string; costValidTill?: Date | null }[];
   presales: Req | null; // latest presales request
   pricing: Req | null; // latest pricing request
-  quote: { status: string; version: number; validTill: Date; createdAt: Date } | null; // latest quote
+  /**
+   * Latest quote. `matchesLines` says whether the deal's lines still match what was quoted (src/lib/quote.ts); when it
+   * is not given, the quote counts only if no BOQ or pricing work happened after it.
+   */
+  quote: { status: string; version: number; validTill: Date; createdAt: Date; matchesLines?: boolean } | null;
   now: Date;
 };
 
@@ -91,24 +95,33 @@ export function deriveWorkflow(i: WorkflowInput): WorkflowView {
     owner = i.pricing!.assignee;
     due = i.pricing!.dueDate;
   } else {
-    // The latest quote counts only if nothing in the BOQ or pricing moved after it
+    // The latest quote counts only while the deal's lines still match what the customer was quoted
+    const live = !!i.quote && ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"].includes(i.quote.status);
     const lastWork = Math.max(
       i.presales?.submittedAt?.getTime() ?? 0,
       i.pricing?.quotedAt?.getTime() ?? 0,
       i.pricing?.returnedAt?.getTime() ?? 0,
     );
-    const quoteCurrent = !!i.quote && i.quote.createdAt.getTime() >= lastWork && ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"].includes(i.quote.status);
+    const quoteCurrent = live && (i.quote!.matchesLines ?? i.quote!.createdAt.getTime() >= lastWork);
+    const quoteExpired = !!i.quote && i.quote.validTill < i.now;
     if (quoteCurrent && i.quote!.status === "SUBMITTED") {
       state = "QUOTE_SENT";
-      if (i.quote!.validTill < i.now) blockers.push(`Quote v${i.quote!.version} expired on ${fmtDate(i.quote!.validTill)}. Re-issue it or record the customer's response.`);
+      if (quoteExpired) blockers.push(`Quote v${i.quote!.version} expired on ${fmtDate(i.quote!.validTill)}. Extend its validity or send a revised quote.`);
     } else if (quoteCurrent && i.quote!.status === "CHANGES_REQUESTED") state = "CHANGES_REQUESTED";
-    else if (quoteCurrent && i.quote!.status === "ACCEPTED") state = "ACCEPTED";
+    else if (quoteCurrent && i.quote!.status === "ACCEPTED") {
+      state = "ACCEPTED";
+      if (quoteExpired) blockers.push(`Quote v${i.quote!.version} expired on ${fmtDate(i.quote!.validTill)}. Extend its validity before closing as won.`);
+    }
     else if (!real.length) state = "ESTIMATE";
     else if (needsCost > 0) state = "NEEDS_PRICING";
     else if (internal.length) state = "NEEDS_COSTING";
     else state = "READY_TO_QUOTE";
   }
 
+  // A quote went out, but the lines changed since: the customer hasn't seen what the deal now is
+  if (i.quote && i.quote.matchesLines === false && ["SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"].includes(i.quote.status) && !["WITH_PRESALES", "WAITING_ON_SALES", "WITH_PURCHASE", "CLOSED", "ACCEPTED"].includes(state) && i.stage !== "WON")
+    blockers.push(`The lines changed after quote v${i.quote.version} was sent. Send a revised quote before the customer accepts or the deal is won.`);
+  if (i.stage === "HOLD") blockers.push("The deal is on hold: reminders are paused and no quote can be sent until it resumes.");
   if (state === "READY_TO_QUOTE" || state === "CHANGES_REQUESTED") {
     if (estimates) blockers.push(`Replace ${estimates} estimate line${estimates > 1 ? "s" : ""} with catalogue products.`);
     if (expired.length) {

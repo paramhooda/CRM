@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { ContactRole, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/auth";
-import { can, isManager, opportunityScope } from "@/lib/authz";
+import { accountScope, can, isManager, opportunityScope } from "@/lib/authz";
 import { dealFieldErrors, checkSkip } from "@/lib/stage-rules";
 import { loadStageFacts } from "@/server/domain/stage-facts";
 import { dealTypeFor, needsBidDate, suggestPresales } from "@/lib/deal-setup";
@@ -142,6 +142,15 @@ async function conflictMessage(id: string) {
   return `${who} changed this deal${when ? ` at ${when}` : ""} after you opened it. Your changes were not saved. Reload the page to see theirs, then make yours again.`;
 }
 
+/** The primary contact belongs to the deal's account, and the owner is an active sales person. */
+async function checkPeople(accountId: string, contactId: string | undefined, ownerId: string, keepOwnerId?: string): Promise<ActionResult<never> | null> {
+  if (contactId && !(await db.contact.findFirst({ where: { id: contactId, accountId, deletedAt: null }, select: { id: true } })))
+    return { ok: false, error: "The primary contact must be someone at this account.", fieldErrors: { primaryContactId: "Not at this account" } };
+  if (ownerId !== keepOwnerId && !(await db.user.findFirst({ where: { id: ownerId, active: true, role: { in: ["SALES", "SALES_HEAD"] } }, select: { id: true } })))
+    return { ok: false, error: "The deal owner must be an active sales person.", fieldErrors: { salesOwnerId: "Not an active sales user" } };
+  return null;
+}
+
 async function loadEditable(user: CurrentUser, id: string) {
   const opp = await db.opportunity.findFirst({ where: { AND: [{ id }, opportunityScope(user)] } });
   if (!opp) throw new UserError("This deal was not found, was deleted, or is not yours to change.");
@@ -170,8 +179,10 @@ export const createOpportunity = safeAction("createOpportunity", async function 
       ok: false,
       error: "Add at least one line item: a catalogue product, or a quick estimate with OEM, category and value.",
     };
-  const account = await db.account.findFirst({ where: { id: input.accountId, deletedAt: null }, select: { accountType: true } });
-  if (!account) return { ok: false, error: "Select an account.", fieldErrors: { accountId: "Select an account" } };
+  const account = await db.account.findFirst({ where: { AND: [{ id: input.accountId }, accountScope(user)] }, select: { accountType: true } });
+  if (!account) return { ok: false, error: "Select one of your accounts.", fieldErrors: { accountId: "Select an account" } };
+  const people = await checkPeople(input.accountId, input.primaryContactId, user.role === "SALES" || !input.salesOwnerId ? user.id : input.salesOwnerId);
+  if (people) return people;
   // What the person does not type: account type from the account, deal type allowed for it, revenue model and term
   // from the lines (refined by the roll-up), presales from the categories unless they chose, owner and probability.
   const productCats = await db.product.findMany({
@@ -305,17 +316,42 @@ export const updateOpportunity = safeAction("updateOpportunity", async function 
     return { ok: false, error: "You do not have permission to edit this opportunity." };
   if (CLOSED_STAGES.includes(before.stage as never) && !isManager(user))
     return { ok: false, error: "Closed deals are read-only. Ask a sales manager if something needs correcting." };
-  // The stage is never edited here: it moves through the stage bar and the workflow, under the process rules
-  const parsed = opportunitySchema.safeParse({ ...formToObject(form), stage: before.stage });
+  // The stage is never edited here: it moves through the stage bar and the workflow, under the process rules. (It is
+  // parsed as an open stage so old closed records missing a PO or reason can still be corrected.)
+  const raw = formToObject(form);
+  const closed = CLOSED_STAGES.includes(before.stage as never);
+  const parsed = opportunitySchema.safeParse({ ...raw, stage: "QUALIFIED" });
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
-  const input = parsed.data;
+  const input = { ...parsed.data, stage: before.stage as typeof parsed.data.stage };
+  if (closed) {
+    // A won deal is billed to its customer under its PO; corrections keep both
+    if (input.accountId !== before.accountId) return { ok: false, error: "A closed deal's account can't change. Reopen it first if it was recorded against the wrong customer.", fieldErrors: { accountId: "Closed deal" } };
+    if (before.stage === "WON") {
+      input.poNumber = input.poNumber?.trim() || before.poNumber || undefined;
+      input.poDate = input.poDate ?? before.poDate ?? undefined;
+      if (input.poNumber && input.poNumber !== before.poNumber) {
+        const dup = await db.opportunity.findFirst({ where: { id: { not: id }, stage: "WON", deletedAt: null, poNumber: { equals: input.poNumber, mode: "insensitive" } }, select: { code: true } });
+        if (dup) return { ok: false, error: `PO ${input.poNumber} is already recorded on ${dup.code}.`, fieldErrors: { poNumber: "Already used" } };
+      }
+    } else {
+      input.poNumber = before.poNumber ?? undefined;
+      input.poDate = before.poDate ?? undefined;
+    }
+    if (before.stage !== "WON") input.lossReason = input.lossReason || before.lossReason || undefined;
+  } else {
+    // Open deals have no PO or loss data: those are recorded when the deal closes
+    input.poNumber = undefined; input.poDate = undefined; input.lossReason = undefined; input.lossNotes = undefined;
+  }
   const fieldErrors = dealFieldErrors(before.stage as never, before, { forecastCategory: input.forecastCategory, expectedCloseDate: input.expectedCloseDate, nextStepDate: input.nextStepDate ?? null });
   if (Object.keys(fieldErrors).length) return { ok: false, error: Object.values(fieldErrors)[0]!, fieldErrors };
   const accountType =
     input.accountId === before.accountId
       ? before.accountType
-      : (await db.account.findFirst({ where: { id: input.accountId, deletedAt: null }, select: { accountType: true } }))?.accountType;
-  if (!accountType) return { ok: false, error: "Select an account.", fieldErrors: { accountId: "Select an account" } };
+      : (await db.account.findFirst({ where: { AND: [{ id: input.accountId }, accountScope(user)] }, select: { accountType: true } }))?.accountType;
+  if (!accountType) return { ok: false, error: "Select one of your accounts.", fieldErrors: { accountId: "Select an account" } };
+  const ownerId = can.reassignOpportunity(user) && input.salesOwnerId ? input.salesOwnerId : before.salesOwnerId;
+  const people = await checkPeople(input.accountId, input.primaryContactId, ownerId, before.salesOwnerId);
+  if (people) return people;
   const presalesRequired = input.presalesRequired ?? before.presalesRequired;
   // Before qualification the path is just a choice. After that, presales comes in through "Involve presales" on the
   // deal, which assigns an engineer and a due date
@@ -355,9 +391,9 @@ export const updateOpportunity = safeAction("updateOpportunity", async function 
   await db.$transaction(async (tx) => {
     const data = toData(v, derived);
     const now = new Date();
-    // Slip tracking: pushing the close date out counts as a slip.
+    // Slip tracking: pushing the close date out counts as a slip (a correction on a closed deal does not)
     let slip = before.closeDateSlipCount;
-    if (data.expectedCloseDate.getTime() - before.expectedCloseDate.getTime() > DAY) slip++;
+    if (!closed && data.expectedCloseDate.getTime() - before.expectedCloseDate.getTime() > DAY) slip++;
     const saved = await tx.opportunity.updateMany({
       where: { id, version: Number.isInteger(expected) ? expected : before.version },
       data: { ...data, closeDateSlipCount: slip, updatedById: user.id, version: { increment: 1 } },
@@ -372,6 +408,15 @@ export const updateOpportunity = safeAction("updateOpportunity", async function 
       userId: user.id,
       at: now,
     });
+    if (input.accountId !== before.accountId) {
+      // Moved to another customer: people from the old company leave the buying group
+      await tx.opportunityContact.deleteMany({ where: { opportunityId: id, contact: { accountId: { not: input.accountId } } } });
+    }
+    if (v.salesOwnerId !== before.salesOwnerId) {
+      // The new owner takes over the requests the old one raised: answers, notifications and cancel rights go with them
+      await tx.presalesRequest.updateMany({ where: { opportunityId: id, requestedById: before.salesOwnerId, status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } }, data: { requestedById: v.salesOwnerId } });
+      await tx.pricingRequest.updateMany({ where: { opportunityId: id, requestedById: before.salesOwnerId, status: { in: ["REQUESTED", "IN_PROGRESS"] } }, data: { requestedById: v.salesOwnerId } });
+    }
     if (v.primaryContactId) {
       const exists = await tx.opportunityContact.findUnique({
         where: { opportunityId_contactId: { opportunityId: id, contactId: v.primaryContactId } },
@@ -460,9 +505,21 @@ export const skipStage = safeAction("skipStage", async function skipStage(id: st
 export const deleteOpportunity = safeAction("deleteOpportunity", async function deleteOpportunity(id: string): Promise<ActionResult> {
   const user = await requireUser();
   if (!can.deleteRecords(user)) return { ok: false, error: "Only managers can delete opportunities." };
+  const opp = await loadEditable(user, id).catch(() => null);
+  if (!opp) return { ok: false, error: "Opportunity not found." };
+  // A won deal is booked and its lines are with billing: it is reopened and dropped, never deleted
+  if (opp.stage === "WON") return { ok: false, error: "A won deal can't be deleted. Reopen it and drop it (reason Duplicate) if it was entered twice." };
   await db.$transaction(async (tx) => {
-    await tx.opportunity.update({ where: { id }, data: { deletedAt: new Date(), updatedById: user.id } });
-    await recordEvent(tx, { entityType: "Opportunity", entityId: id, action: "DELETE", userId: user.id });
+    await tx.opportunity.update({ where: { id }, data: { deletedAt: new Date(), updatedById: user.id, version: { increment: 1 } } });
+    const reason = "Deal deleted";
+    const ps = await tx.presalesRequest.findMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } }, select: { assignedToId: true } });
+    const pq = await tx.pricingRequest.findMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS"] } }, select: { assignedToId: true } });
+    await tx.presalesRequest.updateMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } }, data: { status: "CANCELLED", cancelReason: reason } });
+    await tx.pricingRequest.updateMany({ where: { opportunityId: id, status: { in: ["REQUESTED", "IN_PROGRESS"] } }, data: { status: "CANCELLED", cancelReason: reason } });
+    // The lead it came from no longer points at a deal that isn't there
+    await tx.lead.updateMany({ where: { convertedOpportunityId: id }, data: { convertedOpportunityId: null } });
+    await notify(tx, [...ps, ...pq].map((r) => r.assignedToId), { type: "WORKFLOW", title: `Stop work: ${opp.name} was deleted`, body: `${user.name} deleted the deal. Your open request was cancelled.`, exclude: user.id });
+    await recordEvent(tx, { entityType: "Opportunity", entityId: id, action: "DELETE", userId: user.id, newValue: opp.code });
   });
   revalidatePath("/opportunities");
   return { ok: true };
@@ -478,10 +535,11 @@ export const setOpportunityContacts = safeAction("setOpportunityContacts", async
   const parsed = z.array(z.object({ contactId: z.string().min(1).max(40), role: z.nativeEnum(ContactRole) })).max(50).safeParse(contacts);
   if (!parsed.success) return { ok: false, error: "Check the contact roles." };
   contacts = parsed.data;
+  // Only live contacts of this deal's account can be on its buying group; anyone else (deleted, moved company) drops off
   const ids = [...new Set(contacts.map((c) => c.contactId))];
-  if (ids.length && (await db.contact.count({ where: { id: { in: ids }, accountId: opp.accountId, deletedAt: null } })) !== ids.length) {
-    return { ok: false, error: "A selected contact is not on this deal's account. Reload and try again." };
-  }
+  const valid = new Set((await db.contact.findMany({ where: { id: { in: ids }, accountId: opp.accountId, deletedAt: null }, select: { id: true } })).map((c) => c.id));
+  const seen = new Set<string>();
+  contacts = contacts.filter((c) => valid.has(c.contactId) && !seen.has(c.contactId) && !!seen.add(c.contactId));
   await db.$transaction(async (tx) => {
     await tx.opportunityContact.deleteMany({ where: { opportunityId: id } });
     if (contacts.length) {

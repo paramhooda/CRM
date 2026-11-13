@@ -4,6 +4,7 @@
 // it (request the BOQ, submit it, send the quote). Hold, lost, drop, move back, skip and reopen sit under More.
 // The server enforces the same rules (src/lib/stage-rules.ts).
 import { useState } from "react";
+import { toast } from "sonner";
 import { Check, Trophy, XCircle, PauseCircle, Ban, PlayCircle, RotateCcw, Lock, ArrowRight, ChevronDown, Undo2, SkipForward } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Dropdown, DropdownTrigger, DropdownContent, DropdownItem, DropdownSeparator } from "@/components/ui/dropdown";
@@ -17,6 +18,7 @@ import type { Move } from "@/lib/stage-rules";
 import { changeStage, skipStage } from "@/server/actions/opportunities";
 import { useAction } from "@/components/crm/use-action";
 import { isoDate } from "@/lib/format";
+import { AttachFiles, uploadAll, type ExistingDoc, type PickedFile } from "@/components/opportunities/attach-files";
 import { cn } from "@/lib/utils";
 
 type Pending = { move: Move; title: string; description: string; confirm: string } | { skip: true } | null;
@@ -28,7 +30,7 @@ const HOW_REACHED: Partial<Record<StageKey, string>> = {
 };
 
 export function StagePath({
-  id, stage, path, moves, advance, canSkip, lossReasons, poNumber, holdReason,
+  id, stage, path, moves, advance, canSkip, lossReasons, poNumber, holdReason, closeDatePast = false, poDocs = [],
 }: {
   id: string;
   stage: StageKey;
@@ -40,7 +42,13 @@ export function StagePath({
   lossReasons: string[];
   poNumber: string | null;
   holdReason?: string | null;
+  /** The expected close date has passed: resuming or reopening asks for a new one */
+  closeDatePast?: boolean;
+  /** Customer PO documents already on the deal (closing as won needs one) */
+  poDocs?: ExistingDoc[];
 }) {
+  const [poFiles, setPoFiles] = useState<PickedFile[]>([]);
+  const [uploading, setUploading] = useState(false);
   const { pending, run } = useAction();
   const [dialog, setDialog] = useState<Pending>(null);
   const [action, setAction] = useState<DealAction | null>(null);
@@ -48,7 +56,7 @@ export function StagePath({
   const allowed = (pred: (m: Move) => boolean) => moves.filter((m) => m.allowed && pred(m));
   const closed = stage === "WON" || stage === "LOST" || stage === "DROPPED";
   const cur = path.indexOf(stage);
-  const heldFrom = stage === "HOLD" ? moves.find((m) => m.kind === "resume")?.to : undefined;
+  const heldFrom = stage === "HOLD" ? moves.find((m) => m.kind === "resume" && m.allowed)?.to : undefined;
   const reached = (s: StageKey) => {
     const i = path.indexOf(s);
     if (stage === "WON") return true;
@@ -63,9 +71,11 @@ export function StagePath({
       onError: (r) => setErrors(r.fieldErrors ?? {}),
     });
 
+  const needsDate = (m: Move) => closeDatePast && (m.kind === "resume" || m.kind === "reopen");
   const open = (m: Move) => {
     setErrors({});
-    if (!m.needs) return go(m.to);
+    setPoFiles([]);
+    if (!m.needs && !needsDate(m)) return go(m.to);
     const label = STAGE_META[m.to].label;
     const copy: Record<Move["kind"], [string, string, string]> = {
       hold: ["Put on hold", "The deal leaves the forecast until it resumes, and resumes to the stage it is in now.", "Put on hold"],
@@ -73,11 +83,11 @@ export function StagePath({
       reopen: [`Reopen to ${label}`, "The deal returns to the open pipeline. The reason is recorded in the stage history.", "Reopen"],
       close: [
         m.to === "WON" ? "Close as won" : m.to === "LOST" ? "Close as lost" : "Drop opportunity",
-        m.to === "WON" ? "Capture the customer purchase order. This locks the line items for billing and accepts the latest quote." : "Loss reasons feed the win/loss report. Be specific in the notes.",
+        m.to === "WON" ? "Record the customer's purchase order and attach it. This locks the line items for billing and accepts the latest quote." : "Loss reasons feed the win/loss report. Be specific in the notes.",
         m.to === "WON" ? "Mark as won" : "Confirm",
       ],
       forward: [label, "", "Advance"],
-      resume: [label, "", "Resume"],
+      resume: [`Resume to ${label}`, "The expected close date passed while the deal was on hold. Set a new one.", "Resume"],
     };
     const [title, description, confirm] = copy[m.kind];
     setDialog({ move: m, title, description, confirm });
@@ -195,9 +205,20 @@ export function StagePath({
           <DialogContent title={dialog.title} description={dialog.description}>
             <form
               className="flex flex-col gap-3"
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 const f = Object.fromEntries(new FormData(e.currentTarget).entries());
+                if (dialog.move.needs === "po") {
+                  if (!poFiles.length && !poDocs.length) return setErrors({ poFile: "Attach the customer's PO" });
+                  // The PO document goes up first; the stage change then finds it on the deal
+                  if (poFiles.length) {
+                    setUploading(true);
+                    const failed = await uploadAll(id, poFiles, { note: f.poNumber ? `PO ${String(f.poNumber)}` : undefined });
+                    setUploading(false);
+                    if (failed.length) return void toast.error(`The PO could not be attached. ${failed.join(" ")}`);
+                    setPoFiles([]);
+                  }
+                }
                 go(dialog.move.to, f);
               }}
             >
@@ -209,14 +230,21 @@ export function StagePath({
                   <Field label="PO date" required error={errors.poDate}>
                     <Input name="poDate" type="date" defaultValue={isoDate(new Date())} max={isoDate(new Date())} />
                   </Field>
+                  <AttachFiles label="Customer PO" required={!poDocs.length} kinds={["CUSTOMER_PO"]} files={poFiles} onChange={(x) => { setPoFiles(x); setErrors((er) => ({ ...er, poFile: "" })); }} existing={poDocs} />
+                  {errors.poFile && <p className="text-xs text-[var(--t-red)]">{errors.poFile}</p>}
                 </>
+              )}
+              {needsDate(dialog.move) && (
+                <Field label="New expected close date" required error={errors.expectedCloseDate}>
+                  <Input name="expectedCloseDate" type="date" required min={isoDate(new Date())} />
+                </Field>
               )}
               {dialog.move.needs === "lossReason" && (
                 <>
                   <Field label="Reason" required error={errors.lossReason}>
-                    <Select name="lossReason" defaultValue="">
+                    <Select name="lossReason" defaultValue="" required aria-label="Reason">
                       <option value="" disabled>Select a reason</option>
-                      {lossReasons.map((r) => <option key={r}>{r}</option>)}
+                      {(lossReasons.length ? lossReasons : ["Other"]).map((r) => <option key={r}>{r}</option>)}
                     </Select>
                   </Field>
                   <Field label="Notes">
@@ -231,7 +259,7 @@ export function StagePath({
               )}
               <div className="flex justify-end gap-2 pt-1">
                 <Button type="button" onClick={() => setDialog(null)}>Cancel</Button>
-                <Button type="submit" variant={dialog.move.to === "LOST" || dialog.move.to === "DROPPED" ? "danger" : "primary"} disabled={pending}>{dialog.confirm}</Button>
+                <Button type="submit" variant={dialog.move.to === "LOST" || dialog.move.to === "DROPPED" ? "danger" : "primary"} disabled={pending || uploading}>{uploading ? "Attaching PO…" : dialog.confirm}</Button>
               </div>
             </form>
           </DialogContent>

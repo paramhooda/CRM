@@ -39,8 +39,24 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
 }
 
 async function Users() {
-  const [users, emailOn] = await Promise.all([db.user.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] }), emailReady()]);
+  const openDeal = { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED"] as ("WON" | "LOST" | "DROPPED")[] } };
+  const [users, emailOn, deals, ps, pq, leads] = await Promise.all([
+    db.user.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] }),
+    emailReady(),
+    db.opportunity.groupBy({ by: ["salesOwnerId"], where: openDeal, _count: true }),
+    db.presalesRequest.groupBy({ by: ["assignedToId"], where: { status: { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] } }, _count: true }),
+    db.pricingRequest.groupBy({ by: ["assignedToId"], where: { status: { in: ["REQUESTED", "IN_PROGRESS"] } }, _count: true }),
+    db.lead.groupBy({ by: ["ownerId"], where: { deletedAt: null, status: { notIn: ["CONVERTED", "UNQUALIFIED"] } }, _count: true }),
+  ]);
   const now = new Date();
+  // Open work per person: deactivating or moving someone with work asks who takes it over
+  const work = new Map<string, number>();
+  const add = (id: string, n: number) => work.set(id, (work.get(id) ?? 0) + n);
+  deals.forEach((r) => add(r.salesOwnerId, r._count));
+  ps.forEach((r) => add(r.assignedToId, r._count));
+  pq.forEach((r) => add(r.assignedToId, r._count));
+  leads.forEach((r) => add(r.ownerId, r._count));
+  const people = users.filter((u) => u.active).map((u) => ({ id: u.id, name: u.name, role: u.role }));
   return (
     <Card>
       <CardHeader title="Users" description={`${users.filter((u) => u.active).length} active users`} action={<UserDialog emailOn={emailOn} />} />
@@ -62,7 +78,7 @@ async function Users() {
               <TD className="text-xs text-ink-2">{relativeDays(u.lastLoginAt)}</TD>
               <TD className="whitespace-nowrap text-right">
                 {u.active && u.lockedUntil && u.lockedUntil > now && <UnlockButton id={u.id} name={u.name} />}
-                <UserDialog id={u.id} emailOn={emailOn} initial={{ name: u.name, email: u.email, role: u.role, title: u.title, phone: u.phone, active: u.active }} />
+                <UserDialog id={u.id} emailOn={emailOn} openWork={work.get(u.id) ?? 0} people={people} initial={{ name: u.name, email: u.email, role: u.role, title: u.title, phone: u.phone, active: u.active }} />
               </TD>
             </TR>
           ))}

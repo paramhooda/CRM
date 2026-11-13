@@ -28,9 +28,9 @@ export type QueueItem = {
   notStarted: boolean;
 };
 
-function classify(dueDate: Date, status: string, now: Date) {
-  // A request waiting on sales is paused: its due date moves out when sales answers
-  if (status === "NEEDS_INFO") return { overdue: false, dueThisWeek: false, notStarted: false };
+function classify(dueDate: Date, status: string, now: Date, held = false) {
+  // A request waiting on sales, or on a deal on hold, is paused: its due date moves out when it resumes
+  if (status === "NEEDS_INFO" || held) return { overdue: false, dueThisWeek: false, notStarted: false };
   return {
     overdue: dueDate < now,
     dueThisWeek: dueDate >= now && dueDate.getTime() - now.getTime() <= 7 * DAY,
@@ -46,7 +46,7 @@ function sortQueue(a: QueueItem, b: QueueItem) {
 }
 
 const oppSelect = {
-  id: true, name: true, code: true,
+  id: true, name: true, code: true, stage: true,
   account: { select: { name: true } }, salesOwner: { select: { name: true } },
 } as const;
 
@@ -87,11 +87,11 @@ export async function getPresalesWork(user: CurrentUser) {
     .map((r) => ({
       id: r.id, status: r.status, priority: r.priority, dueDate: r.dueDate, createdAt: r.createdAt,
       note: r.status === "NEEDS_INFO" ? `Waiting on sales: ${r.infoQuestion}` : r.revision > 1 && r.reason ? r.reason : r.scope,
-      tag: r.revision > 1 ? `Revision ${r.revision}` : undefined,
+      tag: r.opportunity.stage === "HOLD" ? "Deal on hold" : r.revision > 1 ? `Revision ${r.revision}` : undefined,
       requestedBy: r.requestedBy.name, lines: r.opportunity.lineItems.length,
       oems: [...new Set(r.opportunity.lineItems.map((l) => l.oem.name))],
       opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, salesOwner: r.opportunity.salesOwner.name },
-      ...classify(r.dueDate, r.status, now),
+      ...classify(r.dueDate, r.status, now, r.opportunity.stage === "HOLD"),
     }))
     .sort(sortQueue);
   return {
@@ -141,11 +141,11 @@ export async function getPurchaseWork(user: CurrentUser) {
       const lines = r.opportunity.lineItems;
       return {
         id: r.id, status: r.status, priority: "NORMAL", dueDate: r.dueDate, createdAt: r.createdAt, note: r.reason ?? r.notes,
-        tag: KIND_TAG[r.kind],
+        tag: r.opportunity.stage === "HOLD" ? "Deal on hold" : KIND_TAG[r.kind],
         requestedBy: r.requestedBy.name, lines: lines.length, costed: lines.filter((l) => l.unitCost !== null && l.pricingStatus === "QUOTED").length,
         oems: [...new Set(lines.map((l) => l.oem.name))],
         opp: { id: r.opportunity.id, name: r.opportunity.name, code: r.opportunity.code, account: r.opportunity.account.name, salesOwner: r.opportunity.salesOwner.name },
-        ...classify(r.dueDate, r.status, now),
+        ...classify(r.dueDate, r.status, now, r.opportunity.stage === "HOLD"),
       };
     })
     .sort(sortQueue);

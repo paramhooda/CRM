@@ -608,6 +608,8 @@ model OpportunityLineItem {
   oemQuoteRef      String?
   leadTimeDays     Int?
   pricingStatus    LinePricingStatus @default(PENDING)
+  /// The line changed (quantity, part, term…) after it was costed: purchase must enter or confirm a new cost
+  needsReprice     Boolean           @default(false)
   costSource       CostSource        @default(PURCHASE)
   /// Until when the supplier's price holds (purchase lines; each vendor quotes its own validity)
   costValidTill    DateTime?
@@ -647,6 +649,8 @@ model PresalesRequest {
   assignedToId    String
   assignedTo      User             @relation("PresalesAssignedTo", fields: [assignedToId], references: [id])
   status          PresalesStatus   @default(REQUESTED)
+  /// Presales brought into a resale deal ("Involve presales"); cancelling before a BOQ is submitted makes it resale again
+  involved        Boolean          @default(false)
   priority        String           @default("NORMAL")
   scope           String
   dueDate         DateTime

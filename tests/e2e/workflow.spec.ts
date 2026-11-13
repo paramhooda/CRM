@@ -358,6 +358,10 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await page.getByRole("button", { name: "Close as won" }).click();
     dlg = page.getByRole("dialog");
     await dlg.locator("input[name=poNumber]").fill("PO/E2E/0001");
+    // The PO document is required, not just its number
+    await dlg.getByRole("button", { name: "Mark as won" }).click();
+    await expect(dlg.getByText("Attach the customer's PO")).toBeVisible();
+    await dlg.getByLabel("Customer PO", { exact: true }).setInputFiles({ name: "PO-E2E-0001.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 PO") });
     await dlg.getByRole("button", { name: "Mark as won" }).click();
     await expect(page.getByText("Moved to Closed-Won")).toBeVisible();
     await page.goto(`${oppUrl}?tab=boq`);

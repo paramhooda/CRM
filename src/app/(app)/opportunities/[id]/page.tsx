@@ -101,6 +101,8 @@ export default async function OpportunityPage({ params, searchParams }: { params
             // Presales and purchase only see an advance that is theirs to take (e.g. Submit BOQ)
             advance={sales || advance?.kind === "action" ? advance : null} canSkip={sales && d.canSkip}
             lossReasons={options.lossReasons} poNumber={o.poNumber} holdReason={o.holdReason}
+            closeDatePast={d.facts.closeDatePast}
+            poDocs={d.documents.filter((x) => x.kind === "CUSTOMER_PO").map((x) => ({ id: x.id, fileName: x.fileName, kind: x.kind }))}
           />
         </div>
         <div className="mt-3">

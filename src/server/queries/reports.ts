@@ -37,12 +37,14 @@ export async function getReports(user: CurrentUser, sp: SearchParams) {
   const inP = (d: Date | null) => !!d && d >= period.start && d < period.end;
   const sum = (xs: O[]) => xs.reduce((a, o) => a + o.amount, 0);
   const won = opps.filter((o) => o.stage === "WON" && inP(o.closedAt));
-  const lost = opps.filter((o) => (o.stage === "LOST" || o.stage === "DROPPED") && inP(o.closedAt));
+  // Win rate is Won ÷ (Won + Lost) on every page; dropped deals still show in the reasons below
+  const lost = opps.filter((o) => o.stage === "LOST" && inP(o.closedAt));
+  const dropped = opps.filter((o) => o.stage === "DROPPED" && inP(o.closedAt));
   const open = opps.filter((o) => ACTIVE_STAGES.includes(o.stage as StageKey));
 
   // Loss reasons
   const lossMap = new Map<string, { count: number; amount: number }>();
-  for (const o of lost) {
+  for (const o of [...lost, ...dropped]) {
     const k = o.lossReason ?? "Not specified";
     const x = lossMap.get(k) ?? { count: 0, amount: 0 };
     x.count++;
@@ -126,7 +128,7 @@ export async function getReports(user: CurrentUser, sp: SearchParams) {
     const part = (o: O) => o.slices.filter((sl) => sl.categoryId === c.id).reduce((a, sl) => a + sl.amount, 0);
     const xs = opps.filter((o) => o.slices.some((sl) => sl.categoryId === c.id));
     const w = xs.filter((o) => o.stage === "WON" && inP(o.closedAt));
-    const l = xs.filter((o) => (o.stage === "LOST" || o.stage === "DROPPED") && inP(o.closedAt));
+    const l = xs.filter((o) => o.stage === "LOST" && inP(o.closedAt));
     const openXs = xs.filter((o) => ACTIVE_STAGES.includes(o.stage as StageKey));
     return {
       bu: c.businessUnit.name, buId: c.businessUnitId, category: c.name, catId: c.id,
@@ -146,7 +148,7 @@ export async function getReports(user: CurrentUser, sp: SearchParams) {
       if (o.healthLabel === "DYING") r.dying++;
     }
     if (o.stage === "WON" && inP(o.closedAt)) { r.won += o.amount; r.wonN++; }
-    if ((o.stage === "LOST" || o.stage === "DROPPED") && inP(o.closedAt)) r.lostN++;
+    if (o.stage === "LOST" && inP(o.closedAt)) r.lostN++;
     reps.set(o.salesOwner.id, r);
   }
   const allTargets = await db.salesTarget.findMany({ where: { fiscalYear: cur.fiscalYear } });

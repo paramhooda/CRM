@@ -20,6 +20,9 @@ export function LeadDialog({
   const [status, setStatus] = useState(initial?.status ?? "NEW");
   const { pending, run } = useAction();
   const v = initial ?? {};
+  // The current owner stays selectable even if they are not in the sales list (an admin, someone who left), so saving
+  // an unrelated edit never moves the lead to whoever happens to be first in the list
+  const ownerList = v.ownerId && !owners.some((o) => o.id === v.ownerId) ? [{ id: v.ownerId, name: v.ownerName ?? "Current owner" }, ...owners] : owners;
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -54,7 +57,7 @@ export function LeadDialog({
             </Select>
           </Field>
           <Field label="Owner">
-            <Select name="ownerId" defaultValue={v.ownerId ?? currentUserId} disabled={!canReassign}>{owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
+            <Select name="ownerId" defaultValue={v.ownerId ?? currentUserId} disabled={!canReassign}>{ownerList.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
             {!canReassign && <input type="hidden" name="ownerId" value={v.ownerId ?? currentUserId} />}
           </Field>
           {status === "UNQUALIFIED" && (
@@ -75,14 +78,19 @@ export function ConvertLeadDialog({
   id, company, requirement, estimatedValue, buId, accounts, categories, oems,
 }: {
   id: string; company: string; requirement: string | null; estimatedValue: number | null; buId: string | null;
-  accounts: Opt[]; categories: (Opt & { buId: string; buName: string })[]; oems: Opt[];
+  accounts: Opt[]; categories: (Opt & { buId: string; buName: string; needsPresales?: boolean })[]; oems: Opt[];
 }) {
+  const [categoryId, setCategoryId] = useState("");
+  const [presales, setPresales] = useState<boolean | null>(null);
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { pending, run } = useAction();
   const match = accounts.find((a) => a.name.toLowerCase() === company.toLowerCase());
-  const cats = buId ? categories.filter((c) => c.buId === buId) : categories;
+  // The lead's business unit first, then every other category: the lead's guess may be wrong
+  const cats = buId ? [...categories.filter((c) => c.buId === buId), ...categories.filter((c) => c.buId !== buId)] : categories;
+  const cat = categories.find((c) => c.id === categoryId);
+  const needsPresales = presales ?? !!cat?.needsPresales;
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -94,7 +102,7 @@ export function ConvertLeadDialog({
           onSubmit={(e) => {
             e.preventDefault();
             const f = Object.fromEntries(new FormData(e.currentTarget).entries());
-            run(() => convertLead(id, f), {
+            run(() => convertLead(id, { ...f, presalesRequired: String(needsPresales) }), {
               success: "Lead converted",
               onOk: (r) => { setOpen(false); router.push(`/opportunities/${(r.data as { opportunityId: string }).opportunityId}`); },
               onError: (r) => setErrors(r.fieldErrors ?? {}),
@@ -111,11 +119,17 @@ export function ConvertLeadDialog({
             <Input name="opportunityName" defaultValue={`${company.split(" ")[0]} - ${requirement ?? "New requirement"}`.slice(0, 150)} />
           </Field>
           <Field label="Category" required error={errors.categoryId}>
-            <Select name="categoryId" defaultValue="">
+            <Select name="categoryId" value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setPresales(null); }}>
               <option value="" disabled>Select</option>
               {cats.map((c) => <option key={c.id} value={c.id}>{c.buName} · {c.name}</option>)}
             </Select>
           </Field>
+          {cat && (
+            <label className="flex items-center gap-2 text-[13px] text-ink-2">
+              <input type="checkbox" checked={needsPresales} onChange={(e) => setPresales(e.target.checked)} className="accent-[var(--primary)]" aria-label="Needs presales" />
+              Needs presales (a solution to design){cat.needsPresales ? "" : " · usually resale for this category"}
+            </label>
+          )}
           <Field label="OEM" required error={errors.oemId} hint="Starts the deal with one estimate line. Presales replaces it with products in the BOQ.">
             <Select name="oemId" defaultValue="">
               <option value="" disabled>Select</option>
@@ -124,7 +138,7 @@ export function ConvertLeadDialog({
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Estimated value (INR)" required error={errors.amount}><Input name="amount" type="number" defaultValue={estimatedValue ?? ""} /></Field>
-            <Field label="Expected close" required><Input name="expectedCloseDate" type="date" defaultValue={isoDate(new Date(Date.now() + 90 * 86_400_000))} /></Field>
+            <Field label="Expected close" required error={errors.expectedCloseDate}><Input name="expectedCloseDate" type="date" min={isoDate(new Date())} defaultValue={isoDate(new Date(Date.now() + 90 * 86_400_000))} /></Field>
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" onClick={() => setOpen(false)}>Cancel</Button>

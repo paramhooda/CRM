@@ -65,17 +65,25 @@ export function lineCostStatus(i: {
   canCost: boolean;
   costChanged: boolean;
   hasCost: boolean;
-}): { status: "PENDING" | "QUOTED"; repriced: boolean } {
+  /** The line was already waiting for a new cost because it changed after being costed */
+  stale?: boolean;
+  /** Purchase ticked "Price unchanged" on this line: the old cost still holds for the new specification */
+  confirmed?: boolean;
+}): { status: "PENDING" | "QUOTED"; repriced: boolean; stale: boolean } {
   const was = i.prevStatus ?? "PENDING";
-  if (i.source === "RATE_CARD") return { status: i.hasCost ? "QUOTED" : "PENDING", repriced: false };
+  const stale = !!i.stale;
+  if (i.source === "RATE_CARD") return { status: i.hasCost ? "QUOTED" : "PENDING", repriced: false, stale: false };
   if (i.canCost) {
-    if (!i.hasCost) return { status: "PENDING", repriced: false };
-    if (i.source === "PURCHASE" && i.specChanged && !i.costChanged) return { status: "PENDING", repriced: was === "QUOTED" };
-    return { status: "QUOTED", repriced: false };
+    if (!i.hasCost) return { status: "PENDING", repriced: false, stale };
+    // A changed purchase line keeps its old cost for reference; saving the line again does not make that cost
+    // current. Purchase must enter a new cost or validity, or confirm the old price still holds.
+    if (i.source === "PURCHASE" && (i.specChanged || stale) && !i.costChanged && !i.confirmed)
+      return { status: "PENDING", repriced: i.specChanged && was === "QUOTED", stale: true };
+    return { status: "QUOTED", repriced: false, stale: false };
   }
-  if (i.prevStatus === null || i.sourceChanged) return { status: "PENDING", repriced: false };
-  if (i.specChanged && was === "QUOTED") return { status: "PENDING", repriced: true };
-  return { status: was === "QUOTED" ? "QUOTED" : "PENDING", repriced: false };
+  if (i.prevStatus === null || i.sourceChanged) return { status: "PENDING", repriced: false, stale: false };
+  if (i.specChanged && was === "QUOTED") return { status: "PENDING", repriced: true, stale: i.source === "PURCHASE" };
+  return { status: was === "QUOTED" ? "QUOTED" : "PENDING", repriced: false, stale };
 }
 
 /** Plain list of line numbers: "line 3" or "lines 2, 5". */

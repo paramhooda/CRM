@@ -4,7 +4,7 @@
 import { useState } from "react";
 import {
   UserPlus, Send, Calculator, FileText, PlayCircle, CheckCircle2, GitBranch, MessageCircleQuestion, Reply, Undo2,
-  UserCog, XCircle, MessageSquare, ChevronDown,
+  UserCog, XCircle, MessageSquare, ChevronDown, CalendarClock, CalendarPlus,
 } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Dropdown, DropdownTrigger, DropdownContent, DropdownItem } from "@/components/ui/dropdown";
@@ -13,39 +13,80 @@ import { Input, Textarea, Select, Field } from "@/components/ui/input";
 import { useAction } from "@/components/crm/use-action";
 import {
   requestPresales, startPresales, submitBoq, requestPricing, startPricing, completePricing, createQuote,
-  askSales, answerPresales, returnToPresales, reassignRequest, cancelRequest, recordQuoteResponse,
+  askSales, answerPresales, returnToPresales, reassignRequest, cancelRequest, recordQuoteResponse, extendQuoteValidity, changeDueDate,
 } from "@/server/actions/workflow";
-import { inr, isoDate, pct } from "@/lib/format";
+import { fmtDate, inr, isoDate, pct } from "@/lib/format";
+import { AttachFiles, uploadAll, type ExistingDoc, type PickedFile } from "@/components/opportunities/attach-files";
+import type { ActionResult } from "@/lib/validation";
 import { PRESALES_DELIVERABLES } from "@/lib/deal-setup";
 import { cn } from "@/lib/utils";
 
 const plusDays = (n: number) => isoDate(new Date(Date.now() + n * 86_400_000));
 type U = { id: string; name: string };
 type Base = { id: string; label: string; primary?: boolean; disabledReason?: string };
+/** Documents already on the deal, and a reminder when the expected one is missing (attachments stay optional) */
+type Docs = { oppId: string; docs?: ExistingDoc[]; docHint?: string | null; /** Kinds this viewer may add */ canAdd?: string[] };
 
 export type DealAction = Base &
   (
-    | {
-        kind: "pullPresales"; oppId: string; presales: U[]; revision?: { number: number; assigneeId: string | null; scope: string; note: string | null };
+    | (Docs & {
+        kind: "pullPresales"; presales: U[]; revision?: { number: number; assigneeId: string | null; scope: string; note: string | null };
         /** Bringing presales into a resale deal: what that changes, shown before sending */
         involve?: string[];
-      }
-    | { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number; asked?: string[]; missingDocs?: string[] }
+      })
+    | (Docs & { kind: "submitBoq"; requestId: string; purchase: U[]; lineCount: number; toPrice: number; asked?: string[]; missingDocs?: string[] })
     | { kind: "askSales"; requestId: string }
     | { kind: "answer"; requestId: string; question: string; askedBy: string }
-    | { kind: "requestPricing"; oppId: string; purchase: U[]; toPrice: number; first: boolean; expired?: number }
-    | { kind: "completePricing"; requestId: string; quotesAttached?: number }
+    | (Docs & { kind: "requestPricing"; purchase: U[]; toPrice: number; first: boolean; expired?: number })
+    | (Docs & { kind: "completePricing"; requestId: string; quotesAttached?: number })
     | { kind: "sendBack"; requestId: string; presalesName: string | null }
-    | { kind: "reassign"; reqKind: "presales" | "pricing"; requestId: string; people: U[]; currentId: string }
+    | { kind: "reassign"; reqKind: "presales" | "pricing"; requestId: string; people: U[]; currentId: string; due: Date; overdue: boolean }
     | { kind: "cancel"; reqKind: "presales" | "pricing"; requestId: string }
-    | { kind: "quote"; oppId: string; version: number; lines: { cost: number; price: number | null; mult: number }[] }
+    | { kind: "dueDate"; reqKind: "presales" | "pricing"; requestId: string; due: Date }
+    | { kind: "quote"; oppId: string; version: number; lines: { cost: number; price: number | null; mult: number }[]; maxValidTill?: Date | null }
     | { kind: "response"; quoteId: string; version: number }
+    | { kind: "extend"; quoteId: string; version: number; validTill: Date; maxValidTill: Date | null }
   );
 
 const ICON: Record<DealAction["kind"], React.ReactNode> = {
   pullPresales: <UserPlus />, submitBoq: <Send />, askSales: <MessageCircleQuestion />, answer: <Reply />, requestPricing: <Calculator />,
   completePricing: <CheckCircle2 />, sendBack: <Undo2 />, reassign: <UserCog />, cancel: <XCircle />, quote: <FileText />, response: <MessageSquare />,
+  dueDate: <CalendarClock />, extend: <CalendarPlus />,
 };
+
+/** Kinds each hand-over offers to attach */
+const ATTACH: Record<"pullPresales" | "submitBoq" | "requestPricing" | "completePricing", Parameters<typeof AttachFiles>[0]["kinds"]> = {
+  pullPresales: ["CUSTOMER_RFP", "SOW", "OTHER"],
+  submitBoq: ["SOLUTION_DOC", "BOQ_SHEET", "PRESENTATION", "SITE_SURVEY", "SOW", "OTHER"],
+  requestPricing: ["BOQ_SHEET", "OEM_QUOTE", "OTHER"],
+  completePricing: ["SUPPLIER_QUOTE", "OEM_QUOTE", "OTHER"],
+};
+
+/**
+ * Run a hand-over with its attachments. Files go up first when the request already exists (submit, pricing done), so
+ * they link to it; after the action when it creates the request (the action returns its id). A failed upload after a
+ * successful hand-over is a warning, not a failure: the hand-over stands and the file can be added on Documents.
+ */
+async function withFiles<T>(
+  oppId: string,
+  files: PickedFile[],
+  clear: () => void,
+  action: () => Promise<ActionResult<T>>,
+  link?: (data: T | undefined) => { presalesRequestId?: string; pricingRequestId?: string },
+): Promise<ActionResult<T>> {
+  if (!files.length) return action();
+  if (!link) {
+    const failed = await uploadAll(oppId, files);
+    if (failed.length) return { ok: false, error: `Could not attach: ${failed.join(" ")}` };
+    clear();
+    return action();
+  }
+  const r = await action();
+  if (!r.ok) return r;
+  const failed = await uploadAll(oppId, files, link(r.data));
+  clear();
+  return failed.length ? { ...r, warning: `Sent, but these files could not be attached: ${failed.join(" ")} Add them on the Documents tab.` } : r;
+}
 
 export function DealActions({ actions }: { actions: DealAction[] }) {
   const [active, setActive] = useState<DealAction | null>(null);
@@ -92,7 +133,12 @@ function Footer({ onCancel, pending, label, icon, danger }: { onCancel: () => vo
 /** One form per action. Each submits, toasts and closes; field errors show under their field. */
 export function ActionDialog({ a, close }: { a: DealAction; close: () => void }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [files, setFiles] = useState<PickedFile[]>([]);
   const { pending, run } = useAction();
+  const attach = (kind: keyof typeof ATTACH, docs: ExistingDoc[] = [], hint?: string | null) => {
+    const kinds = ATTACH[kind].filter((k) => !("canAdd" in a) || !a.canAdd || a.canAdd.includes(k));
+    return kinds.length ? <AttachFiles kinds={kinds} files={files} onChange={setFiles} existing={docs} hint={hint} /> : null;
+  };
   const submit = (fn: (f: Record<string, FormDataEntryValue>) => Parameters<typeof run>[0], success: string, onOk?: (data: unknown) => void) =>
     (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
@@ -110,19 +156,15 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
           title="Submit BOQ"
           description={a.toPrice ? `${a.toPrice} of ${a.lineCount} lines go to purchase for a supplier price. The deal moves to Pricing.` : `None of the ${a.lineCount} lines needs a price from purchase. Sales can quote straight away.`}
         >
-          <form className={form} onSubmit={submit((f) => () => submitBoq(a.requestId, f), a.toPrice ? "BOQ submitted. Purchase notified." : "BOQ submitted. Sales notified.")}>
+          <form className={form} onSubmit={submit((f) => () => withFiles(a.oppId, files, () => setFiles([]), () => submitBoq(a.requestId, f)), a.toPrice ? "BOQ submitted. Purchase notified." : "BOQ submitted. Sales notified.")}>
             {a.asked && a.asked.length > 0 && <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">Sales asked for: {a.asked.join(", ")}</p>}
-            {a.missingDocs && a.missingDocs.length > 0 && (
-              <p className="rounded-md px-3 py-2 text-xs" style={{ background: "var(--t-amber-bg)", color: "var(--t-amber)" }}>
-                Not attached yet: {a.missingDocs.join(", ")}. Add {a.missingDocs.length > 1 ? "them" : "it"} on the <a href="?tab=documents" className="font-medium underline">Documents</a> tab, or submit without.
-              </p>
-            )}
             <Field label="Solution summary" required error={errors.solutionSummary}>
               <Textarea name="solutionSummary" placeholder="What was designed and how it was sized" />
             </Field>
             <Field label="Assumptions and exclusions" error={errors.assumptions}>
               <Textarea name="assumptions" className="min-h-14" placeholder="e.g. Customer provides rack space and power; cabling excluded" />
             </Field>
+            {attach("submitBoq", a.docs, a.missingDocs?.length ? `Asked for but not attached yet: ${a.missingDocs.join(", ")}. Attach ${a.missingDocs.length > 1 ? "them" : "it"} here, or submit without.` : null)}
             {a.toPrice > 0 && (
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Purchase owner">
@@ -176,7 +218,7 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
               : `${a.toPrice} line${a.toPrice > 1 ? "s" : ""} go to purchase for a supplier price. The deal moves to Pricing.`
           }
         >
-          <form className={form} onSubmit={submit((f) => () => requestPricing(a.oppId, f), "Purchase notified")}>
+          <form className={form} onSubmit={submit((f) => () => withFiles(a.oppId, files, () => setFiles([]), () => requestPricing(a.oppId, f), (d) => ({ pricingRequestId: d?.requestId })), "Purchase notified")}>
             {(!a.first || revalidate) && (
               <Field label={revalidate ? "Why" : "What changed"} required error={errors.reason}>
                 <Textarea name="reason" className="min-h-14" placeholder={revalidate ? "e.g. Supplier pricing expired" : "e.g. Switch quantity changed from 8 to 12"} />
@@ -189,10 +231,11 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
                   {a.purchase.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </Select>
               </Field>
-              <Field label="Needed by" required>
+              <Field label="Needed by" required error={errors.dueDate}>
                 <Input name="dueDate" type="date" defaultValue={plusDays(5)} min={isoDate(new Date())} />
               </Field>
             </div>
+            {attach("requestPricing", a.docs, a.docHint)}
             <Footer onCancel={close} pending={pending} label="Send to purchase" icon={<Send />} />
           </form>
         </DialogContent>
@@ -201,16 +244,11 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
     case "completePricing":
       return (
         <DialogContent title="Pricing complete" description="Sales is notified to add margin and send the quote. Set each supplier's validity on its lines; this date applies to lines without one.">
-          <form className={form} onSubmit={submit((f) => () => completePricing(a.requestId, f), "Pricing sent to sales")}>
-            {a.quotesAttached !== undefined && (
-              a.quotesAttached > 0 ? (
-                <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">{a.quotesAttached} supplier or OEM quote{a.quotesAttached > 1 ? "s" : ""} attached to this request.</p>
-              ) : (
-                <p className="rounded-md px-3 py-2 text-xs" style={{ background: "var(--t-amber-bg)", color: "var(--t-amber)" }}>
-                  No supplier quote attached. Add the quotes behind these costs on the <a href="?tab=documents" className="font-medium underline">Documents</a> tab, or send without.
-                </p>
-              )
+          <form className={form} onSubmit={submit((f) => () => withFiles(a.oppId, files, () => setFiles([]), () => completePricing(a.requestId, f)), "Pricing sent to sales")}>
+            {!!a.quotesAttached && (
+              <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-ink-2">{a.quotesAttached} supplier or OEM quote{a.quotesAttached > 1 ? "s" : ""} attached to this request.</p>
             )}
+            {attach("completePricing", [], a.quotesAttached ? null : "No supplier quote attached yet. Attach the quotes behind these costs, or send without.")}
             <Field label="Valid till, for lines without their own date" required error={errors.quoteValidTill}>
               <Input name="quoteValidTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} />
             </Field>
@@ -232,13 +270,16 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
       );
     case "reassign":
       return (
-        <DialogContent title={a.label} description="The new owner is notified. The due date stays the same.">
+        <DialogContent title={a.label} description={a.overdue ? "The new owner is notified. The request is overdue, so give them a date they can meet." : `The new owner is notified. Due ${fmtDate(a.due)} unless you change it.`}>
           <form className={form} onSubmit={submit((f) => () => reassignRequest(a.reqKind, a.requestId, f), "Reassigned")}>
             <Field label="Hand over to" required error={errors.assignedToId}>
               <Select name="assignedToId" defaultValue="">
                 <option value="" disabled>Select</option>
                 {a.people.filter((p) => p.id !== a.currentId).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </Select>
+            </Field>
+            <Field label={a.overdue ? "New due date" : "Due date"} required={a.overdue} error={errors.dueDate}>
+              <Input name="dueDate" type="date" defaultValue={a.overdue ? plusDays(3) : isoDate(a.due)} min={isoDate(new Date())} />
             </Field>
             <Field label="Note"><Textarea name="note" className="min-h-14" /></Field>
             <Footer onCancel={close} pending={pending} label="Reassign" icon={<UserCog />} />
@@ -253,6 +294,35 @@ export function ActionDialog({ a, close }: { a: DealAction; close: () => void })
               <Textarea name="reason" className="min-h-14" placeholder="e.g. Customer postponed the project" />
             </Field>
             <Footer onCancel={close} pending={pending} label="Cancel request" icon={<XCircle />} danger />
+          </form>
+        </DialogContent>
+      );
+    case "dueDate":
+      return (
+        <DialogContent title={a.label} description={`Currently due ${fmtDate(a.due)}. Everyone on the request is told, and reminders restart from the new date.`}>
+          <form className={form} onSubmit={submit((f) => () => changeDueDate(a.reqKind, a.requestId, f), "Due date changed")}>
+            <Field label="New due date" required error={errors.dueDate}>
+              <Input name="dueDate" type="date" defaultValue={plusDays(3)} min={isoDate(new Date())} />
+            </Field>
+            <Field label="Why" required error={errors.reason}>
+              <Textarea name="reason" className="min-h-14" placeholder="e.g. Waiting on the OEM's revised price list" />
+            </Field>
+            <Footer onCancel={close} pending={pending} label="Change due date" icon={<CalendarClock />} />
+          </form>
+        </DialogContent>
+      );
+    case "extend":
+      return (
+        <DialogContent
+          title={`Extend quote v${a.version}`}
+          description={`Valid till ${fmtDate(a.validTill)}. Nothing on the deal changed since it was sent, so the customer keeps the same quote with a later date.${a.maxValidTill ? ` Supplier prices hold until ${fmtDate(a.maxValidTill)}.` : ""}`}
+        >
+          <form className={form} onSubmit={submit((f) => () => extendQuoteValidity(a.quoteId, f), "Quote validity extended")}>
+            <Field label="Valid till" required error={errors.validTill}>
+              <Input name="validTill" type="date" defaultValue={isoDate(a.maxValidTill && a.maxValidTill < new Date(Date.now() + 15 * 86_400_000) ? a.maxValidTill : new Date(Date.now() + 15 * 86_400_000))} min={isoDate(new Date())} max={a.maxValidTill ? isoDate(a.maxValidTill) : undefined} />
+            </Field>
+            <Field label="Note"><Textarea name="reason" className="min-h-14" placeholder="e.g. Customer's approval meeting moved to next week" /></Field>
+            <Footer onCancel={close} pending={pending} label="Extend" icon={<CalendarPlus />} />
           </form>
         </DialogContent>
       );
@@ -272,7 +342,7 @@ function QuoteForm({ a, close }: { a: Extract<DealAction, { kind: "quote" }>; cl
   const { pending, run } = useAction();
   const m = Math.min(90, Math.max(0, Number(margin) || 0)) / 100;
   const cost = a.lines.reduce((s, l) => s + l.cost * l.mult, 0);
-  const value = a.lines.reduce((s, l) => s + (keep ? l.price ?? 0 : Math.round(l.cost / (1 - m))) * l.mult, 0);
+  const value = a.lines.reduce((s, l) => s + (keep ? l.price ?? 0 : Math.round((l.cost / (1 - m)) * 100) / 100) * l.mult, 0);
   const gm = value ? ((value - cost) / value) * 100 : null;
   return (
     <DialogContent title={a.version > 1 ? `Send revised quote (v${a.version})` : "Create & send quote"} description="The quote opens as a printable page to save as PDF and send. The deal moves to Proposal Submitted.">
@@ -316,8 +386,11 @@ function QuoteForm({ a, close }: { a: Extract<DealAction, { kind: "quote" }>; cl
             <div><dt className="text-xs text-ink-3">Margin</dt><dd className="tabular" style={{ color: gm !== null && gm < 8 ? "var(--t-red)" : undefined }}>{gm === null ? "—" : pct(gm, 1)}</dd></div>
           </dl>
         </div>
-        <Field label="Valid till" required error={errors.validTill}>
-          <Input name="validTill" type="date" defaultValue={plusDays(30)} min={isoDate(new Date())} />
+        <Field label="Valid till" required error={errors.validTill} hint={a.maxValidTill ? `Supplier prices hold until ${fmtDate(a.maxValidTill)}; the quote can't promise longer.` : undefined}>
+          <Input
+            name="validTill" type="date" min={isoDate(new Date())} max={a.maxValidTill ? isoDate(a.maxValidTill) : undefined}
+            defaultValue={a.maxValidTill && a.maxValidTill < new Date(Date.now() + 30 * 86_400_000) ? isoDate(a.maxValidTill) : plusDays(30)}
+          />
         </Field>
         <Field label="Terms">
           <Textarea name="terms" className="min-h-20" defaultValue={"Prices in INR, exclusive of GST.\nPayment: 30 days from invoice.\nDelivery: 3–4 weeks from PO, subject to OEM stock.\nWarranty and support as per OEM terms."} />
@@ -391,6 +464,7 @@ export function StartPricingButton({ requestId }: { requestId: string }) {
 /** Request a BOQ (or a revision) from presales: who, by when, the requirement, and what presales should deliver. */
 function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pullPresales" }>; close: () => void }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [files, setFiles] = useState<PickedFile[]>([]);
   const [asked, setAsked] = useState<string[]>(["BOQ"]);
   const { pending, run } = useAction();
   const toggle = (k: string) => setAsked((xs) => (xs.includes(k) ? xs.filter((x) => x !== k) : [...xs, k]));
@@ -410,7 +484,10 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
         onSubmit={(e) => {
           e.preventDefault();
           const f = Object.fromEntries(new FormData(e.currentTarget).entries());
-          run(() => requestPresales(a.oppId, { ...f, deliverables: asked.join(",") }), { success: "Presales notified", onOk: close, onError: (r) => setErrors(r.fieldErrors ?? {}) });
+          run(
+            () => withFiles(a.oppId, files, () => setFiles([]), () => requestPresales(a.oppId, { ...f, deliverables: asked.join(",") }), (d) => ({ presalesRequestId: d?.requestId })),
+            { success: "Presales notified", onOk: close, onError: (r) => setErrors(r.fieldErrors ?? {}) },
+          );
         }}
       >
         {a.involve && (
@@ -460,6 +537,9 @@ function PresalesRequestForm({ a, close }: { a: Extract<DealAction, { kind: "pul
           <Field label="Sites to survey" required error={errors.siteDetails}>
             <Textarea name="siteDetails" className="min-h-14" placeholder="e.g. Mumbai DC (Andheri) and Pune DR site" />
           </Field>
+        )}
+        {ATTACH.pullPresales.some((k) => !a.canAdd || a.canAdd.includes(k)) && (
+          <AttachFiles label="Customer documents (RFP, SoW…)" kinds={ATTACH.pullPresales.filter((k) => !a.canAdd || a.canAdd.includes(k))} files={files} onChange={setFiles} existing={a.docs} hint={a.docHint} />
         )}
         <input type="hidden" name="priority" value="NORMAL" />
         <Footer onCancel={close} pending={pending} label="Send to presales" icon={<Send />} />

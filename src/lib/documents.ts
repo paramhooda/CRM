@@ -20,21 +20,21 @@ export const DOCUMENT_KIND_META: Record<DocumentKindKey, { label: string }> = {
 
 const ALL = Object.keys(DOCUMENT_KIND_META) as DocumentKindKey[];
 
-/** What each role adds: sales the customer's papers, presales the design, purchase the supplier pricing */
+/** What each role adds: sales the customer's papers (and the BOQ sheet of a resale deal), presales the design, purchase the supplier pricing */
 const UPLOAD: Record<string, DocumentKindKey[]> = {
-  SALES: ["CUSTOMER_RFP", "CUSTOMER_PO", "SOW", "OTHER"],
+  SALES: ["CUSTOMER_RFP", "CUSTOMER_PO", "SOW", "BOQ_SHEET", "OTHER"],
   PRESALES: ["SOW", "SOLUTION_DOC", "BOQ_SHEET", "PRESENTATION", "SITE_SURVEY", "OTHER"],
   PURCHASE: ["SUPPLIER_QUOTE", "OEM_QUOTE", "OTHER"],
 };
 
 /**
- * What presales and purchase see besides their own uploads. Purchase gets what it must buy against (BOQ, SoW) and the
- * supplier pricing; presales gets the customer's requirement, the design papers and supplier pricing (part
- * availability, end-of-sale). Neither sees the customer's PO, which carries sell prices.
+ * What presales and purchase see besides their own uploads. Purchase gets what it must buy against (the customer's
+ * RFP for exact specs, BOQ, SoW) and the supplier pricing; presales gets the customer's requirement, the design papers
+ * and supplier pricing (part availability, end-of-sale). Neither sees the customer's PO, which carries sell prices.
  */
 const VISIBLE: Record<string, DocumentKindKey[]> = {
   PRESALES: ["CUSTOMER_RFP", "SOW", "SOLUTION_DOC", "BOQ_SHEET", "PRESENTATION", "SITE_SURVEY", "SUPPLIER_QUOTE", "OEM_QUOTE"],
-  PURCHASE: ["SOW", "BOQ_SHEET", "SUPPLIER_QUOTE", "OEM_QUOTE"],
+  PURCHASE: ["CUSTOMER_RFP", "SOW", "BOQ_SHEET", "SUPPLIER_QUOTE", "OEM_QUOTE"],
 };
 
 export function uploadKinds(role: string): DocumentKindKey[] {

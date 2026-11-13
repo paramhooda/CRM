@@ -33,6 +33,8 @@ export const lineInputSchema = z
     leadTimeDays: z.coerce.number().int().min(0).max(365).nullish(),
     costSource: z.enum(["PURCHASE", "RATE_CARD", "PRESALES"]).nullish(),
     costValidTill: z.preprocess((v) => (v === "" ? null : v), z.coerce.date().nullish()),
+    /** Purchase confirms a changed line's existing cost still holds ("Price unchanged") */
+    confirmCost: z.boolean().optional(),
     costNote: z.string().trim().max(500).nullish(),
     unitPrice: z.coerce.number().min(0).nullish(),
     notes: z.string().max(500).nullish(),

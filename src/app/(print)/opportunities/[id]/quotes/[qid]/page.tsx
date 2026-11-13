@@ -8,7 +8,7 @@ import { PrintButton } from "./print-button";
 
 export const metadata = { title: "Quotation" };
 
-type SnapLine = { lineNo: number; oem: string | null; partNumber: string | null; description: string; quantity: number; unit: string; billingFrequency?: "ONE_TIME" | "MONTHLY" | "QUARTERLY" | "ANNUAL"; recurring?: boolean; termMonths: number | null; hsnSac?: string | null; unitPrice: number; extended: number };
+type SnapLine = { lineNo: number; oem: string | null; partNumber: string | null; description: string; quantity: number; unit: string; billingFrequency?: "ONE_TIME" | "MONTHLY" | "QUARTERLY" | "ANNUAL"; recurring?: boolean; termMonths: number | null; hsnSac?: string | null; gstRatePct?: number | null; unitPrice: number; extended: number };
 const PER: Record<string, string> = { MONTHLY: "/mo", QUARTERLY: "/qtr", ANNUAL: "/yr" };
 const freqOf = (l: SnapLine) => l.billingFrequency ?? (l.recurring ? "MONTHLY" : "ONE_TIME");
 
@@ -23,8 +23,12 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
   const q = await db.quote.findFirst({ where: { id: qid, opportunityId: id } });
   if (!q) notFound();
   const lines = (q.snapshot as SnapLine[]) ?? [];
-  const subtotal = toNumber(q.totalPrice);
-  const gst = subtotal * 0.18;
+  // Each line carries its own GST rate (5–28%); quotes issued before that was recorded assume 18%
+  const subtotal = lines.length ? lines.reduce((sum, l) => sum + toNumber(l.extended), 0) : toNumber(q.totalPrice);
+  const rateOf = (l: SnapLine) => (l.gstRatePct === null || l.gstRatePct === undefined ? 18 : Number(l.gstRatePct));
+  const gst = lines.reduce((sum, l) => sum + (toNumber(l.extended) * rateOf(l)) / 100, 0);
+  const rates = [...new Set(lines.map(rateOf))];
+  const gstLabel = rates.length === 1 ? `GST @ ${rates[0]}%` : "GST (per line rates)";
   const a = opp.account;
   return (
     <div className="mx-auto max-w-[820px] rounded-lg border border-border bg-white p-10 text-[13px] text-neutral-900 shadow-sm print:border-0 print:p-0 print:shadow-none">
@@ -85,7 +89,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
       </table>
       <div className="mt-4 ml-auto w-72 text-sm">
         <div className="flex justify-between py-1"><span className="text-neutral-500">Subtotal</span><span className="tabular">{inr(subtotal, { precise: true })}</span></div>
-        <div className="flex justify-between py-1"><span className="text-neutral-500">GST @ 18% (indicative)</span><span className="tabular">{inr(gst, { precise: true })}</span></div>
+        <div className="flex justify-between py-1"><span className="text-neutral-500">{gstLabel}</span><span className="tabular">{inr(gst, { precise: true })}</span></div>
         <div className="flex justify-between border-t border-neutral-300 py-2 font-semibold"><span>Total</span><span className="tabular">{inr(subtotal + gst, { precise: true })}</span></div>
       </div>
       {q.terms && (

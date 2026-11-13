@@ -6,7 +6,8 @@ import { fmtDate } from "./format";
 import { requestNudge, quoteExpiring } from "./workflow";
 
 const OPEN = { in: ["REQUESTED", "IN_PROGRESS", "NEEDS_INFO"] as ("REQUESTED" | "IN_PROGRESS" | "NEEDS_INFO")[] };
-const LIVE_DEAL = { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED"] as ("WON" | "LOST" | "DROPPED")[] } };
+// Held deals are paused: no reminders or escalations until they resume (due dates move out then)
+const LIVE_DEAL = { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED", "HOLD"] as ("WON" | "LOST" | "DROPPED" | "HOLD")[] } };
 const oppSelect = { id: true, name: true, salesOwnerId: true, salesOwner: { select: { managerId: true } } } as const;
 
 export async function runWorkflowAutomation(tx: Tx, now = new Date()) {

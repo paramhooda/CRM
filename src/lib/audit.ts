@@ -47,13 +47,14 @@ export async function recordChanges(
 
 export async function recordEvent(
   tx: Tx,
-  args: { entityType: string; entityId: string; action: string; userId: string; newValue?: string; at?: Date },
+  args: { entityType: string; entityId: string; action: string; userId: string; oldValue?: string; newValue?: string; at?: Date },
 ) {
   await tx.auditLog.create({
     data: {
       entityType: args.entityType,
       entityId: args.entityId,
       action: args.action,
+      oldValue: args.oldValue ?? null,
       newValue: args.newValue ?? null,
       changedById: args.userId,
       changedAt: args.at ?? new Date(),

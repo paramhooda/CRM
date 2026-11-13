@@ -51,30 +51,48 @@ describe("lineCostStatus", () => {
   const base = { prevStatus: "QUOTED", sourceChanged: false, specChanged: false, canCost: false, costChanged: false, hasCost: true } as const;
 
   it("rate card lines are always current", () => {
-    expect(lineCostStatus({ ...base, source: "RATE_CARD", specChanged: true })).toEqual({ status: "QUOTED", repriced: false });
+    expect(lineCostStatus({ ...base, source: "RATE_CARD", specChanged: true })).toMatchObject({ status: "QUOTED", repriced: false });
   });
 
   it("sales changing a priced purchase line's quantity sends it back for re-pricing", () => {
-    expect(lineCostStatus({ ...base, source: "PURCHASE", specChanged: true })).toEqual({ status: "PENDING", repriced: true });
+    expect(lineCostStatus({ ...base, source: "PURCHASE", specChanged: true })).toMatchObject({ status: "PENDING", repriced: true });
   });
 
   it("purchase confirms a cost by saving it, but a new specification needs a new price", () => {
-    expect(lineCostStatus({ ...base, source: "PURCHASE", prevStatus: "PENDING", canCost: true, costChanged: true })).toEqual({ status: "QUOTED", repriced: false });
-    expect(lineCostStatus({ ...base, source: "PURCHASE", canCost: true, specChanged: true })).toEqual({ status: "PENDING", repriced: true });
+    expect(lineCostStatus({ ...base, source: "PURCHASE", prevStatus: "PENDING", canCost: true, costChanged: true })).toMatchObject({ status: "QUOTED", repriced: false });
+    expect(lineCostStatus({ ...base, source: "PURCHASE", canCost: true, specChanged: true })).toMatchObject({ status: "PENDING", repriced: true });
   });
 
   it("presales owns the cost of presales lines, so their own changes stay costed", () => {
-    expect(lineCostStatus({ ...base, source: "PRESALES", canCost: true, specChanged: true })).toEqual({ status: "QUOTED", repriced: false });
-    expect(lineCostStatus({ ...base, source: "PRESALES", canCost: true, hasCost: false })).toEqual({ status: "PENDING", repriced: false });
+    expect(lineCostStatus({ ...base, source: "PRESALES", canCost: true, specChanged: true })).toMatchObject({ status: "QUOTED", repriced: false });
+    expect(lineCostStatus({ ...base, source: "PRESALES", canCost: true, hasCost: false })).toMatchObject({ status: "PENDING", repriced: false });
   });
 
   it("moving a line to another source makes it wait for that source; new lines wait too", () => {
-    expect(lineCostStatus({ ...base, source: "PURCHASE", sourceChanged: true })).toEqual({ status: "PENDING", repriced: false });
-    expect(lineCostStatus({ ...base, source: "PRESALES", prevStatus: null })).toEqual({ status: "PENDING", repriced: false });
+    expect(lineCostStatus({ ...base, source: "PURCHASE", sourceChanged: true })).toMatchObject({ status: "PENDING", repriced: false });
+    expect(lineCostStatus({ ...base, source: "PRESALES", prevStatus: null })).toMatchObject({ status: "PENDING", repriced: false });
   });
 
   it("untouched lines keep their status", () => {
-    expect(lineCostStatus({ ...base, source: "PURCHASE" })).toEqual({ status: "QUOTED", repriced: false });
-    expect(lineCostStatus({ ...base, source: "PURCHASE", prevStatus: "PENDING" })).toEqual({ status: "PENDING", repriced: false });
+    expect(lineCostStatus({ ...base, source: "PURCHASE" })).toMatchObject({ status: "QUOTED", repriced: false });
+    expect(lineCostStatus({ ...base, source: "PURCHASE", prevStatus: "PENDING" })).toMatchObject({ status: "PENDING", repriced: false });
   });
 });
+
+describe("changed lines need a new or confirmed cost from purchase", () => {
+  const base = { source: "PURCHASE", prevStatus: "PENDING", sourceChanged: false, specChanged: false, canCost: true, costChanged: false, hasCost: true } as const;
+  it("a stale line saved by purchase without a new cost stays pending (no silent confirmation)", () => {
+    expect(lineCostStatus({ ...base, stale: true })).toEqual({ status: "PENDING", repriced: false, stale: true });
+  });
+  it("entering a new cost or validity, or ticking Price unchanged, makes it current", () => {
+    expect(lineCostStatus({ ...base, stale: true, costChanged: true })).toEqual({ status: "QUOTED", repriced: false, stale: false });
+    expect(lineCostStatus({ ...base, stale: true, confirmed: true })).toEqual({ status: "QUOTED", repriced: false, stale: false });
+  });
+  it("re-validation lines (pending but not changed) are confirmed by saving, as before", () => {
+    expect(lineCostStatus({ ...base, stale: false })).toEqual({ status: "QUOTED", repriced: false, stale: false });
+  });
+  it("sales changing a priced purchase line flags it stale", () => {
+    expect(lineCostStatus({ ...base, prevStatus: "QUOTED", canCost: false, specChanged: true })).toEqual({ status: "PENDING", repriced: true, stale: true });
+  });
+});
+

@@ -7,13 +7,14 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db, type Tx } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/auth";
-import { can, isManager, opportunityScope } from "@/lib/authz";
+import { can, isManager, isSupportRole, opportunityScope } from "@/lib/authz";
 import { recordEvent, recordChanges } from "@/lib/audit";
 import { notify } from "@/lib/notify";
 import { nextCode } from "@/lib/sequence";
 import { boqTotals, lineMultiplier } from "@/lib/boq";
 import { recomputeOpportunity } from "@/lib/opportunity-service";
-import { toNumber, fmtDate } from "@/lib/format";
+import { toNumber, fmtDate, endOfDayIST, startOfTodayIST } from "@/lib/format";
+import { quoteMatchesLines, quotedLine, maxQuoteValidity, firstDifference } from "@/lib/quote";
 import { THRESHOLDS, STAGE_META, CLOSED_STAGES, type StageKey } from "@/lib/constants";
 import { OPEN_PRESALES, OPEN_PRICING, resumeDueDate, specChanged, specLock } from "@/lib/workflow";
 import { zodErrors, type ActionResult } from "@/lib/validation";
@@ -46,6 +47,24 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
     throw e;
   }
 }
+
+/** A date picked in a form: the end of that day in India (src/lib/format.ts) */
+const day = z.coerce.date().transform((d) => endOfDayIST(d));
+const isPast = (d: Date) => d < startOfTodayIST();
+
+/**
+ * Serialise workflow changes on one deal: two people (or two clicks) creating a request or a quote at the same time
+ * would otherwise both pass the "nothing open yet" check. The row lock is held until the transaction ends.
+ */
+async function lockDeal(tx: Tx, oppId: string) {
+  await tx.$queryRaw`SELECT 1 FROM "Opportunity" WHERE "id" = ${oppId} FOR UPDATE`;
+}
+
+/** Purchase lines whose supplier price has lapsed go back to purchase with any re-pricing */
+const withExpired = <L extends Parameters<typeof needsPurchaseCost>[0] & { id: string }>(lines: L[], now: Date) => {
+  const ids = new Set<string>();
+  return lines.filter((l) => (needsPurchaseCost(l) || costExpired(l, now)) && !ids.has(l.id) && ids.add(l.id));
+};
 
 /** Line costs or validity changed outside the BOQ editor: an editor already open must reload before saving */
 const touchBoq = (tx: Tx, oppId: string) => tx.opportunity.update({ where: { id: oppId }, data: { boqVersion: { increment: 1 } } });
@@ -110,7 +129,7 @@ async function assertRealBoq(tx: Tx, oppId: string, what: string) {
 
 const presalesSchema = z.object({
   assignedToId: z.string().min(1, "Select a presales owner"),
-  dueDate: z.coerce.date(),
+  dueDate: day,
   scope: z.string().trim().min(10, "Describe the scope in a sentence or two").max(4000),
   reason: z.string().trim().max(2000).optional(),
   priority: z.enum(["NORMAL", "HIGH", "URGENT"]).default("NORMAL"),
@@ -128,7 +147,7 @@ const presalesSchema = z.object({
  * the lines sales built, and only the lines they change go back to purchase. A quote with the customer stays there
  * until sales sends a revised one.
  */
-export const requestPresales = safeAction("requestPresales", async function requestPresales(oppId: string, input: Record<string, unknown>): Promise<ActionResult> {
+export const requestPresales = safeAction("requestPresales", async function requestPresales(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ requestId: string }>> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
@@ -142,7 +161,7 @@ export const requestPresales = safeAction("requestPresales", async function requ
   const v = parsed.data;
   if (v.deliverables.includes("SITE_SURVEY") && (!v.siteDetails || v.siteDetails.length < 3))
     return { ok: false, error: "Say which sites to survey.", fieldErrors: { siteDetails: "Which sites, and where" } };
-  if (v.dueDate.getTime() < Date.now() - DAY) return { ok: false, error: "Due date is in the past.", fieldErrors: { dueDate: "Due date is in the past" } };
+  if (isPast(v.dueDate)) return { ok: false, error: "Due date is in the past.", fieldErrors: { dueDate: "Due date is in the past" } };
   const assignee = await db.user.findFirst({ where: { id: v.assignedToId, role: "PRESALES", active: true } });
   if (!assignee) return { ok: false, error: "Selected user is not an active presales engineer." };
   const previous = await db.presalesRequest.findMany({ where: { opportunityId: oppId }, orderBy: { revision: "desc" } });
@@ -151,13 +170,18 @@ export const requestPresales = safeAction("requestPresales", async function requ
   const revision = (previous[0]?.revision ?? 0) + 1;
   const involving = !opp.presalesRequired;
   if (involving && (!v.reason || v.reason.length < 5)) return { ok: false, error: "Say why presales is needed now.", fieldErrors: { reason: "Say why presales is needed" } };
-  if (revision > 1 && (!v.reason || v.reason.length < 5)) return { ok: false, error: "Say what needs to change in this revision.", fieldErrors: { reason: "Say what needs to change" } };
+  // A revision changes a submitted BOQ and says why; asking again after a cancelled request is just a new request
+  const changesBoq = previous.some((p) => p.status === "BOQ_SUBMITTED");
+  if (changesBoq && !involving && (!v.reason || v.reason.length < 5)) return { ok: false, error: "Say what needs to change in this revision.", fieldErrors: { reason: "Say what needs to change" } };
   const lineCount = await db.opportunityLineItem.count({ where: { opportunityId: oppId, isEstimate: false } });
   const latestQuote = await db.quote.findFirst({ where: { opportunityId: oppId }, orderBy: { version: "desc" } });
   const source = latestQuote?.status === "CHANGES_REQUESTED" ? "CUSTOMER" : "SALES";
 
   const res = await run(() =>
     db.$transaction(async (tx) => {
+      await lockDeal(tx, oppId);
+      if (await tx.presalesRequest.count({ where: { opportunityId: oppId, status: openPresales } }))
+        throw new UserError("A presales request is already open on this deal.");
       const supersede = await tx.pricingRequest.findMany({ where: { opportunityId: oppId, status: openPricing } });
       for (const p of supersede) {
         await tx.pricingRequest.update({ where: { id: p.id }, data: { status: "CANCELLED", cancelReason: involving ? "Presales brought in to prepare the BOQ" : `Superseded by BOQ revision ${revision}` } });
@@ -169,10 +193,10 @@ export const requestPresales = safeAction("requestPresales", async function requ
           exclude: user.id,
         });
       }
-      await tx.presalesRequest.create({
+      const created = await tx.presalesRequest.create({
         data: {
           opportunityId: oppId, requestedById: user.id, assignedToId: v.assignedToId, dueDate: v.dueDate, scope: v.scope, priority: v.priority,
-          revision, source, reason: revision > 1 ? v.reason : v.reason || null,
+          revision, source, reason: v.reason || null, involved: involving,
           deliverables: v.deliverables, siteDetails: v.deliverables.includes("SITE_SURVEY") ? v.siteDetails || null : null,
         },
       });
@@ -184,18 +208,19 @@ export const requestPresales = safeAction("requestPresales", async function requ
       });
       await recordEvent(tx, {
         entityType: "Opportunity", entityId: oppId, userId: user.id,
-        action: involving || revision === 1 ? "PRESALES_REQUESTED" : "BOQ_REVISION_REQUESTED",
-        newValue: involving ? `${assignee.name} · resale deal now needs presales · ${v.reason}` : revision > 1 ? `Revision ${revision} · ${assignee.name} · ${v.reason}` : assignee.name,
+        action: involving || !changesBoq ? "PRESALES_REQUESTED" : "BOQ_REVISION_REQUESTED",
+        newValue: involving ? `${assignee.name} · resale deal now needs presales · ${v.reason}` : changesBoq ? `Revision ${revision} · ${assignee.name} · ${v.reason}` : assignee.name,
       });
       const startFrom = involving && lineCount ? ` Start from the ${lineCount} line${lineCount > 1 ? "s" : ""} sales added.` : "";
       await notify(tx, [v.assignedToId], {
         type: "PRESALES_REQUEST",
-        title: involving ? `Presales needed: ${opp.name}` : revision > 1 ? `BOQ revision ${revision}: ${opp.name}` : `BOQ requested: ${opp.name}`,
-        body: `${user.name} ${involving ? `brought you in: ${v.reason}` : revision > 1 ? `needs changes: ${v.reason}` : "pulled you in"}${v.priority !== "NORMAL" ? ` (${v.priority.toLowerCase()} priority)` : ""}. Due ${fmtDate(v.dueDate)}.${startFrom}`,
+        title: involving ? `Presales needed: ${opp.name}` : changesBoq ? `BOQ revision ${revision}: ${opp.name}` : `BOQ requested: ${opp.name}`,
+        body: `${user.name} ${involving ? `brought you in: ${v.reason}` : changesBoq ? `needs changes: ${v.reason}` : "pulled you in"}${v.priority !== "NORMAL" ? ` (${v.priority.toLowerCase()} priority)` : ""}. Due ${fmtDate(v.dueDate)}.${startFrom}`,
         link: boqLink(oppId),
       });
       await syncStage(tx, user, oppId, "BOQ");
       await recomputeOpportunity(tx, oppId);
+      return { requestId: created.id };
     }),
   );
   if (res.ok) refresh(oppId);
@@ -251,7 +276,7 @@ export const answerPresales = safeAction("answerPresales", async function answer
   const user = await requireUser();
   const r = await db.presalesRequest.findUnique({ where: { id: requestId }, include: { opportunity: true } });
   if (!r || !(await visibleOpp(user, r.opportunityId))) return { ok: false, error: "Request not found." };
-  if (!can.requestPresales(user, r.opportunity) && r.requestedById !== user.id) return { ok: false, error: "Only the deal owner or a manager can answer." };
+  if (!can.requestPresales(user, r.opportunity)) return { ok: false, error: "Only the deal owner or a manager can answer." };
   if (r.status !== "NEEDS_INFO") return { ok: false, error: "This request is not waiting on an answer." };
   const parsed = z.object({ answer: z.string().trim().min(2, "Type your answer").max(4000) }).safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
@@ -280,7 +305,7 @@ const submitBoqSchema = z.object({
   solutionSummary: z.string().trim().min(10, "Add a short solution summary").max(4000),
   assumptions: z.string().trim().max(4000).optional(),
   purchaseUserId: z.string().optional(),
-  dueDate: z.coerce.date().optional(),
+  dueDate: day.optional(),
   notes: z.string().max(2000).optional(),
 });
 
@@ -288,22 +313,25 @@ const submitBoqSchema = z.object({
  * Presales hands over the BOQ. Purchase is asked to price only the lines without a current cost
  * (new lines, or lines whose specification changed). If nothing needs a cost, the deal goes straight to quoting.
  */
-export const submitBoq = safeAction("submitBoq", async function submitBoq(requestId: string, input: Record<string, unknown>): Promise<ActionResult<{ pricing: boolean }>> {
+export const submitBoq = safeAction("submitBoq", async function submitBoq(requestId: string, input: Record<string, unknown>): Promise<ActionResult<{ pricing: boolean; pricingRequestId?: string }>> {
   const user = await requireUser();
   const r = await presalesForAssignee(user, requestId);
   if (!r) return { ok: false, error: "Request not found." };
   if (!(OPEN_PRESALES as readonly string[]).includes(r.status)) return { ok: false, error: "This request is already closed." };
   const parsed = submitBoqSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  if (parsed.data.dueDate && isPast(parsed.data.dueDate)) return { ok: false, error: "The pricing due date is in the past.", fieldErrors: { dueDate: "In the past" } };
   const opp = r.opportunity;
 
   const res = await run(() =>
     db.$transaction(async (tx) => {
       const count = await assertRealBoq(tx, r.opportunityId, "submitting");
+      let pricingRequestId: string | undefined;
       const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: r.opportunityId } });
       assertInternalCosts(lines, "submitting");
-      const pending = lines.filter(needsPurchaseCost);
       const now = new Date();
+      // Lines without a current cost, plus any whose supplier price has lapsed: they all need purchase again
+      const pending = withExpired(lines, now);
       // Only from an open status: a double-click or a second tab finds it already submitted
       const claimed = await tx.presalesRequest.updateMany({
         where: { id: requestId, status: { in: [...OPEN_PRESALES] } },
@@ -316,14 +344,15 @@ export const submitBoq = safeAction("submitBoq", async function submitBoq(reques
       });
       if (pending.length) {
         const purchaseId = await purchaseFor(tx, parsed.data.purchaseUserId || opp.purchaseOwnerId);
-        const kind = r.revision > 1 ? "REPRICE" : "FULL";
+        const priced = await tx.pricingRequest.count({ where: { opportunityId: r.opportunityId, status: "QUOTED" } });
+        const kind = priced ? "REPRICE" : "FULL";
         await tx.opportunityLineItem.updateMany({ where: { id: { in: pending.map((l) => l.id) } }, data: { pricingStatus: "PENDING" } });
-        await tx.pricingRequest.create({
+        pricingRequestId = (await tx.pricingRequest.create({
           data: {
             opportunityId: r.opportunityId, presalesRequestId: r.id, requestedById: user.id, assignedToId: purchaseId, kind,
-            reason: r.reason, dueDate: parsed.data.dueDate ?? new Date(now.getTime() + THRESHOLDS.pricingSlaDays * DAY), notes: parsed.data.notes || null,
+            reason: r.reason, dueDate: parsed.data.dueDate ?? endOfDayIST(new Date(now.getTime() + THRESHOLDS.pricingSlaDays * DAY)), notes: parsed.data.notes || null,
           },
-        });
+        })).id;
         await tx.opportunity.update({ where: { id: r.opportunityId }, data: { purchaseOwnerId: purchaseId, boqVersion: { increment: 1 } } });
         await notify(tx, [purchaseId], {
           type: "PRICING_REQUEST",
@@ -345,7 +374,7 @@ export const submitBoq = safeAction("submitBoq", async function submitBoq(reques
       });
       await syncStage(tx, user, r.opportunityId, "PRICING");
       await recomputeOpportunity(tx, r.opportunityId);
-      return { pricing: pending.length > 0 };
+      return { pricing: pending.length > 0, pricingRequestId };
     }),
   );
   if (res.ok) refresh(r.opportunityId);
@@ -356,7 +385,7 @@ export const submitBoq = safeAction("submitBoq", async function submitBoq(reques
 
 const pricingSchema = z.object({
   assignedToId: z.string().optional(),
-  dueDate: z.coerce.date(),
+  dueDate: day,
   reason: z.string().trim().max(2000).optional(),
   notes: z.string().max(2000).optional(),
 });
@@ -365,7 +394,7 @@ const pricingSchema = z.object({
  * Ask purchase for pricing without presales: a BOQ built by sales, a changed line, or re-validating costs
  * that have expired. With nothing changed, every line is re-validated.
  */
-export const requestPricing = safeAction("requestPricing", async function requestPricing(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ kind: string }>> {
+export const requestPricing = safeAction("requestPricing", async function requestPricing(oppId: string, input: Record<string, unknown>): Promise<ActionResult<{ kind: string; requestId: string }>> {
   const user = await requireUser();
   const opp = await visibleOpp(user, oppId);
   if (!opp) return { ok: false, error: "Opportunity not found." };
@@ -375,8 +404,10 @@ export const requestPricing = safeAction("requestPricing", async function reques
   if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it first." };
   const parsed = pricingSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  if (isPast(parsed.data.dueDate)) return { ok: false, error: "Due date is in the past.", fieldErrors: { dueDate: "In the past" } };
   const res = await run(() =>
     db.$transaction(async (tx) => {
+      await lockDeal(tx, oppId);
       if (await tx.presalesRequest.count({ where: { opportunityId: oppId, status: openPresales } }))
         throw new UserError("Presales is working on the BOQ. Pricing is requested automatically when they submit it.");
       if (await tx.pricingRequest.count({ where: { opportunityId: oppId, status: openPricing } }))
@@ -389,17 +420,19 @@ export const requestPricing = safeAction("requestPricing", async function reques
       const purchaseLines = lines.filter((l) => !l.isEstimate && l.costSource === "PURCHASE");
       if (!purchaseLines.length)
         throw new UserError("No line on this deal is costed by purchase. Own-brand lines use the rate card or a cost from presales.");
-      const pending = lines.filter(needsPurchaseCost);
-      const expired = lines.filter((l) => costExpired(l, new Date()));
+      const now = new Date();
+      const pending = withExpired(lines, now).filter(needsPurchaseCost);
+      const expired = lines.filter((l) => costExpired(l, now));
       const previous = await tx.pricingRequest.count({ where: { opportunityId: oppId, status: { not: "CANCELLED" } } });
       const kind = pending.length ? (previous ? "REPRICE" : "FULL") : "REVALIDATE";
       if (kind !== "FULL" && (!parsed.data.reason || parsed.data.reason.length < 5))
         throw new UserError(kind === "REVALIDATE" ? "Say why the costs need re-validating." : "Say what changed so purchase knows what to price.");
       const purchaseId = await purchaseFor(tx, parsed.data.assignedToId || opp.purchaseOwnerId);
-      // Re-validation sends back only the lines whose supplier price has lapsed (all purchase lines when none has)
-      const target = kind === "REVALIDATE" ? (expired.length ? expired : purchaseLines) : pending;
+      // Re-validation sends back only the lines whose supplier price has lapsed (all purchase lines when none has);
+      // re-pricing also takes any lapsed lines along, so the deal comes back fully quotable
+      const target = kind === "REVALIDATE" ? (expired.length ? expired : purchaseLines) : withExpired(lines, now);
       await tx.opportunityLineItem.updateMany({ where: { id: { in: target.map((l) => l.id) } }, data: { pricingStatus: "PENDING" } });
-      await tx.pricingRequest.create({
+      const created = await tx.pricingRequest.create({
         data: { opportunityId: oppId, requestedById: user.id, assignedToId: purchaseId, kind, reason: parsed.data.reason || null, dueDate: parsed.data.dueDate, notes: parsed.data.notes || null },
       });
       await tx.opportunity.update({ where: { id: oppId }, data: { purchaseOwnerId: purchaseId, boqVersion: { increment: 1 } } });
@@ -414,7 +447,7 @@ export const requestPricing = safeAction("requestPricing", async function reques
       });
       await syncStage(tx, user, oppId, "PRICING");
       await recomputeOpportunity(tx, oppId);
-      return { kind };
+      return { kind, requestId: created.id };
     }),
   );
   if (res.ok) refresh(oppId);
@@ -437,7 +470,7 @@ export const startPricing = safeAction("startPricing", async function startPrici
 });
 
 const completePricingSchema = z.object({
-  quoteValidTill: z.coerce.date(),
+  quoteValidTill: day,
   responseNotes: z.string().max(2000).optional(),
 });
 
@@ -448,20 +481,28 @@ export const completePricing = safeAction("completePricing", async function comp
   if (!(OPEN_PRICING as readonly string[]).includes(r.status)) return { ok: false, error: "This request is already closed." };
   const parsed = completePricingSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
-  if (parsed.data.quoteValidTill.getTime() < Date.now() - DAY) return { ok: false, error: "Supplier pricing validity is in the past.", fieldErrors: { quoteValidTill: "Already expired" } };
+  if (isPast(parsed.data.quoteValidTill)) return { ok: false, error: "Supplier pricing validity is in the past.", fieldErrors: { quoteValidTill: "Already expired" } };
   const purchaseLines = { opportunityId: r.opportunityId, isEstimate: false, costSource: "PURCHASE" as const };
   const missing = await db.opportunityLineItem.findMany({ where: { ...purchaseLines, unitCost: null }, select: { lineNo: true } });
-  if (missing.length) return { ok: false, error: `Line ${missing.map((l) => l.lineNo).join(", ")} still need${missing.length === 1 ? "s" : ""} a unit cost.` };
+  if (missing.length) return { ok: false, error: `${linesText(missing.map((l) => l.lineNo)).replace(/^l/, "L")} still need${missing.length === 1 ? "s" : ""} a unit cost.` };
+  // A line that changed after it was costed still shows the old cost: purchase must enter a new one or tick
+  // "Price unchanged" on it, so an old price never passes as current
+  const stale = await db.opportunityLineItem.findMany({ where: { ...purchaseLines, needsReprice: true }, select: { lineNo: true } });
+  if (stale.length) return { ok: false, error: `${linesText(stale.map((l) => l.lineNo)).replace(/^l/, "L")} changed after ${stale.length > 1 ? "they were" : "it was"} costed. Enter the new cost, or tick "Price unchanged", and save the BOQ first.` };
   const now = new Date();
-  // Each supplier quotes its own validity. Lines without one, or with a lapsed one, take the date confirmed here.
+  // Each supplier quotes its own validity. Lines in this request without one, or with a lapsed one, take the date
+  // confirmed here; lines not in the request keep theirs.
   const res = await run(() => db.$transaction(async (tx) => {
     const claimed = await tx.pricingRequest.updateMany({ where: { id: requestId, status: { in: [...OPEN_PRICING] } }, data: { status: "QUOTED" } });
     if (!claimed.count) throw new UserError("Pricing on this request was already completed. Reload the page.");
+    // The dialog's date goes to lines without a validity of their own, and to lapsed lines purchase dealt with in this
+    // request (still pending, or saved since it was raised); a lapsed line outside the request is never renewed
+    const inRequest = { OR: [{ pricingStatus: "PENDING" as const }, { updatedAt: { gte: r.createdAt } }] };
     await tx.opportunityLineItem.updateMany({
-      where: { ...purchaseLines, OR: [{ costValidTill: null }, { costValidTill: { lt: now } }] },
+      where: { ...purchaseLines, OR: [{ costValidTill: null }, { AND: [{ costValidTill: { lt: now } }, inRequest] }] },
       data: { costValidTill: parsed.data.quoteValidTill },
     });
-    await tx.opportunityLineItem.updateMany({ where: purchaseLines, data: { pricingStatus: "QUOTED" } });
+    await tx.opportunityLineItem.updateMany({ where: { ...purchaseLines, pricingStatus: "PENDING" }, data: { pricingStatus: "QUOTED", needsReprice: false } });
     const first = await tx.opportunityLineItem.findFirst({ where: purchaseLines, orderBy: { costValidTill: "asc" }, select: { costValidTill: true } });
     const validTill = first?.costValidTill ?? parsed.data.quoteValidTill;
     await tx.pricingRequest.update({
@@ -558,17 +599,22 @@ export const reassignRequest = safeAction("reassignRequest", async function reas
   const open = (kind === "presales" ? OPEN_PRESALES : OPEN_PRICING) as readonly string[];
   if (!open.includes(r.status)) return { ok: false, error: "Only open requests can be reassigned." };
   if (!isManager(user) && r.assignedToId !== user.id && r.opportunity.salesOwnerId !== user.id) return { ok: false, error: "Not allowed." };
-  const parsed = z.object({ assignedToId: z.string().min(1, "Choose who takes it over"), note: z.string().trim().max(1000).optional() }).safeParse(input);
+  const parsed = z.object({ assignedToId: z.string().min(1, "Choose who takes it over"), note: z.string().trim().max(1000).optional(), dueDate: day.optional() }).safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   if (parsed.data.assignedToId === r.assignedToId) return { ok: true };
+  // Handing over an overdue request needs a date the new person can meet, or it is escalated straight away
+  const due = parsed.data.dueDate ?? r.dueDate;
+  if (due < new Date()) return { ok: false, error: "This request is overdue. Give the new assignee a new due date.", fieldErrors: { dueDate: "Set a new due date" } };
+  if (parsed.data.dueDate && isPast(parsed.data.dueDate)) return { ok: false, error: "Due date is in the past.", fieldErrors: { dueDate: "In the past" } };
   const role = kind === "presales" ? "PRESALES" : "PURCHASE";
   const to = await db.user.findFirst({ where: { id: parsed.data.assignedToId, role, active: true } });
   if (!to) return { ok: false, error: `Choose an active ${role.toLowerCase()} user.` };
   const oppId = r.opportunityId;
   await db.$transaction(async (tx) => {
-    const data = { assignedToId: to.id, remindedAt: null, escalatedAt: null };
-    if (kind === "presales") await tx.presalesRequest.update({ where: { id: requestId }, data });
-    else await tx.pricingRequest.update({ where: { id: requestId }, data });
+    const data = { assignedToId: to.id, dueDate: due, remindedAt: null, escalatedAt: null };
+    const where = { id: requestId, status: { in: [...open] } };
+    const done = kind === "presales" ? await tx.presalesRequest.updateMany({ where: where as Prisma.PresalesRequestWhereInput, data }) : await tx.pricingRequest.updateMany({ where: where as Prisma.PricingRequestWhereInput, data });
+    if (!done.count) throw new UserError("This request was just closed. Reload the page.");
     const field = kind === "presales" ? "presalesOwnerId" : "purchaseOwnerId";
     await tx.opportunity.update({ where: { id: oppId }, data: { [field]: to.id } });
     await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: r.opportunity, after: { [field]: to.id }, fields: [field], userId: user.id });
@@ -576,7 +622,7 @@ export const reassignRequest = safeAction("reassignRequest", async function reas
     await notify(tx, [to.id], {
       type: kind === "presales" ? "PRESALES_REQUEST" : "PRICING_REQUEST",
       title: `${kind === "presales" ? "BOQ" : "Pricing"} request handed to you: ${r.opportunity.name}`,
-      body: `${user.name} reassigned it from ${r.assignedTo.name}. Due ${fmtDate(r.dueDate)}.${parsed.data.note ? ` ${parsed.data.note}` : ""}`,
+      body: `${user.name} reassigned it from ${r.assignedTo.name}. Due ${fmtDate(due)}.${parsed.data.note ? ` ${parsed.data.note}` : ""}`,
       link: boqLink(oppId),
       exclude: user.id,
     });
@@ -599,21 +645,42 @@ export const cancelRequest = safeAction("cancelRequest", async function cancelRe
   if (!r) return { ok: false, error: "Request not found." };
   const open = (kind === "presales" ? OPEN_PRESALES : OPEN_PRICING) as readonly string[];
   if (!open.includes(r.status)) return { ok: false, error: "This request is already closed." };
-  if (!isManager(user) && r.opportunity.salesOwnerId !== user.id && r.requestedById !== user.id) return { ok: false, error: "Only the deal owner, the requester or a manager can cancel." };
+  // Sales decides what work the deal needs: the deal owner or a manager (or a sales requester) can withdraw it.
+  // Presales and purchase hand work back with "Send back" instead of cancelling each other's requests.
+  const salesRequester = r.requestedById === user.id && !isSupportRole(user);
+  if (!isManager(user) && r.opportunity.salesOwnerId !== user.id && !salesRequester) return { ok: false, error: "Only the deal owner or a manager can cancel." };
   const parsed = z.object({ reason: z.string().trim().min(3, "Give a reason").max(1000) }).safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const oppId = r.opportunityId;
+  let revertedToResale = false;
   await db.$transaction(async (tx) => {
     const data = { status: "CANCELLED" as const, cancelReason: parsed.data.reason };
-    if (kind === "presales") await tx.presalesRequest.update({ where: { id: requestId }, data });
-    else await tx.pricingRequest.update({ where: { id: requestId }, data });
-    await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "REQUEST_CANCELLED", userId: user.id, newValue: `${kind === "presales" ? "BOQ" : "Pricing"} request · ${parsed.data.reason}` });
+    const where = { id: requestId, status: { in: [...open] } };
+    const done = kind === "presales" ? await tx.presalesRequest.updateMany({ where: where as Prisma.PresalesRequestWhereInput, data }) : await tx.pricingRequest.updateMany({ where: where as Prisma.PricingRequestWhereInput, data });
+    if (!done.count) throw new UserError("This request was just closed. Reload the page.");
+    // Presales brought into a resale deal and withdrawn before any BOQ: the deal is a resale deal again
+    if (kind === "presales" && (r as { involved?: boolean }).involved) {
+      const submitted = await tx.presalesRequest.count({ where: { opportunityId: oppId, status: "BOQ_SUBMITTED" } });
+      if (!submitted) {
+        await tx.opportunity.update({ where: { id: oppId }, data: { presalesRequired: false, version: { increment: 1 } } });
+        await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: r.opportunity, after: { presalesRequired: false }, fields: ["presalesRequired"], userId: user.id });
+        revertedToResale = true;
+      }
+    }
+    await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "REQUEST_CANCELLED", userId: user.id, newValue: `${kind === "presales" ? "BOQ" : "Pricing"} request · ${parsed.data.reason}${revertedToResale ? " · back to a resale deal" : ""}` });
     await notify(tx, [r.assignedToId], {
       type: "WORKFLOW",
       title: `${kind === "presales" ? "BOQ" : "Pricing"} request cancelled: ${r.opportunity.name}`,
       body: `${user.name}: ${parsed.data.reason}. No further work needed.`,
       link: boqLink(oppId),
       exclude: user.id,
+    });
+    await notify(tx, [r.opportunity.salesOwnerId, r.requestedById], {
+      type: "WORKFLOW",
+      title: `${kind === "presales" ? "BOQ" : "Pricing"} request cancelled: ${r.opportunity.name}`,
+      body: `${user.name} cancelled the request ${kind === "presales" ? "to" : "with"} ${r.assignedTo.name}: ${parsed.data.reason}.${revertedToResale ? " The deal is a resale deal again." : ""}`,
+      link: boqLink(oppId),
+      exclude: [user.id, r.assignedToId],
     });
     await recomputeOpportunity(tx, oppId);
   });
@@ -711,7 +778,7 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
 
         if (!cur) {
           if (lock) throw new UserError(lock);
-          const { status } = lineCostStatus({ source, prevStatus: null, sourceChanged: false, specChanged: true, canCost, costChanged: true, hasCost });
+          const { status } = lineCostStatus({ source, prevStatus: null, sourceChanged: false, specChanged: false, canCost, costChanged: true, hasCost });
           await tx.opportunityLineItem.create({
             data: {
               opportunityId: oppId, lineNo, ...specData!, ...costData,
@@ -734,8 +801,12 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
         Object.assign(data, costData);
         if (price) Object.assign(data, priceData);
         // A purchase line whose specification changed keeps its old cost as a reference until purchase re-confirms it
-        const st = lineCostStatus({ source, prevStatus: cur.pricingStatus, sourceChanged, specChanged: changedSpec, canCost, costChanged, hasCost });
+        const st = lineCostStatus({
+          source, prevStatus: cur.pricingStatus, sourceChanged, specChanged: changedSpec, canCost, costChanged, hasCost,
+          stale: cur.needsReprice, confirmed: canCost && source === "PURCHASE" && !!l.confirmCost,
+        });
         data.pricingStatus = st.status;
+        data.needsReprice = st.stale;
         if (st.repriced) repriced++;
         await tx.opportunityLineItem.update({ where: { id: cur.id }, data });
         saved++;
@@ -757,7 +828,7 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
 // ───────────── Quotes ─────────────
 
 const quoteSchema = z.object({
-  validTill: z.coerce.date(),
+  validTill: day,
   terms: z.string().max(4000).optional(),
   /** When set, every line is priced at this gross margin on its cost before the quote is created */
   marginPct: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : Number(v)), z.number().min(0).max(90).optional()),
@@ -769,11 +840,13 @@ export const createQuote = safeAction("createQuote", async function createQuote(
   if (!opp) return { ok: false, error: "Opportunity not found." };
   if (!can.createQuote(user, opp)) return { ok: false, error: "Only the deal owner or a manager can issue quotes." };
   if (isClosed(opp.stage)) return { ok: false, error: "This deal is closed." };
+  if (opp.stage === "HOLD") return { ok: false, error: "The deal is on hold. Resume it before sending a quote." };
   const parsed = quoteSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
-  if (parsed.data.validTill.getTime() < Date.now() - DAY) return { ok: false, error: "Quote validity is in the past.", fieldErrors: { validTill: "Validity is in the past" } };
+  if (isPast(parsed.data.validTill)) return { ok: false, error: "Quote validity is in the past.", fieldErrors: { validTill: "Validity is in the past" } };
   const res = await run(() =>
     db.$transaction(async (tx) => {
+      await lockDeal(tx, oppId);
       if (await tx.presalesRequest.count({ where: { opportunityId: oppId, status: openPresales } }))
         throw new UserError("Presales is still working on the BOQ. Quote once they submit it.");
       if (await tx.pricingRequest.count({ where: { opportunityId: oppId, status: openPricing } }))
@@ -785,12 +858,13 @@ export const createQuote = safeAction("createQuote", async function createQuote(
       if (m !== undefined) {
         const costed = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId, isEstimate: false, unitCost: { not: null } }, select: { id: true, unitCost: true } });
         for (const l of costed)
-          await tx.opportunityLineItem.update({ where: { id: l.id }, data: { unitPrice: new Prisma.Decimal(Math.round(toNumber(l.unitCost) / (1 - m / 100))), updatedById: user.id } });
+          // To the paisa: rounding to whole rupees would turn small per-unit prices (₹0.40/GB) into ₹0
+          await tx.opportunityLineItem.update({ where: { id: l.id }, data: { unitPrice: new Prisma.Decimal(Math.round((toNumber(l.unitCost) / (1 - m / 100)) * 100) / 100), updatedById: user.id } });
       }
       const lines = await tx.opportunityLineItem.findMany({
         where: { opportunityId: oppId },
         orderBy: { lineNo: "asc" },
-        include: { oem: { select: { name: true } }, product: { select: { hsnSac: true } } },
+        include: { oem: { select: { name: true } }, product: { select: { hsnSac: true, gstRatePct: true } } },
       });
       const t = boqTotals(lines);
       const pending = lines.filter(needsPurchaseCost).map((l) => l.lineNo);
@@ -803,9 +877,14 @@ export const createQuote = safeAction("createQuote", async function createQuote(
         const first = new Date(Math.min(...expired.map((l) => l.costValidTill!.getTime())));
         throw new UserError(`Supplier pricing on ${linesText(expired.map((l) => l.lineNo))} expired on ${fmtDate(first)}. Ask purchase to re-validate it before quoting.`);
       }
+      // The customer can't be promised a price for longer than the suppliers promised theirs
+      const cap = maxQuoteValidity(lines.filter((l) => !l.isEstimate && l.costSource === "PURCHASE").map((l) => l.costValidTill));
+      if (cap && parsed.data.validTill > endOfDayIST(cap))
+        throw new UserError(`Supplier prices hold only until ${fmtDate(cap)}. Make the quote valid till then at most, or ask purchase to extend the supplier validity.`);
 
       const last = await tx.quote.findFirst({ where: { opportunityId: oppId }, orderBy: { version: "desc" } });
-      await tx.quote.updateMany({ where: { opportunityId: oppId, status: { in: ["DRAFT", "SUBMITTED", "CHANGES_REQUESTED"] } }, data: { status: "SUPERSEDED" } });
+      // Only one quote is ever live (or accepted): a revised quote replaces all earlier ones
+      await tx.quote.updateMany({ where: { opportunityId: oppId, status: { in: ["DRAFT", "SUBMITTED", "CHANGES_REQUESTED", "ACCEPTED"] } }, data: { status: "SUPERSEDED" } });
       const code = await nextCode(tx, "QT");
       const q = await tx.quote.create({
         data: {
@@ -813,10 +892,9 @@ export const createQuote = safeAction("createQuote", async function createQuote(
           totalPrice: new Prisma.Decimal(Math.round(t.totalPrice)), totalCost: new Prisma.Decimal(Math.round(t.totalCost)),
           marginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), validTill: parsed.data.validTill,
           terms: parsed.data.terms || null, createdById: user.id,
+          // What the customer sees; src/lib/quote.ts compares the deal's lines against this to keep the quote honest
           snapshot: lines.map((l) => ({
-            lineNo: l.lineNo, oem: l.oem?.name ?? null, partNumber: l.partNumber, description: l.description,
-            quantity: toNumber(l.quantity), unit: l.unit, billingFrequency: l.billingFrequency, termMonths: l.termMonths,
-            hsnSac: l.hsnSac ?? l.product?.hsnSac ?? null,
+            ...quotedLine(l), oem: l.oem?.name ?? null, hsnSac: l.hsnSac ?? l.product?.hsnSac ?? null,
             unitPrice: toNumber(l.unitPrice), extended: lineMultiplier(l) * toNumber(l.unitPrice),
           })),
         },
@@ -824,7 +902,8 @@ export const createQuote = safeAction("createQuote", async function createQuote(
       const amount = new Prisma.Decimal(Math.round(t.totalPrice));
       await tx.opportunity.update({
         where: { id: oppId },
-        data: { amount, expectedMarginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), lastActivityAt: new Date() },
+        // version: an edit form opened before the quote must not put back the old margin
+        data: { amount, expectedMarginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), lastActivityAt: new Date(), version: { increment: 1 } },
       });
       await recordChanges(tx, { entityType: "Opportunity", entityId: oppId, before: opp, after: { amount }, fields: ["amount"], userId: user.id });
       await recordEvent(tx, { entityType: "Opportunity", entityId: oppId, action: "QUOTE_ISSUED", userId: user.id, newValue: `${code} v${q.version}${m !== undefined ? ` at ${m}% margin` : ""}` });
@@ -864,12 +943,19 @@ export const recordQuoteResponse = safeAction("recordQuoteResponse", async funct
   const parsed = responseSchema.safeParse(input);
   if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
   const { response, note } = parsed.data;
+  if (response === "ACCEPTED") {
+    // Acceptance is only meaningful for a quote that still describes the deal and is still valid
+    if (q.validTill < new Date()) return { ok: false, error: `Quote v${q.version} expired on ${fmtDate(q.validTill)}. Extend its validity first (or send a revised quote).` };
+    const diff = await quoteDifference(q.opportunityId, q.snapshot);
+    if (diff) return { ok: false, error: `The deal changed after quote v${q.version} was sent (${diff}). Send a revised quote for the customer to accept.` };
+  }
   await db.$transaction(async (tx) => {
-    await tx.quote.update({ where: { id: quoteId }, data: { status: response, respondedAt: new Date(), responseNote: note || null } });
+    const done = await tx.quote.updateMany({ where: { id: quoteId, status: { in: ["SUBMITTED", "CHANGES_REQUESTED"] } }, data: { status: response, respondedAt: new Date(), responseNote: note || null } });
+    if (!done.count) throw new UserError("This quote already has a response. Reload the page.");
     const label = response === "ACCEPTED" ? "accepted" : response === "REJECTED" ? "rejected" : "asked for changes to";
     await recordEvent(tx, { entityType: "Opportunity", entityId: q.opportunityId, action: "QUOTE_RESPONSE", userId: user.id, newValue: `Customer ${label} ${q.code} v${q.version}${note ? ` · ${note}` : ""}` });
     await tx.opportunity.update({ where: { id: q.opportunityId }, data: { lastActivityAt: new Date() } });
-    await notify(tx, [q.opportunity.salesOwnerId, q.opportunity.presalesOwnerId], {
+    await notify(tx, [q.opportunity.salesOwnerId, q.opportunity.presalesOwnerId, ...(response === "ACCEPTED" ? [q.opportunity.purchaseOwnerId] : [])], {
       type: "WORKFLOW",
       title: `Customer ${label} quote v${q.version}: ${q.opportunity.name}`,
       body: response === "ACCEPTED" ? "Mark the deal Won when the PO arrives." : note,
@@ -879,5 +965,86 @@ export const recordQuoteResponse = safeAction("recordQuoteResponse", async funct
     await recomputeOpportunity(tx, q.opportunityId);
   });
   refresh(q.opportunityId);
+  return { ok: true };
+});
+
+/** Why the deal's lines no longer match a quote ("line 3 changed"), or null when they still do */
+async function quoteDifference(oppId: string, snapshot: unknown, tx: Tx = db) {
+  const lines = await tx.opportunityLineItem.findMany({
+    where: { opportunityId: oppId },
+    orderBy: { lineNo: "asc" },
+    select: { lineNo: true, partNumber: true, description: true, quantity: true, unit: true, billingFrequency: true, termMonths: true, unitPrice: true, gstRatePct: true, product: { select: { gstRatePct: true } } },
+  });
+  const current = lines.map(quotedLine);
+  return quoteMatchesLines(snapshot, current) !== false ? null : firstDifference(snapshot, current) ?? "lines changed";
+}
+
+/**
+ * The customer needs more time and nothing about the deal changed: extend the latest quote instead of re-issuing it.
+ * Only while its lines still match, and never past the supplier prices behind it.
+ */
+export const extendQuoteValidity = safeAction("extendQuoteValidity", async function extendQuoteValidity(quoteId: string, input: Record<string, unknown>): Promise<ActionResult> {
+  const user = await requireUser();
+  const q = await db.quote.findUnique({ where: { id: quoteId }, include: { opportunity: true } });
+  if (!q || !(await visibleOpp(user, q.opportunityId))) return { ok: false, error: "Quote not found." };
+  if (!can.createQuote(user, q.opportunity)) return { ok: false, error: "Only the deal owner or a manager can change a quote." };
+  if (isClosed(q.opportunity.stage)) return { ok: false, error: "This deal is closed." };
+  const latest = await db.quote.findFirst({ where: { opportunityId: q.opportunityId }, orderBy: { version: "desc" }, select: { id: true } });
+  if (latest?.id !== q.id || !["SUBMITTED", "ACCEPTED"].includes(q.status)) return { ok: false, error: "Only the latest quote with the customer can be extended." };
+  const parsed = z.object({ validTill: day, reason: z.string().trim().max(500).optional() }).safeParse(input);
+  if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  const until = parsed.data.validTill;
+  if (isPast(until) || until <= q.validTill) return { ok: false, error: "Pick a date later than the current validity.", fieldErrors: { validTill: "Later than now" } };
+  const diff = await quoteDifference(q.opportunityId, q.snapshot);
+  if (diff) return { ok: false, error: `The deal changed after quote v${q.version} (${diff}). Send a revised quote instead.` };
+  const purchase = await db.opportunityLineItem.findMany({ where: { opportunityId: q.opportunityId, isEstimate: false, costSource: "PURCHASE" }, select: { lineNo: true, costValidTill: true, pricingStatus: true } });
+  const cap = maxQuoteValidity(purchase.map((l) => l.costValidTill));
+  if (cap && until > endOfDayIST(cap))
+    return { ok: false, error: `Supplier prices hold only until ${fmtDate(cap)}. Ask purchase to re-validate them (Re-validate costs) before extending past that.`, fieldErrors: { validTill: `At most ${fmtDate(cap)}` } };
+  await db.$transaction(async (tx) => {
+    await tx.quote.update({ where: { id: quoteId }, data: { validTill: until, remindedAt: null } });
+    await recordEvent(tx, {
+      entityType: "Opportunity", entityId: q.opportunityId, action: "QUOTE_EXTENDED", userId: user.id,
+      oldValue: fmtDate(q.validTill), newValue: `${q.code} v${q.version} valid till ${fmtDate(until)}${parsed.data.reason ? ` · ${parsed.data.reason}` : ""}`,
+    });
+    await recomputeOpportunity(tx, q.opportunityId);
+  });
+  refresh(q.opportunityId);
+  return { ok: true };
+});
+
+/**
+ * Agree a new due date for an open request (the escalation message asks for exactly this). The requester, the
+ * assignee, the deal owner or a manager can; the other side is told.
+ */
+export const changeDueDate = safeAction("changeDueDate", async function changeDueDate(kind: ReqKind, requestId: string, input: Record<string, unknown>): Promise<ActionResult> {
+  const user = await requireUser();
+  const r = await loadRequest(kind, requestId);
+  if (!r || !(await visibleOpp(user, r.opportunityId))) return { ok: false, error: "Request not found." };
+  const open = (kind === "presales" ? OPEN_PRESALES : OPEN_PRICING) as readonly string[];
+  if (!open.includes(r.status)) return { ok: false, error: "Only open requests have a due date to change." };
+  if (!isManager(user) && ![r.assignedToId, r.requestedById, r.opportunity.salesOwnerId].includes(user.id)) return { ok: false, error: "Not allowed." };
+  const parsed = z.object({ dueDate: day, reason: z.string().trim().min(3, "Say why the date moves").max(500) }).safeParse(input);
+  if (!parsed.success) return { ok: false, ...zodErrors(parsed.error) };
+  if (isPast(parsed.data.dueDate)) return { ok: false, error: "Due date is in the past.", fieldErrors: { dueDate: "In the past" } };
+  await db.$transaction(async (tx) => {
+    const data = { dueDate: parsed.data.dueDate, remindedAt: null, escalatedAt: null };
+    const where = { id: requestId, status: { in: [...open] } };
+    const done = kind === "presales" ? await tx.presalesRequest.updateMany({ where: where as Prisma.PresalesRequestWhereInput, data }) : await tx.pricingRequest.updateMany({ where: where as Prisma.PricingRequestWhereInput, data });
+    if (!done.count) throw new UserError("This request was just closed. Reload the page.");
+    await recordEvent(tx, {
+      entityType: "Opportunity", entityId: r.opportunityId, action: "REQUEST_DUE_CHANGED", userId: user.id,
+      oldValue: fmtDate(r.dueDate), newValue: `${kind === "presales" ? "BOQ" : "Pricing"} due ${fmtDate(parsed.data.dueDate)} · ${parsed.data.reason}`,
+    });
+    await notify(tx, [r.assignedToId, r.requestedById, r.opportunity.salesOwnerId], {
+      type: "WORKFLOW",
+      title: `New due date for the ${kind === "presales" ? "BOQ" : "pricing"}: ${r.opportunity.name}`,
+      body: `${user.name} moved it from ${fmtDate(r.dueDate)} to ${fmtDate(parsed.data.dueDate)}: ${parsed.data.reason}`,
+      link: boqLink(r.opportunityId),
+      exclude: user.id,
+    });
+    await recomputeOpportunity(tx, r.opportunityId);
+  });
+  refresh(r.opportunityId);
   return { ok: true };
 });
