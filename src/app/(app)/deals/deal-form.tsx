@@ -60,20 +60,24 @@ export function DealForm({ initial, dealId, version, owners, accountName, contac
   const roll = lines.length ? rollupDeal(derived.map((d, i) => ({ ...d, revenueModel: lines[i]!.revenueModel, businessUnitId: lines[i]!.businessUnitId ?? "", oemId: lines[i]!.oemId ?? "", lineNo: i + 1, unitSalesPrice: lines[i]!.unitSalesPrice || null }))) : null;
 
   const save = () =>
-    f.submit(async (v) => {
-      const body = { ...v, nextStepDate: v.nextStepDate || null, needsPresales: v.needsPresales ?? (dealId ? undefined : suggestedPresales), ownerId: v.ownerId ?? undefined, description: v.description || null, nextStep: v.nextStep || null };
-      if (dealId) {
-        const { accountId: _a, ownerId: _o, ...rest } = body;
-        await api.patch(`/deals/${dealId}`, { ...rest, version });
-        toast.success("Deal saved");
-        router.push(`/deals/${dealId}`);
-      } else {
-        const r = await api.post<{ id: string }>("/deals", { ...body, lines: lines.map(lineToInput) });
-        toast.success("Deal created");
-        router.push(`/deals/${r.id}`);
-      }
-      router.refresh();
-    });
+    f.submit(
+      async (body) => {
+        if (dealId) {
+          await api.patch(`/deals/${dealId}`, { ...body, version });
+          toast.success("Deal saved");
+          router.push(`/deals/${dealId}`);
+        } else {
+          const r = await api.post<{ id: string }>("/deals", { ...body, lines: lines.map(lineToInput) });
+          toast.success("Deal created");
+          router.push(`/deals/${r.id}`);
+        }
+        router.refresh();
+      },
+      (v: DealFormValues): Record<string, unknown> => {
+        const common = { name: v.name, primaryContactId: v.primaryContactId, expectedCloseDate: v.expectedCloseDate, forecastCategory: v.forecastCategory, leadSourceId: v.leadSourceId, description: v.description || null, nextStep: v.nextStep || null, nextStepDate: v.nextStepDate || null };
+        return dealId ? { ...common, needsPresales: v.needsPresales ?? undefined } : { ...common, accountId: v.accountId, ownerId: v.ownerId ?? undefined, needsPresales: v.needsPresales ?? suggestedPresales };
+      },
+    );
 
   return (
     <form className="flex flex-col gap-6" onSubmit={(e) => { e.preventDefault(); void save(); }}>

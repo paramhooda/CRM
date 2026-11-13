@@ -92,7 +92,8 @@ export function LineDialog({ open, onOpenChange, initial, editable, onSave, titl
           <DialogTitle>{title ?? (initial?.id ? "Edit line" : "Add line")}</DialogTitle>
           <DialogDescription>{spec ? "Pick a catalogue product or describe a custom item. The business unit, Sub BU and OEM come from the product." : "You can change only the fields open to your role."}</DialogDescription>
         </DialogHeader>
-        <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        {/* stopPropagation: the dialog is portalled, but React still bubbles submit to the deal form around it */}
+        <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void save(); }}>
           {spec && (
             <Field label="Catalogue product" htmlFor="line-product" hint="Leave empty for a custom line.">
               <Combobox id="line-product" value={f.values.productId} onChange={pickProduct} load={loadProducts} placeholder="Search the catalogue…" searchPlaceholder="Product name or code…" allowClear />

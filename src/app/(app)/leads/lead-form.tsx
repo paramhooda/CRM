@@ -18,13 +18,15 @@ export function LeadForm({ initial, leadId, owners }: { initial?: Partial<LeadFo
   const actor = useActor();
   const f = useForm<LeadFormValues>({ companyName: "", contactName: "", contactEmail: "", contactPhone: "", designation: "", leadSourceId: null, industryId: null, segmentId: null, businessUnitId: null, estimatedValue: "", notes: "", ownerId: null, ...initial }, leadSchema);
   const save = () =>
-    f.submit(async (v) => {
-      const body = { ...v, contactEmail: v.contactEmail || null, estimatedValue: v.estimatedValue || null, ownerId: v.ownerId ?? undefined };
-      const r = leadId ? await api.patch<{ id: string }>(`/leads/${leadId}`, body) : await api.post<{ id: string }>("/leads", body);
-      toast.success(leadId ? "Lead saved" : "Lead captured");
-      router.push(`/leads/${r.id}`);
-      router.refresh();
-    });
+    f.submit(
+      async (body) => {
+        const r = leadId ? await api.patch<{ id: string }>(`/leads/${leadId}`, body) : await api.post<{ id: string }>("/leads", body);
+        toast.success(leadId ? "Lead saved" : "Lead captured");
+        router.push(`/leads/${r.id}`);
+        router.refresh();
+      },
+      (v: LeadFormValues) => ({ ...v, contactEmail: v.contactEmail || null, estimatedValue: v.estimatedValue || null, ownerId: v.ownerId ?? undefined }),
+    );
   return (
     <form className="flex max-w-2xl flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <div className="grid gap-4 sm:grid-cols-2">

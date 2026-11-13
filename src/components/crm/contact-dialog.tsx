@@ -25,16 +25,19 @@ export function ContactDialog({ open, onOpenChange, contactId, initial, accountI
     return r.rows.map((a) => ({ value: a.id, label: a.name, hint: a.code }));
   }, []);
   const save = () =>
-    f.submit(async (v) => {
-      const body = { ...v, email: v.email || null };
-      if (contactId) {
-        const { accountId: _a, ...rest } = body;
-        await api.patch(`/contacts/${contactId}`, rest);
-      } else await api.post("/contacts", body);
-      toast.success(contactId ? "Contact saved" : "Contact added");
-      onOpenChange(false);
-      router.refresh();
-    });
+    f.submit(
+      async (body) => {
+        if (contactId) await api.patch(`/contacts/${contactId}`, body);
+        else await api.post("/contacts", body);
+        toast.success(contactId ? "Contact saved" : "Contact added");
+        onOpenChange(false);
+        router.refresh();
+      },
+      (v: ContactValues): Record<string, unknown> => {
+        const { accountId: acc, ...rest } = v;
+        return contactId ? { ...rest, email: v.email || null } : { ...rest, accountId: acc, email: v.email || null };
+      },
+    );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">

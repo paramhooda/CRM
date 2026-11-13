@@ -103,7 +103,7 @@ export function AppShell({ children, sidebarOpen }: { children: ReactNode; sideb
             <SidebarMenuItem>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton size="lg" tooltip={actor.fullName} className="data-[state=open]:bg-sidebar-accent">
+                  <SidebarMenuButton size="lg" tooltip={actor.fullName} aria-label="Account menu" className="data-[state=open]:bg-sidebar-accent">
                     <Avatar className="size-7 rounded-md">
                       <AvatarFallback className="rounded-md bg-primary/15 text-xs font-semibold text-primary">{initials(actor.fullName)}</AvatarFallback>
                     </Avatar>

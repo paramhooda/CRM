@@ -12,13 +12,17 @@ import { daysBetween } from "@/domain/fiscal";
 import { canEditDeal } from "../authz/scope";
 
 /** Records a stage change: the deal's new stage, the history row with days in the previous stage, and the audit row. */
-export async function writeStageChange(tx: Tx, deal: { id: string; stage: Stage; stageEnteredAt: Date; dealValue: { toString(): string } }, to: Stage, actorId: string, requestId: string, note: string | null, extra: Record<string, unknown> = {}) {
+type AuditedField = { field: string; oldValue: string | null; newValue: string | null };
+
+export async function writeStageChange(tx: Tx, deal: { id: string; stage: Stage; stageEnteredAt: Date; dealValue: { toString(): string } }, to: Stage, actorId: string, requestId: string, note: string | null, extra: Record<string, unknown> = {}, audited: AuditedField[] = []) {
   const now = new Date();
   await tx.deal.update({ where: { id: deal.id }, data: { stage: to, stageEnteredAt: now, version: { increment: 1 }, ...extra } });
   await tx.dealStageHistory.create({
     data: { dealId: deal.id, fromStage: deal.stage, toStage: to, changedById: actorId, changedAt: now, daysInPreviousStage: daysBetween(deal.stageEnteredAt, now), dealValueAtChange: deal.dealValue.toString(), note },
   });
   await recordEvent(tx, { entityType: "deal", entityId: deal.id, dealId: deal.id, action: "STAGE_CHANGE", userId: actorId, requestId, field: "stage", oldValue: deal.stage, newValue: to });
+  // The fields a move sets alongside the stage (hold reason, loss reason, PO number…) get their own rows
+  for (const a of audited) if (a.oldValue !== a.newValue) await recordEvent(tx, { entityType: "deal", entityId: deal.id, dealId: deal.id, action: "UPDATE", userId: actorId, requestId, field: a.field, oldValue: a.oldValue, newValue: a.newValue });
 }
 
 async function cancelOpenRequests(tx: Tx, deal: DealDetailRecord, actorId: string, requestId: string, why: string) {
@@ -54,7 +58,7 @@ export async function moveStage(actor: Actor, dealId: string, input: StageMoveIn
     lossReasonName = lr.name;
   }
   if (move.needsPo && !input.poNumber) throw new ValidationError("Enter the customer's PO number.", { poNumber: "Required." });
-  let presales: { assigneeId: string; dueDate: Date; scope: string } | null = null;
+  let presales: { assigneeId: string; assigneeName: string; dueDate: Date; scope: string } | null = null;
   if (move.needsPresalesRequest) {
     const assigneeId = input.presalesAssigneeId ?? deal.presalesOwnerId;
     if (!assigneeId) throw new ValidationError("Pick the presales engineer.", { presalesAssigneeId: "Required." });
@@ -63,7 +67,7 @@ export async function moveStage(actor: Actor, dealId: string, input: StageMoveIn
     if (!input.presalesDueDate) throw new ValidationError("Set a due date for the BOQ.", { presalesDueDate: "Required." });
     const due = toDate(input.presalesDueDate);
     if (due < todayDate()) throw new ValidationError("The due date can't be in the past.", { presalesDueDate: "Can't be in the past." });
-    presales = { assigneeId, dueDate: due, scope: input.presalesScope ?? deal.description ?? `BOQ for ${deal.name}` };
+    presales = { assigneeId, assigneeName: u.fullName, dueDate: due, scope: input.presalesScope ?? deal.description ?? `BOQ for ${deal.name}` };
   }
 
   const applied = applyMove(facts, move);
@@ -77,10 +81,16 @@ export async function moveStage(actor: Actor, dealId: string, input: StageMoveIn
       holdReason: move.action === "HOLD" ? input.reason : null,
     };
     if (move.action === "LOST" || move.action === "DROPPED") Object.assign(extra, { lossReasonId: input.lossReasonId, lossNotes: input.lossNotes ?? null });
-    if (move.action === "WON") Object.assign(extra, { poNumber: input.poNumber });
+    if (applied.toStage === "CLOSED_WON") Object.assign(extra, { poNumber: input.poNumber });
     if (move.action === "REOPEN") Object.assign(extra, { lossReasonId: null, lossNotes: null, poNumber: null });
     if (presales) Object.assign(extra, { presalesOwnerId: presales.assigneeId });
-    await writeStageChange(tx, deal, applied.toStage, actor.id, requestId, note, extra);
+    const audited: AuditedField[] = [];
+    if (move.action === "HOLD") audited.push({ field: "holdReason", oldValue: deal.holdReason, newValue: input.reason ?? null });
+    if (move.action === "LOST" || move.action === "DROPPED") audited.push({ field: "lossReasonId", oldValue: deal.lossReason?.name ?? null, newValue: lossReasonName }, { field: "lossNotes", oldValue: deal.lossNotes, newValue: input.lossNotes ?? null });
+    if (applied.toStage === "CLOSED_WON") audited.push({ field: "poNumber", oldValue: deal.poNumber, newValue: input.poNumber ?? null });
+    if (move.action === "REOPEN") audited.push({ field: "lossReasonId", oldValue: deal.lossReason?.name ?? null, newValue: null }, { field: "poNumber", oldValue: deal.poNumber, newValue: null });
+    if (presales) audited.push({ field: "presalesOwnerId", oldValue: deal.presalesOwner?.fullName ?? null, newValue: presales.assigneeName });
+    await writeStageChange(tx, deal, applied.toStage, actor.id, requestId, note, extra, audited);
 
     if (presales) {
       const r = await tx.presalesRequest.create({ data: { dealId: deal.id, requestedById: actor.id, assignedToId: presales.assigneeId, dueDate: presales.dueDate, scope: presales.scope } });

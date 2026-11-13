@@ -20,13 +20,15 @@ export function AccountForm({ initial, accountId, owners }: { initial?: Partial<
   const actor = useActor();
   const f = useForm<AccountFormValues>({ name: "", gstin: "", industryId: null, segmentId: null, website: "", phone: "", addressLine: "", city: "", state: "", pincode: "", ownerId: null, notes: "", ...initial }, accountSchema);
   const save = () =>
-    f.submit(async (v) => {
-      const body = { ...v, gstin: v.gstin || null, pincode: v.pincode || null, ownerId: v.ownerId ?? undefined };
-      const r = accountId ? await api.patch<{ id: string }>(`/accounts/${accountId}`, body) : await api.post<{ id: string }>("/accounts", body);
-      toast.success(accountId ? "Account saved" : "Account created");
-      router.push(`/accounts/${r.id}`);
-      router.refresh();
-    });
+    f.submit(
+      async (body) => {
+        const r = accountId ? await api.patch<{ id: string }>(`/accounts/${accountId}`, body) : await api.post<{ id: string }>("/accounts", body);
+        toast.success(accountId ? "Account saved" : "Account created");
+        router.push(`/accounts/${r.id}`);
+        router.refresh();
+      },
+      (v: AccountFormValues) => ({ ...v, gstin: v.gstin || null, pincode: v.pincode || null, ownerId: v.ownerId ?? undefined }),
+    );
   return (
     <form className="flex max-w-2xl flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <div className="grid gap-4 sm:grid-cols-2">

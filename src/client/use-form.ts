@@ -23,12 +23,17 @@ export function useForm<T extends Record<string, unknown>>(initial: T, schema?: 
     });
   }, []);
 
+  /**
+   * Validates and runs the action. `prepare` turns the form's strings into the API body (blank → null, numbers…)
+   * before validation, so the schema sees exactly what the server will see.
+   */
   const submit = useCallback(
-    async (action: (parsed: T) => Promise<void>) => {
+    async <B = T>(action: (body: B) => Promise<void>, prepare?: (values: T) => B) => {
       setFormError(null);
-      let parsed = values;
+      const body = (prepare ? prepare(values) : values) as unknown;
+      let parsed = body as B;
       if (schema) {
-        const r = schema.safeParse(values);
+        const r = schema.safeParse(body);
         if (!r.success) {
           const fe: Record<string, string> = {};
           for (const i of r.error.issues) {
@@ -38,7 +43,7 @@ export function useForm<T extends Record<string, unknown>>(initial: T, schema?: 
           setErrors(fe);
           return false;
         }
-        parsed = r.data as T;
+        parsed = r.data as B;
       }
       setPending(true);
       try {
