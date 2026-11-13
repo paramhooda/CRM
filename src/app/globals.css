@@ -304,8 +304,8 @@
   --selected-strong: #1e2a47;
   --selected-foreground: var(--brand-300);
 
-  --destructive: #dc2626;
-  --destructive-foreground: #ffffff;
+  --destructive: #f87171;
+  --destructive-foreground: #09090b;
   --success: #4ade80;
   --success-foreground: #09090b;
   --warning: #fbbf24;

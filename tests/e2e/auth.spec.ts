@@ -6,8 +6,9 @@ for (const key of ["admin", "salesHead", "rep", "presales", "purchase"] as UserK
   test(`${key} signs in, lands on ${USERS[key].home}, signs out`, async ({ page }) => {
     await login(page, key);
     await expect(page).toHaveURL(new RegExp(`${USERS[key].home}$`));
-    await expect(page.getByText(USERS[key].name).first()).toBeVisible();
+    // The signed-in person is named in the account menu
     await page.getByRole("button", { name: "Account menu" }).click();
+    await expect(page.getByRole("menu").getByText(USERS[key].name)).toBeVisible();
     await page.getByRole("menuitem", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/login/);
     // The session is gone: a protected page bounces back to login

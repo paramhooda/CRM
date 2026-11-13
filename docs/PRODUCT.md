@@ -221,9 +221,11 @@ against spreadsheet formula injection). **[inferred]** Native .xlsx is not produ
   unhandled errors or blank screens; secrets in `.env`.
 - **Data:** business-readable table and column names; permanent IDs; records link by ID; unique GSTIN and emails;
   soft deletes with admin restore; UTC timestamps; decimals for money; every schema change is a migration.
-- **Look and feel:** shadcn/ui; one table, one form style, one empty state, one toast; loading and empty states on
-  every screen; colour carries meaning (stage pills, forecast pills, a colour per BU) and nothing else is loud; light
-  mode first, dark mode through the same tokens; WCAG AA contrast; pills always carry text.
+- **Look and feel:** the design system in `docs/DESIGN.md` (light, flat, quiet: Geist, zinc neutrals, a brand-blue
+  scale, 1px borders, faint shadows, 36px controls, every colour, font, radius and shadow a token); shadcn/ui; one
+  table, one form style, one empty state, one toast; loading and empty states on every screen; colour carries
+  meaning (stage tags, forecast tags, a colour per BU) and nothing else is loud; light mode first, dark mode through
+  the same tokens; WCAG AA contrast; tags always carry text.
 - **Deployment:** one `docker compose up` (Postgres + app); migrations run on start.
 
 ## 17. Out of scope (deliberately)

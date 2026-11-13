@@ -26,7 +26,7 @@ won; Hold/Resume; Lost and Dropped with a reason; Back and Reopen for managers o
 price lapses an approval, visibility scope, the permission matrix, review flags and per-person summaries, fiscal year
 (April to March), rupee formatting, record codes.
 
-**Screens** (shadcn/ui, light and dark through tokens): sign-in; Home (numbers, to-do, filterable click-through
+**Screens** (shadcn/ui on the design system in `docs/DESIGN.md`, light and dark through tokens): sign-in; Home (numbers, to-do, filterable click-through
 charts) for sales roles; My work for presales and purchase; deals list with totals and a read-only board; new deal
 with a line editor (catalogue or custom lines, one-time or ARR); the deal page (facts, stage path, one Advance button
 and a menu for every other move with the fields each needs, lines by role, presales and pricing request cards, price
@@ -52,8 +52,11 @@ Taken with the owner during the build:
   OEM on every line, so funnels cut by BU, Sub BU, OEM and product. No bundles, no quote generator.
 - **Stages**: no "Identified" stage; new deals start at Qualified.
 - **Kept**: leads, documents on deals, admin-defined approval chains, the pipeline review page.
-- **Primary colour**: indigo `#5B5BD6`, with the logo's navy for the wordmark and its red only in the logo and for
-  destructive actions.
+- **Design system** (`docs/DESIGN.md`, applied after the first build): a light, flat, quiet UI in the style of Linear
+  and Vercel. Geist and Geist Mono, zinc neutrals (`#fafafa` page, white cards, `#e4e4e7` borders), a brand-blue scale
+  with brand-600 as the primary, fixed 6/8/12px radii, three faint shadow tokens, 36px controls, a full-width top
+  bar with a context search and the avatar menu over a nav-only sidebar. Every colour, font, radius and shadow is a
+  token and a unit test keeps raw values out of components and every tinted pair at WCAG AA.
 
 Inferred where the brief was silent (each is also marked **[inferred]** in `docs/PRODUCT.md`):
 
@@ -85,7 +88,7 @@ Everything below was run by `scripts/test-all.sh` from an empty database: recrea
 |---|---|
 | Recreate test database, `prisma migrate deploy`, seed | pass |
 | Lint, typecheck | pass |
-| Unit tests (stages, lines, approvals, scope and permissions, review, formatting) | pass, 41 tests |
+| Unit tests (stages, lines, approvals, scope and permissions, review, formatting, design tokens) | pass, 44 tests |
 | Production build (`next build`) | pass |
 | API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV) | pass, 44 tests |
 | Browser tests, every core flow per role | pass, 32 tests |
@@ -121,8 +124,9 @@ official `node:22-alpine` image and `npm ci`; the CI workflow's `docker` job bui
 `docker compose up --build` on a normal machine is the check.
 
 Screenshots of every main screen, per role, are in `docs/screenshots/` (light, dark and a phone-width view of the
-deals list). They were checked against the look-and-feel rules: coloured primary, tinted sidebar and tiles, stage and
-forecast pills that always carry text, one colour per business unit in tags and charts, loading and empty states.
+deals list). They were checked against `docs/DESIGN.md`: `#fafafa` page and sidebar, white cards with 1px borders and faint
+shadows, brand-blue primary, links and selection, stage and forecast tags that always carry text, one colour per
+business unit in tags and charts, codes and money in Geist Mono, 36px controls, loading and empty states.
 
 ## 5. How to run locally
 

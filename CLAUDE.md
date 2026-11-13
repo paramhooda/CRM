@@ -15,11 +15,11 @@ spec; when the spec and the code disagree, the spec wins and the code is fixed.
 ## Layout
 
 ```
-docs/            PRODUCT.md (spec), DATA_DICTIONARY.md (generated), REPORT.md, screenshots/
+docs/            PRODUCT.md (spec), DESIGN.md (design system), DATA_DICTIONARY.md (generated), REPORT.md, screenshots/
 prisma/          schema.prisma (/// comments feed the dictionary), migrations/, seed/ (reference + demo data)
 scripts/         test-all.sh (everything from an empty DB), db-reset.*, data-dictionary.ts, docker-entrypoint.sh
 src/app/         (auth)/login, (app)/… screens (server components read through services), api/v1/** route handlers
-src/components/  ui/ (shadcn, generated: do not hand-edit), crm/ (one component per job: DataTable, FilterBar, pills…)
+src/components/  ui/ (shadcn, generated then restyled: heights, radii, shadows; `shadcn add` overwrites, re-apply from git), crm/ (one component per job)
 src/contracts/   zod schemas + types for every request body and list query
 src/domain/      pure business rules, no I/O: stages, lines, approvals, scope, permissions, review, fiscal, money, csv
 src/server/      db, http (route wrapper), errors, audit, auth/, authz/, services/ (the only place that touches Prisma)
@@ -75,3 +75,6 @@ npm run test:all      # the whole proof from an empty database (recreate crm_tes
    `deal_stage_history`. Do not add a write path that skips this.
 9. Secrets only in `.env` (ignored). Never commit `.env`, never log a password, token or session cookie.
 10. Lint, typecheck and the unit tests must be green before a commit; run `npm run test:all` before a release.
+11. **Colours, fonts, radii and shadows are tokens** in `src/app/globals.css` (see `docs/DESIGN.md`). No raw hex,
+    `rgb()` or Tailwind palette class in a component; `tests/unit/design-tokens.test.ts` enforces it and checks the
+    contrast of every tinted pair. Status colour only for actual status.
