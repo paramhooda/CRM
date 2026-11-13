@@ -357,7 +357,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByText("Moved to Negotiation")).toBeVisible();
     await page.getByRole("button", { name: "Close as won" }).click();
     dlg = page.getByRole("dialog");
-    await dlg.locator("input[name=poNumber]").fill("PO/E2E/0001");
+    await dlg.locator("input[name=poNumber]").fill(`PO/E2E/${Date.now().toString().slice(-7)}`);
     // The PO document is required, not just its number
     await dlg.getByRole("button", { name: "Mark as won" }).click();
     await expect(dlg.getByText("Attach the customer's PO")).toBeVisible();

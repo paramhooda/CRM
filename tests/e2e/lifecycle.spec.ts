@@ -242,23 +242,33 @@ test.describe.serial("Lead to closure", () => {
 
   test("deactivating someone with open work requires a hand-over", async ({ page }) => {
     await login(page, ADMIN);
-    await page.goto("/admin?tab=users");
-    const row = page.getByRole("row", { name: /Amit Rampal/ });
-    await row.getByRole("button", { name: "Edit user" }).click();
-    let dlg = page.getByRole("dialog");
-    await dlg.getByRole("checkbox", { name: /Active/ }).uncheck();
-    await expect(dlg.getByLabel("Hand over to")).toBeVisible();
-    await dlg.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText(/still has open work/)).toBeVisible();
-    await dlg.getByLabel("Hand over to").selectOption({ label: "Ramraj Yadav · Presales" });
-    await dlg.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText(/moved to Ramraj Yadav/)).toBeVisible();
+    // Two presales engineers hand work to each other, so the test works on any run: whoever holds work now leaves
+    const pair = [["Amit Rampal", "Ramraj Yadav"], ["Ramraj Yadav", "Amit Rampal"]] as const;
+    let done = false;
+    for (const [leaving, successor] of pair) {
+      await page.goto("/admin?tab=users");
+      await page.getByRole("row", { name: new RegExp(leaving) }).getByRole("button", { name: "Edit user" }).click();
+      const dlg = page.getByRole("dialog");
+      await dlg.getByRole("checkbox", { name: /Active/ }).uncheck();
+      if (!(await dlg.getByLabel("Hand over to").isVisible())) {
+        await dlg.getByRole("button", { name: "Cancel" }).click();
+        continue;
+      }
+      await dlg.getByRole("button", { name: "Save" }).click();
+      await expect(page.getByText(/still has open work/)).toBeVisible();
+      await dlg.getByLabel("Hand over to").selectOption({ label: `${successor} · Presales` });
+      await dlg.getByRole("button", { name: "Save" }).click();
+      await expect(page.getByText(new RegExp(`moved to ${successor}`))).toBeVisible();
 
-    // Back to active for the other tests; nothing is left to hand over now
-    await page.getByRole("row", { name: /Amit Rampal/ }).getByRole("button", { name: "Edit user" }).click();
-    dlg = page.getByRole("dialog");
-    await dlg.getByRole("checkbox", { name: /Active/ }).check();
-    await dlg.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText("User saved")).toBeVisible();
+      // Back to active for the other tests; nothing is left to hand over now
+      await page.getByRole("row", { name: new RegExp(leaving) }).getByRole("button", { name: "Edit user" }).click();
+      const again = page.getByRole("dialog");
+      await again.getByRole("checkbox", { name: /Active/ }).check();
+      await again.getByRole("button", { name: "Save" }).click();
+      await expect(page.getByText("User saved")).toBeVisible();
+      done = true;
+      break;
+    }
+    expect(done).toBe(true);
   });
 });
