@@ -54,7 +54,7 @@ export default async function OpportunityPage({ params, searchParams }: { params
   const stage = o.stage as StageKey;
   const closed = ["WON", "LOST", "DROPPED"].includes(stage);
   const counts: Record<string, number> = {
-    boq: d.lines.length,
+    boq: d.lines.filter((l) => !l.isEstimate).length,
     documents: d.documents.length,
     requests: o.presalesRequests.length + o.pricingRequests.length,
     activity: o.activities.filter((a) => a.type !== "TASK" || a.completedAt).length,
@@ -351,7 +351,7 @@ function HistoryTab({ d }: { d: OppDetail }) {
   const actionLabel: Record<string, string> = {
     CREATE: "Created the opportunity", PRESALES_REQUESTED: "Pulled in presales", BOQ_SUBMITTED: "Submitted the BOQ",
     PRICING_REQUESTED: "Requested pricing", PRICING_COMPLETED: "Completed pricing", QUOTE_ISSUED: "Issued a quote", PRICES_SET: "Set the sales prices",
-    BOQ_UPDATED: "Updated the BOQ", CONTACTS: "Updated the buying group", DELETE: "Deleted",
+    BOQ_UPDATED: "Updated the BOQ", ESTIMATE_REPLACED: "Replaced the sales estimate with the BOQ", CONTACTS: "Updated the buying group", DELETE: "Deleted",
     BOQ_REVISION_REQUESTED: "Requested a BOQ revision", PRESALES_QUESTION: "Asked sales a question", PRESALES_ANSWERED: "Answered presales",
     PRICING_RETURNED: "Sent the BOQ back", REQUEST_REASSIGNED: "Reassigned a request", REQUEST_CANCELLED: "Cancelled a request",
     QUOTE_RESPONSE: "Recorded the customer response", DOCUMENT_ADDED: "Added a document", DOCUMENT_REMOVED: "Removed a document",

@@ -8,7 +8,7 @@ import { PrintButton } from "./print-button";
 
 export const metadata = { title: "Quotation" };
 
-type SnapLine = { lineNo: number; oem: string | null; partNumber: string | null; description: string; quantity: number; unit: string; billingFrequency?: "ONE_TIME" | "MONTHLY" | "QUARTERLY" | "ANNUAL"; recurring?: boolean; termMonths: number | null; hsnSac?: string | null; gstRatePct?: number | null; unitPrice: number; extended: number };
+type SnapLine = { lineNo: number; oem: string | null; partNumber: string | null; description: string; quantity: number; unit: string; billingFrequency?: "ONE_TIME" | "MONTHLY" | "QUARTERLY" | "ANNUAL"; recurring?: boolean; termMonths: number | null; hsnSac?: string | null; gstRatePct?: number | null; unitPrice: number; extended: number; bundledInto?: number | null };
 const PER: Record<string, string> = { MONTHLY: "/mo", QUARTERLY: "/qtr", ANNUAL: "/yr" };
 const freqOf = (l: SnapLine) => l.billingFrequency ?? (l.recurring ? "MONTHLY" : "ONE_TIME");
 
@@ -22,7 +22,9 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
   if (!opp) notFound();
   const q = await db.quote.findFirst({ where: { id: qid, opportunityId: id } });
   if (!q) notFound();
-  const lines = (q.snapshot as SnapLine[]) ?? [];
+  const all = (q.snapshot as SnapLine[]) ?? [];
+  // Components priced with a main item (a server's extra RAM and disks) are listed under it as included
+  const lines = all.filter((l) => !l.bundledInto).flatMap((l) => [l, ...all.filter((x) => x.bundledInto === l.lineNo)]);
   // Each line carries its own GST rate (5–28%); quotes issued before that was recorded assume 18%
   const subtotal = lines.length ? lines.reduce((sum, l) => sum + toNumber(l.extended), 0) : toNumber(q.totalPrice);
   const rateOf = (l: SnapLine) => (l.gstRatePct === null || l.gstRatePct === undefined ? 18 : Number(l.gstRatePct));
@@ -72,7 +74,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
           {lines.map((l) => (
             <tr key={l.lineNo} className="border-b border-neutral-100 align-top">
               <td className="py-2 pr-2 text-neutral-500">{l.lineNo}</td>
-              <td className="py-2 pr-2">
+              <td className={l.bundledInto ? "py-1.5 pl-4 pr-2" : "py-2 pr-2"}>
                 <p>{l.description}</p>
                 <p className="text-xs text-neutral-500">
                   {[l.oem, l.partNumber].filter(Boolean).join(" · ")}
@@ -81,8 +83,14 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
               </td>
               <td className="py-2 pr-2 font-mono text-xs">{l.hsnSac ?? "—"}</td>
               <td className="py-2 pr-2 text-right tabular">{l.quantity.toLocaleString("en-IN")} {l.unit}</td>
-              <td className="py-2 pr-2 text-right tabular">{inr(l.unitPrice, { precise: true })}{PER[freqOf(l)] && <span className="text-xs text-neutral-500">{PER[freqOf(l)]}</span>}</td>
-              <td className="py-2 text-right tabular">{inr(l.extended, { precise: true })}</td>
+              {l.bundledInto ? (
+                <td colSpan={2} className="py-2 text-right text-xs text-neutral-500">Included</td>
+              ) : (
+                <>
+                  <td className="py-2 pr-2 text-right tabular">{inr(l.unitPrice, { precise: true })}{PER[freqOf(l)] && <span className="text-xs text-neutral-500">{PER[freqOf(l)]}</span>}</td>
+                  <td className="py-2 text-right tabular">{inr(l.extended, { precise: true })}</td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>

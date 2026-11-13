@@ -620,6 +620,11 @@ model OpportunityLineItem {
   costSetAt        DateTime?
   /// Supplier or OEM quotes that cover this line
   quoteDocuments   DocumentLine[]
+  /// Priced together with this line (a bundle: one supplier price for several lines, e.g. a server with its RAM and
+  /// disks). A bundled line carries no cost or price of its own; the lead line's price covers it.
+  bundleLeadId     String?
+  bundleLead       OpportunityLineItem?  @relation("LineBundle", fields: [bundleLeadId], references: [id], onDelete: SetNull)
+  bundled          OpportunityLineItem[] @relation("LineBundle")
   /// Until when the supplier's price holds (purchase lines; each vendor quotes its own validity)
   costValidTill    DateTime?
   /// How presales built an internal cost, or why a line was sent to purchase
@@ -643,6 +648,7 @@ model OpportunityLineItem {
   updatedAt        DateTime          @updatedAt
 
   @@index([opportunityId, lineNo])
+  @@index([bundleLeadId])
   @@index([productId])
   @@index([oemId])
   @@index([businessUnitId, categoryId])

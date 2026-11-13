@@ -15,6 +15,7 @@ describe("supplier quotes behind purchase prices", () => {
     line({ id: "d", lineNo: 4, costValidTill: new Date("2026-11-01") }), // lapsed: renewed now
     line({ id: "e", lineNo: 5, costSource: "RATE_CARD", pricingStatus: "PENDING" }),
     line({ id: "f", lineNo: 6, ownBrand: true, costSetAt: new Date("2026-11-11") }), // Progression bought in
+    line({ id: "g", lineNo: 7, pricingStatus: "PENDING", bundleLeadId: "a" }), // RAM priced with line 1: its quote covers it
   ];
   it("asks only for lines priced in this request, never for rate card or own-brand lines", () => {
     expect(linesNeedingQuote(lines, raised, now).map((l) => l.lineNo)).toEqual([1, 2, 4]);

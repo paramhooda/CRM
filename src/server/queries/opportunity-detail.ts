@@ -87,6 +87,8 @@ export async function getOpportunityDetail(user: CurrentUser, id: string) {
     costSource: l.costSource,
     costValidTill: l.costValidTill,
     costSetAt: l.costSetAt,
+    /** Priced together with this line (a bundle): this line has no cost or price of its own */
+    bundleLeadId: l.bundleLeadId,
     costNote: showCost ? l.costNote : null,
     /** Costed once, but the specification changed since: the cost must be re-confirmed */
     costStale: !l.isEstimate && l.pricingStatus === "PENDING" && l.unitCost !== null && (l.needsReprice || l.costSource !== "PURCHASE"),

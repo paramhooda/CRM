@@ -24,6 +24,10 @@ export default async function BoqPage({ params }: { params: Promise<{ id: string
   });
   if (!opp) notFound();
   const ps = opp.presalesRequests[0];
+  // The sales estimate only stands in until there is a real line; components sit under the line they are priced with
+  const real = opp.lineItems.some((l) => !l.isEstimate) ? opp.lineItems.filter((l) => !l.isEstimate) : opp.lineItems;
+  const lineNoOf = new Map(real.map((l) => [l.id, l.lineNo]));
+  const items = real.filter((l) => !l.bundleLeadId || !lineNoOf.has(l.bundleLeadId)).flatMap((l) => [l, ...real.filter((x) => x.bundleLeadId === l.id)]);
   return (
     <div className="mx-auto max-w-[900px] rounded-lg border border-border bg-white p-10 text-[13px] text-neutral-900 shadow-sm print:border-0 print:p-0 print:shadow-none">
       <div className="mb-2 flex justify-end no-print"><PrintButton /></div>
@@ -44,12 +48,12 @@ export default async function BoqPage({ params }: { params: Promise<{ id: string
           </tr>
         </thead>
         <tbody>
-          {opp.lineItems.map((l) => (
+          {items.map((l) => (
             <tr key={l.id} className="border-b border-neutral-100 align-top">
               <td className="py-2 pr-2 tabular text-neutral-500">{l.lineNo}</td>
-              <td className="py-2 pr-2">
+              <td className={l.bundleLeadId ? "py-2 pl-4 pr-2" : "py-2 pr-2"}>
                 <p className="font-medium">{l.description}</p>
-                <p className="text-[11px] text-neutral-500">{[l.partNumber, l.businessUnit.name, l.isEstimate && "estimate"].filter(Boolean).join(" · ")}</p>
+                <p className="text-[11px] text-neutral-500">{[l.bundleLeadId && lineNoOf.has(l.bundleLeadId) && `↳ priced with line ${lineNoOf.get(l.bundleLeadId)}`, l.partNumber, l.businessUnit.name, l.isEstimate && "estimate"].filter(Boolean).join(" · ")}</p>
               </td>
               <td className="py-2 pr-2">{l.oem.name}</td>
               <td className="py-2 pr-2 text-right tabular">{toNumber(l.quantity).toLocaleString("en-IN")} {l.unit}</td>

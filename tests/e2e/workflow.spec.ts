@@ -43,6 +43,13 @@ async function pickProduct(page: Page, pickerIndex: number, sku: string) {
   await page.getByRole("button", { name: new RegExp(sku) }).click();
 }
 
+/** "Add product" adds a row with the catalogue search open; picking a product moves to its quantity */
+async function addProduct(page: Page, sku: string) {
+  await page.getByRole("button", { name: "Add product" }).first().click();
+  await page.getByPlaceholder("Search SKU, product, OEM or category").fill(sku);
+  await page.getByRole("button", { name: new RegExp(sku) }).click();
+}
+
 /** Optional fields on the deal form sit under "More details" */
 async function moreDetails(page: Page) {
   const b = page.getByRole("button", { name: /More details/ });
@@ -140,8 +147,7 @@ test.describe.serial("Sales → Presales → Purchase workflow with multi-OEM li
     await expect(page.getByRole("columnheader", { name: "Cost" })).toBeVisible();
     await expect(page.getByText("Priced by purchase").first()).toBeVisible();
     await expect(page.getByLabel("Line 1 unit cost")).toHaveCount(0);
-    await page.getByRole("button", { name: "Add line" }).click();
-    await pickProduct(page, 2, "PRG-NOC-02");
+    await addProduct(page, "PRG-NOC-02");
     await page.getByLabel("Line 3 quantity").fill("1");
     // Progression NOC is on the rate card: its cost is fixed, nobody types it (not even presales)
     await expect(page.getByLabel("Line 3 unit cost")).toHaveCount(0);
@@ -537,6 +543,115 @@ test.describe("Cost sources", () => {
     await resp.getByRole("button", { name: "Save" }).click();
     await expect(page.getByLabel("Deal status")).toContainText("Customer rejected quote v1");
     await expect(page.getByLabel("Deal status")).toContainText("Close the deal as lost");
+  });
+});
+
+test.describe.serial("Bundles: one supplier price for a server and its components", () => {
+  const name = `E2E Server bundle ${Date.now().toString().slice(-6)}`;
+  let url = "";
+
+  test("presales builds the BOQ beside sales' estimate; components share the server's price", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    await page.fill("#name", name);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "IT Infrastructure" });
+    await page.getByLabel("Line 1 category").selectOption({ label: "Server" });
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "HPE" });
+    await page.getByLabel("Line 1 value").fill("6000000");
+    await page.getByRole("radio", { name: /Needs presales/ }).click();
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    url = new URL(page.url()).pathname;
+    await page.getByRole("button", { name: "Advance to BOQ" }).click();
+    const req = page.getByRole("dialog");
+    await pickPresales(req, PRESALES.name);
+    await req.locator("textarea[name=scope]").fill("Four virtualisation hosts with extra memory and NVMe.");
+    await req.getByRole("button", { name: "Send to presales" }).click();
+    await expect(page.getByText("Presales notified")).toBeVisible();
+
+    await login(page, PRESALES.email);
+    await page.goto(`${url}?tab=boq`);
+    await page.getByRole("button", { name: "Edit line items" }).click();
+    // Sales' broad estimate is a reference, not a row to edit
+    await expect(page.getByLabel("Sales estimate")).toContainText("IT Infrastructure · Server · HPE");
+    await expect(page.getByLabel("Line 1 quantity")).toHaveCount(0);
+    await page.getByRole("button", { name: "Add the first product" }).click();
+    await page.getByPlaceholder("Search SKU, product, OEM or category").fill("HPE-SRV-01");
+    await page.getByRole("button", { name: /HPE-SRV-01/ }).click();
+    // Picking a product moves to its quantity; Enter adds the next product with the search open
+    await expect(page.getByLabel("Line 1 quantity")).toBeFocused();
+    await page.keyboard.type("4");
+    await page.keyboard.press("Enter");
+    await page.getByPlaceholder("Search SKU, product, OEM or category").fill("HPE-SRV-04");
+    await page.getByRole("button", { name: /HPE-SRV-04/ }).click();
+    await page.getByLabel("Line 2 quantity").fill("16");
+    // The memory is priced with the server
+    await page.getByLabel("Line 2 priced with").selectOption({ label: "With line 1" });
+    // ↳ adds a component straight into line 1's price
+    await page.getByRole("button", { name: "Add component to line 1" }).click();
+    await page.getByPlaceholder("Search SKU, product, OEM or category").fill("HPE-SRV-05");
+    await page.getByRole("button", { name: /HPE-SRV-05/ }).click();
+    await page.getByLabel("Line 3 quantity").fill("8");
+    await expect(page.getByText("3 lines · 1 bundle")).toBeVisible();
+    await expect(page.getByLabel("Edit line items").getByText("Bundle · lines 1–3")).toBeVisible();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Line items saved")).toBeVisible();
+    await expect(page.getByLabel("Line items")).toContainText("One price for lines 1–3");
+    await expect(page.getByLabel("Line items").getByText("Included in line 1")).toHaveCount(2);
+
+    await page.getByRole("button", { name: "Advance to Pricing" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.locator("textarea[name=solutionSummary]").fill("Four HPE hosts, 1 TB memory each, local NVMe for vSAN.");
+    await dlg.getByRole("button", { name: "Submit" }).click();
+    await expect(currentStage(page)).toHaveText("Pricing");
+    // The BOQ replaced the estimate
+    await expect(page.getByLabel("Sales estimate")).toHaveCount(0);
+  });
+
+  test("purchase gives one price for the server and its memory, and prices the disks on their own", async ({ page }) => {
+    await login(page, PURCHASE.email);
+    await page.goto(`${url}?tab=boq`);
+    await page.getByRole("button", { name: "Enter costs" }).click();
+    await expect(page.getByText("Price for lines 1–3")).toBeVisible();
+    await expect(page.getByLabel("Line 2 unit cost")).toHaveCount(0);
+    await expect(page.getByText("In line 1's price")).toHaveCount(2);
+    // The supplier quoted the disks separately: purchase takes them out of the bundle
+    await page.getByLabel("Line 3 priced with").selectOption({ label: "Own price" });
+    await expect(page.getByText("Price for lines 1–2")).toBeVisible();
+    await page.getByLabel("Line 1 unit cost").fill("1450000");
+    await page.getByLabel("Line 3 unit cost").fill("60000");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Line items saved")).toBeVisible();
+    await page.getByLabel("Deal status").getByRole("button", { name: "Pricing complete" }).click();
+    const done = page.getByRole("dialog");
+    // The memory is covered by the server's quote: no quote of its own
+    await expect(done.getByLabel("Quote coverage")).toContainText("Line 1");
+    await expect(done.getByLabel("Quote coverage")).toContainText("Line 3");
+    await expect(done.getByLabel("Quote coverage")).not.toContainText("Line 2");
+    await done.getByLabel("Add supplier quotes").setInputFiles({ name: "HPE quote H-118.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 hpe") });
+    await done.getByRole("button", { name: "Send to sales" }).click();
+    await expect(page.getByText("Pricing sent to sales")).toBeVisible();
+  });
+
+  test("sales prices the bundle once; the quote lists the memory as included", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto(`${url}?tab=history`);
+    await expect(page.getByText("Replaced the sales estimate with the BOQ (3 lines)")).toBeVisible();
+    await page.goto(url);
+    await page.getByRole("button", { name: "Advance to Proposal" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByLabel("Line 2 sales price")).toHaveCount(0);
+    await expect(dlg.getByText("Included in line 1")).toBeVisible();
+    await expect(dlg.getByText("Bundle · lines 1–2")).toBeVisible();
+    await dlg.getByLabel("Line 1 GM %").fill("15");
+    await dlg.getByLabel("Line 3 GM %").fill("15");
+    const popup = page.waitForEvent("popup");
+    await dlg.getByRole("button", { name: "Create & send quote" }).click();
+    const quote = await popup;
+    await expect(quote.getByText("Included")).toBeVisible();
+    await expect(quote.getByText("64 GB DDR5 memory module")).toBeVisible();
+    await quote.close();
   });
 });
 
@@ -936,9 +1051,9 @@ test.describe("Line items, navigation and filters", () => {
     await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
     await expect(page.getByText("₹25 L").first()).toBeVisible();
     await page.goto(`${new URL(page.url()).pathname}?tab=boq`);
-    await expect(page.getByText(/^Estimate ·/).first()).toBeVisible();
+    // Sales' estimate is a reference above the BOQ, not a line to edit
+    await expect(page.getByLabel("Sales estimate")).toContainText("IT Infrastructure · Server · To be decided · ₹25 L");
     await expect(page.getByText("Estimate only")).toBeVisible();
-    await expect(page.getByText("To be decided").first()).toBeVisible();
   });
 
   test("dashboard tiles open the matching filtered list", async ({ page }) => {

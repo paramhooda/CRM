@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronsUpDown, Package, PenLine, Search } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import type { ProductOption } from "@/server/queries/options";
@@ -9,8 +9,11 @@ import { cn } from "@/lib/utils";
 
 /** Searchable catalogue picker grouped by OEM. `null` selection means a custom (non-catalogue) line. */
 export function ProductPicker({
-  products, value, onChange, allowCustom = true, disabled, placeholder = "Choose product",
+  products, value, onChange, allowCustom = true, disabled, placeholder = "Choose product", defaultOpen = false, label = "Product",
 }: {
+  /** Open the search straight away (a line just added with "Add product") */
+  defaultOpen?: boolean;
+  label?: string;
   products: ProductOption[];
   value: string | null | "custom";
   onChange: (p: ProductOption | null) => void;
@@ -19,6 +22,13 @@ export function ProductPicker({
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Open on the next frame, so the click that added the row can't close it straight away
+  useEffect(() => {
+    if (!defaultOpen) return;
+    const t = window.setTimeout(() => setOpen(true), 30);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [q, setQ] = useState("");
   const current = value && value !== "custom" ? products.find((p) => p.id === value) : undefined;
   const filtered = useMemo(() => {
@@ -35,7 +45,7 @@ export function ProductPicker({
       <PopoverTrigger asChild disabled={disabled}>
         <button
           type="button"
-          aria-label="Product"
+          aria-label={label}
           className={cn(
             "flex h-8 w-full min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-left text-[13px] hover:border-border-strong disabled:cursor-default disabled:hover:border-border cursor-pointer",
           )}

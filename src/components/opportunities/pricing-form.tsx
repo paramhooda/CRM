@@ -17,6 +17,7 @@ import { COST_SOURCE_META, costHeading, type CostSourceKey } from "@/lib/costing
 import { BILLING_FREQUENCY_LABEL } from "@/lib/constants";
 import { fmtDate, inr, isoDate, pct } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { linesLabel } from "@/lib/bundles";
 
 export type PriceLine = {
   id: string;
@@ -37,6 +38,8 @@ export type PriceLine = {
   /** Catalogue list price; for a rate card item, its rate card price */
   listPrice: number | null;
   businessUnitId: string;
+  /** Line number of the line whose price covers this one (a bundle); its own price is 0 */
+  bundledInto?: number | null;
   /** What changed since the last quote ("New since quote v1", "On quote v1: 1,200 × 10"), to re-check after a revision */
   sinceQuote?: string | null;
 };
@@ -74,10 +77,14 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
 
   const groups = useMemo(() => {
     const m = new Map<string, PriceLine[]>();
-    for (const l of a.lines) m.set(l.buName, [...(m.get(l.buName) ?? []), l]);
+    // Each line, then the lines included in its price
+    const ordered = a.lines.filter((l) => !l.bundledInto).flatMap((l) => [l, ...a.lines.filter((x) => x.bundledInto === l.n)]);
+    for (const l of ordered) m.set(l.buName, [...(m.get(l.buName) ?? []), l]);
     return [...m.entries()];
   }, [a.lines]);
-  const priced = a.lines.map((l) => ({ ...l, unitCost: l.cost, unitPrice: asPrice(prices[l.id]) }));
+  const included = (l: PriceLine) => !!l.bundledInto;
+  const covers = (l: PriceLine) => a.lines.filter((x) => x.bundledInto === l.n).map((x) => x.n);
+  const priced = a.lines.map((l) => ({ ...l, unitCost: l.cost, unitPrice: included(l) ? 0 : asPrice(prices[l.id]) }));
   const unpriced = priced.filter((l) => l.unitPrice === null).length;
   const negative = priced.filter((l) => l.unitPrice !== null && l.unitPrice < 0).map((l) => l.n);
   const gm = gmSummary(priced);
@@ -132,12 +139,19 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
               <div key={bu}>
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-2/60 px-5 py-1.5 text-xs font-medium text-ink-2">
                   <span>{bu} <span className="font-normal text-ink-3">· {ls.length} line{ls.length > 1 ? "s" : ""}</span></span>
-                  {(groups.length > 1 || ls.length > 1) && <BuMargin bu={bu} onMargin={(m) => ls.forEach((l) => setPrice(l.id, priceAtMargin(l.cost, m)))} />}
+                  {(groups.length > 1 || ls.length > 1) && <BuMargin bu={bu} onMargin={(m) => ls.forEach((l) => !included(l) && setPrice(l.id, priceAtMargin(l.cost, m)))} />}
                 </div>
                 {ls.map((l) => {
                   const price = asPrice(prices[l.id]);
                   const lineGm = price === null ? null : l.mult * (price - l.cost);
                   const meta = COST_SOURCE_META[l.costSource as CostSourceKey];
+                  if (included(l))
+                    return (
+                      <div key={l.id} className="border-t border-dashed border-border py-2 pl-9 pr-5 text-xs">
+                        <p className="text-[13px]">↳ {l.n}. {l.description}</p>
+                        <p className="text-ink-3">{l.quantity.toLocaleString("en-IN")} {l.unit} · Included in line {l.bundledInto}</p>
+                      </div>
+                    );
                   return (
                     <div key={l.id} className="border-t border-border px-5 py-3">
                       <p className="text-[13px] font-medium">{l.n}. {l.description}</p>
@@ -146,7 +160,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
                         {l.quantity.toLocaleString("en-IN")} {l.unit} · {l.billingFrequency === "ONE_TIME" ? "One-time" : `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo`}
                       </p>
                       <div className="mt-2 grid grid-cols-2 gap-2">
-                        <div className="text-xs text-ink-3">{meta?.costLabel ?? "Cost"}{l.costSource !== "PURCHASE" ? ` · ${meta?.label.toLowerCase()}` : ""}<p className="text-[13px] tabular text-ink-2">{l.cost.toLocaleString("en-IN")}</p></div>
+                        <div className="text-xs text-ink-3">{covers(l).length ? `Bundle · ${linesLabel([l.n, ...covers(l)])}` : meta?.costLabel ?? "Cost"}{l.costSource !== "PURCHASE" ? ` · ${meta?.label.toLowerCase()}` : ""}<p className="text-[13px] tabular text-ink-2">{l.cost.toLocaleString("en-IN")}</p></div>
                         <div className="text-right text-xs text-ink-3">GM<p className={cn("text-[13px] tabular text-ink-2", lineGm !== null && lineGm < 0 && "text-[var(--t-red)]")}>{lineGm === null ? "—" : inr(lineGm)}</p></div>
                         <label className="text-xs text-ink-3">Sales price
                           <Input
@@ -179,11 +193,19 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
             </thead>
             <tbody>
               {groups.map(([bu, ls]) => [
-                <BuRow key={`bu-${bu}`} bu={bu} count={ls.length} show={groups.length > 1 || ls.length > 1} onMargin={(m) => ls.forEach((l) => setPrice(l.id, priceAtMargin(l.cost, m)))} />,
+                <BuRow key={`bu-${bu}`} bu={bu} count={ls.length} show={groups.length > 1 || ls.length > 1} onMargin={(m) => ls.forEach((l) => !included(l) && setPrice(l.id, priceAtMargin(l.cost, m)))} />,
                 ...ls.map((l) => {
                   const price = asPrice(prices[l.id]);
                   const lineGm = price === null ? null : l.mult * (price - l.cost);
                   const recurring = l.billingFrequency !== "ONE_TIME";
+                  if (included(l))
+                    return (
+                      <tr key={l.id} className="border-t border-dashed border-border align-top text-ink-2">
+                        <td className="py-2 pl-12 pr-5"><span className="mr-1.5 text-xs tabular text-ink-3">↳ {l.n}</span>{l.description}</td>
+                        <td className="px-2 py-2 text-right tabular">{l.quantity.toLocaleString("en-IN")} <span className="text-xs text-ink-3">{l.unit}</span></td>
+                        <td colSpan={4} className="px-5 py-2 text-right text-xs text-ink-3">Included in line {l.bundledInto}</td>
+                      </tr>
+                    );
                   return (
                     <tr key={l.id} className="border-t border-border align-top">
                       <td className="px-5 py-2.5">
@@ -201,7 +223,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
                       <td className="px-2 py-2.5 text-right tabular">{l.quantity.toLocaleString("en-IN")} <span className="text-xs text-ink-3">{l.unit}</span></td>
                       <td className="px-2 py-2.5 text-right">
                         <span className="tabular text-ink-2">{l.cost.toLocaleString("en-IN")}</span>
-                        <span className="block whitespace-nowrap text-[11px] text-ink-3">{COST_SOURCE_META[l.costSource as CostSourceKey]?.costLabel ?? "Cost"}{l.costSource !== "PURCHASE" ? ` · ${COST_SOURCE_META[l.costSource as CostSourceKey]?.label.toLowerCase()}` : ""}</span>
+                        <span className="block whitespace-nowrap text-[11px] text-ink-3">{covers(l).length ? `Bundle · ${linesLabel([l.n, ...covers(l)])}` : COST_SOURCE_META[l.costSource as CostSourceKey]?.costLabel ?? "Cost"}{l.costSource !== "PURCHASE" ? ` · ${COST_SOURCE_META[l.costSource as CostSourceKey]?.label.toLowerCase()}` : ""}</span>
                       </td>
                       <td className="px-2 py-2">
                         <Input

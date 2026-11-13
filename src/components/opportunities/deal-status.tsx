@@ -277,7 +277,10 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
     label: ap?.status === "PENDING" ? "Review prices" : quote ? "Send revised quote" : "Create & send quote",
     disabledReason: w.blockers.find((b) => !b.startsWith("Quote v") && !b.startsWith("The lines changed") && !b.startsWith("The deal is on hold")),
     lines: realLines.map((l) => ({
-      id: l.id, n: l.lineNo, description: l.description, partNumber: l.partNumber, buName: l.buName || "Unclassified", quantity: l.quantity, unit: l.unit,
+      id: l.id, n: l.lineNo, description: l.description, partNumber: l.partNumber, quantity: l.quantity, unit: l.unit,
+      // A component priced with another line sits under it, in its business unit, and carries no price of its own
+      bundledInto: realLines.find((x) => x.id === l.bundleLeadId)?.lineNo ?? null,
+      buName: (realLines.find((x) => x.id === l.bundleLeadId) ?? l).buName || "Unclassified",
       billingFrequency: l.billingFrequency as BillingFrequencyKey, termMonths: l.termMonths, mult: lineMultiplier(l), cost: l.unitCost ?? 0,
       costSource: l.costSource, price: l.unitPrice, listPrice: l.listPrice, businessUnitId: l.businessUnitId,
       sinceQuote: quote && (w.state === "READY_TO_QUOTE" || w.state === "CHANGES_REQUESTED") ? changed(l) : null,
@@ -312,7 +315,7 @@ export function dealActions(d: OppDetail, options: Options): { actions: DealActi
         actions.push({
           id: "submit", kind: "submitBoq", label: "Submit BOQ", primary: openPs.status !== "NEEDS_INFO" || !isSales, requestId: openPs.id, purchase: options.purchase,
           oppId: o.id, docs: docs(["SOLUTION_DOC", "BOQ_SHEET", "PRESENTATION", "SITE_SURVEY"]), canAdd,
-          lineCount: d.lines.length, toPrice: w.needsCost, asked: openPs.deliverables.map((k) => DELIVERABLE_LABEL[k] ?? k),
+          lineCount: realLines.length, toPrice: w.needsCost, asked: openPs.deliverables.map((k) => DELIVERABLE_LABEL[k] ?? k),
           // Deliverables that are documents, asked for on this request and not attached yet
           missingDocs: openPs.deliverables.filter((k) => DOC_DELIVERABLES.includes(k) && !have.includes(k)).map((k) => DELIVERABLE_LABEL[k] ?? k),
           disabledReason: w.needsInternalCost

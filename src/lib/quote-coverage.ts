@@ -13,6 +13,8 @@ export type CoverLine = {
   /** Still waiting on purchase when the request is completed: its cost is confirmed by completing */
   pricingStatus: string;
   costValidTill: Date | null;
+  /** Priced with another line (a bundle): that line's quote covers it */
+  bundleLeadId?: string | null;
 };
 
 export const QUOTE_KINDS = ["SUPPLIER_QUOTE", "OEM_QUOTE"];
@@ -21,7 +23,7 @@ export const QUOTE_KINDS = ["SUPPLIER_QUOTE", "OEM_QUOTE"];
 export function linesNeedingQuote<L extends CoverLine>(lines: L[], requestCreatedAt: Date, now: Date): L[] {
   return lines.filter(
     (l) =>
-      !l.isEstimate && l.costSource === "PURCHASE" && !l.ownBrand &&
+      !l.isEstimate && l.costSource === "PURCHASE" && !l.ownBrand && !l.bundleLeadId &&
       ((l.costSetAt !== null && l.costSetAt >= requestCreatedAt) || l.pricingStatus === "PENDING" || (!!l.costValidTill && l.costValidTill < now)),
   );
 }

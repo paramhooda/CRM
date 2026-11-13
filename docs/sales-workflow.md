@@ -5,7 +5,7 @@ Each team owns one pipeline stage. The CRM moves the deal to the next stage as e
 | Stage | Owner | Work | Hand-over (moves the deal on) |
 |---|---|---|---|
 | Qualified | Sales | Every opportunity starts here (leads carry the earlier qualification); add quick-estimate lines (BU, category, OEM or "To be decided", value if known) | **Request BOQ from presales** → BOQ |
-| **BOQ** | Presales | Turn estimates into catalogue lines; attach the documents sales asked for | **Submit BOQ** → Pricing |
+| **BOQ** | Presales | Build the BOQ from catalogue products (sales' estimate shows above it as a reference); attach the documents sales asked for | **Submit BOQ** → Pricing |
 | **Pricing** | Purchase | Enter the purchase price of each third-party line, backed by the supplier's quote | **Pricing complete** → back to sales, still in Pricing |
 | Pricing (priced) | Sales (deal owner) | Set the sales price of each line; ask for approval when a rule applies | **Create & send quote** → Proposal Submitted |
 | Proposal Submitted, Negotiation | Sales | Follow up with the customer | **Record customer response**; mark **Won** with the PO |
@@ -31,7 +31,7 @@ Each person enters only what they know at their step. Everything else is derived
 The form suggests it from the categories, and sales can change it. An admin sets which categories need presales under Settings → Business units and categories.
 
 - **Needs presales (solution deal)**, for example servers, storage, networking, cloud, managed services, SOC and compliance. Presales designs the solution and prepares the BOQ, then purchase prices it. Pricing cannot be requested until presales has submitted a BOQ.
-- **No presales (resale deal)**, for example laptops, desktops and licences. Sales replaces the estimate with catalogue products on Line items and requests pricing directly; the BOQ stage is skipped.
+- **No presales (resale deal)**, for example laptops, desktops and licences. Sales adds catalogue products on Line items (the estimate stays as a reference until pricing is requested) and requests pricing directly; the BOQ stage is skipped.
 
 ### Bringing presales in later
 
@@ -73,6 +73,23 @@ Most MSPs and system integrators split cost the same way: bought-in products are
 - Each purchase line carries its own supplier's validity, because one deal often has prices from several distributors. Purchase sets it on the line; the date given at **Pricing complete** fills any line without one. **Re-validate costs** sends back only the lines whose price has lapsed.
 - **Every price purchase enters is backed by a quote.** At Pricing complete, each third-party line priced in that request (entered, confirmed unchanged, or renewed) needs a supplier or OEM quote attached to the request; one quote can cover several lines, ticked in the dialog ("covers line 1 2 3"). Rate card, presales-costed and own-brand bought-in lines need none. The Documents tab shows which lines each quote covers.
 - Presales must enter the cost of own-brand lines before submitting the BOQ. A deal with only own-brand lines skips purchase altogether.
+
+### One price for several lines (bundles)
+
+Suppliers price a configured item either line by line or as one price: a server with its extra memory and disks is
+often quoted as one figure. The BOQ follows the supplier, case by case.
+- **Presales** groups lines while building the BOQ: **↳ Add component** on a line adds a part priced with it, and **Priced as** on any third-party line chooses **Own price** or **With line N**.
+- **Purchase** regroups to match the supplier's quote the same way, while entering costs. The main line's cost reads **Price for lines 1–3** and covers the whole bundle; the included lines show **In line 1's price** and take no cost.
+- **Sales** sets one sales price on the main line. Included lines show **Included in line 1** in the pricing step, on the BOQ, and on the quote, which lists them under the main item as **Included**.
+- **Rules:**
+  - one level only: a line that is itself included can't carry others;
+  - only third-party (purchase-priced) lines can be bundled, never rate card or presales-costed lines;
+  - included lines bill like their main line (one-time, or the same frequency and term).
+- **Re-pricing:**
+  - adding or taking out a line from a priced bundle sends the main line back to purchase for a new price, unless purchase enters it in the same save;
+  - a line taken out of a bundle needs its own price from purchase.
+- **Supplier quotes:** an included line needs no quote of its own; the main line's quote covers it.
+- **Reporting and billing:** a bundle's value counts under its main line's OEM, category and business unit, because included lines are worth ₹0 on their own. Won deals are billed with included lines as part of their main line: the billing export carries them at ₹0, with `includedInLineNo`. If finance must invoice components separately, price them separately.
 - Sales sees where each cost came from on Line items: Purchase price (with validity and distributor), Internal cost · rate card or Internal cost · presales, or who it is still waiting on.
 
 ## Sales prices, GM and approvals
@@ -280,7 +297,7 @@ Below the status, three facts: **value**, **expected close** and **next step**. 
 - Re-pricing also sends back any purchase line whose supplier price has lapsed. **Pricing complete**'s date renews only lines in that request, never a lapsed line outside it.
 - Two clicks or two people can't create the same request, quote or stage change twice.
 - Dates picked in forms mean the end of that day in India, so a request due on the 15th isn't overdue that morning.
-- Quotes need every line costed (by purchase, the rate card or presales), no estimate lines, a real OEM on every line, and no lapsed supplier price on any line.
+- Quotes need every line costed (by purchase, the rate card or presales), at least one real line (sales' estimate is removed when the quote goes out), a real OEM on every line, and no lapsed supplier price on any line.
 
 ## Automatic reminders
 
@@ -297,7 +314,18 @@ The rules are in `src/lib/workflow.ts` (unit-tested), the actions in `src/server
 
 ## Line items
 
-The Line items tab shows the BOQ as a clean read-only table, grouped by business unit with subtotals. Each row shows the item, quantity, billing, sales price and amount; the cost column (Purchase price, Internal cost, or both when mixed) and GM appear for people who can see cost, with where each cost came from (Purchase price with its validity, Internal cost · rate card or Internal cost · presales) or who it is waiting on. The totals show the contract GM and, for recurring lines, the monthly GM. Estimates, lapsed supplier prices and lines that need re-pricing are marked.
+**Sales' estimate is a reference, not a line to edit.** The quick-estimate lines sales adds when creating the deal
+(BU, category, OEM, value) show in a one-line **Sales estimate** box above the BOQ. Presales builds the BOQ from scratch
+beside it. When the BOQ is handed on (**Submit BOQ**, or **Request pricing** on a resale deal), the estimate is removed
+and the deal's History records what it said. Until then the deal value comes from the BOQ lines once there are any, so
+nothing counts twice.
+
+**Building a BOQ of 15–20 lines quickly:**
+- **Add product** adds a row with the catalogue search open. Picking a product moves straight to its quantity, and **Enter** in a quantity adds the next product.
+- **↳ Add component** on a line adds a part priced with it (see "One price for several lines").
+- Each row has only what matters: the product, the quantity (unit from the catalogue), billing only for recurring items, how it is priced, and remove. Custom lines add a description, BU, category, OEM, HSN/SAC and unit.
+
+The Line items tab shows the BOQ as a clean read-only table, grouped by business unit with subtotals. Each row shows the item, quantity, billing, sales price and amount; the cost column (Purchase price, Internal cost, or both when mixed) and GM appear for people who can see cost, with where each cost came from (Purchase price with its validity, Internal cost · rate card or Internal cost · presales) or who it is waiting on. The totals show the contract GM and, for recurring lines, the monthly GM. Lapsed supplier prices and lines that need re-pricing are marked, and included lines sit indented under their main line.
 
 Each person's button opens edit mode with only the fields they may change:
 - **Edit line items** for presales and the deal owner (products and quantities, and the owner's prices);

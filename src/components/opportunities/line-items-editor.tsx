@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Save, Lock, RefreshCw, Pencil, X } from "lucide-react";
+import { Plus, Trash2, Save, Lock, RefreshCw, Pencil, X, CornerDownRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -12,11 +12,18 @@ import type { OppDetail } from "@/server/queries/opportunity-detail";
 import type { ProductOption } from "@/server/queries/options";
 import { inr, pct, fmtDate, isoDate } from "@/lib/format";
 import { COST_SOURCE_META, allowedCostSources, costHeading, defaultCostSource, type CostSourceKey } from "@/lib/costing";
+import { linesLabel } from "@/lib/bundles";
 import { billingPeriods, gmSummary, type BillingFrequencyKey } from "@/lib/boq";
 import { BILLING_FREQUENCY_LABEL, LINE_BILLING_STATUS_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
-type Line = OppDetail["lines"][number] & { _key: string; _custom?: boolean; _confirm?: boolean };
+/** `_lead`: the key of the line whose price covers this one (a bundle); `_open`: open the product search on first show */
+type Line = OppDetail["lines"][number] & { _key: string; _custom?: boolean; _confirm?: boolean; _lead?: string | null; _open?: boolean };
+/** Rows in display order: each line, then the lines bundled into it */
+const ordered = (rs: Line[]) => {
+  const leads = rs.filter((r) => !r._lead || !rs.some((x) => x._key === r._lead));
+  return leads.flatMap((l) => [l, ...rs.filter((r) => r._lead === l._key)]);
+};
 /** `sales`: sees the sell side (unit price, value, margin). Presales and purchase see specification and cost only. */
 type Perms = { spec: boolean; cost: boolean; internalCost: boolean; price: boolean; viewCost: boolean; sales: boolean };
 type Opt = { id: string; name: string };
@@ -51,7 +58,10 @@ export function LineItemsEditor({
   startEditing?: boolean;
 }) {
   const [version, setVersion] = useState(initialVersion);
-  const start = () => initial.map((l) => ({ ...l, _key: l.id, _custom: !l.productId }));
+  const start = () => {
+    const ls: Line[] = initial.map((l) => ({ ...l, _key: l.id, _custom: !l.productId, _lead: l.bundleLeadId }));
+    return [...ordered(ls.filter((l) => !l.isEstimate)), ...ls.filter((l) => l.isEstimate)];
+  };
   const [lines, setLines] = useState<Line[]>(start);
   const [dirty, setDirty] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -60,7 +70,7 @@ export function LineItemsEditor({
   // Unsaved edits are never overwritten.
   useEffect(() => {
     if (dirty) return;
-    setLines(initial.map((l) => ({ ...l, _key: l.id, _custom: !l.productId })));
+    setLines(start());
     setVersion(initialVersion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial, initialVersion]);
@@ -90,31 +100,43 @@ export function LineItemsEditor({
       productId: p.id, _custom: false, isEstimate: false, businessUnitId: p.businessUnitId, categoryId: p.categoryId, oemId: p.oemId, oemName: p.oemName,
       buName: p.buName, categoryName: p.categoryName, partNumber: p.code, description: p.name, unit: p.unit,
       billingFrequency: p.billingFrequency, termMonths: p.billingFrequency === "ONE_TIME" ? null : defaultTerm ?? p.defaultTermMonths ?? 12,
-      hsnSac: p.hsnSac, gstRatePct: p.gstRatePct, listPrice: p.listPrice, standardCost: p.standardCost,
+      hsnSac: p.hsnSac, gstRatePct: p.gstRatePct, listPrice: p.listPrice, standardCost: p.standardCost, _open: false,
     });
+    // Quick entry: straight to the quantity
+    setTimeout(() => document.querySelector<HTMLInputElement>(`[data-qty="${key}"]`)?.select(), 60);
   };
-  const add = () => {
-    setLines((ls) => [
-      ...ls,
-      {
-        _key: k(), _custom: false, isEstimate: false, id: "", lineNo: ls.length + 1, productId: null, businessUnitId: "", categoryId: "", oemId: "",
-        oemName: "", buName: "", categoryName: "", partNumber: "", description: "", quantity: 1, unit: "Nos", billingFrequency: "ONE_TIME",
-        termMonths: null, hsnSac: null, gstRatePct: 18, unitCost: null, distributor: null, oemQuoteRef: null, leadTimeDays: null,
-        pricingStatus: "PENDING", costStale: false, ownBrand: false, rateCard: false, costSource: "PURCHASE", costValidTill: null, costSetAt: null, costNote: null, costExpired: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY", lockedAt: null, notes: null,
-      },
-    ]);
+  // Sales' quick estimates are a reference while the BOQ is built; the BOQ replaces them when it is handed on
+  const estimates = lines.filter((l) => l.isEstimate);
+  const rows = lines.filter((l) => !l.isEstimate);
+  const blank = (p: Partial<Line> = {}): Line => ({
+    _key: k(), _custom: false, isEstimate: false, id: "", lineNo: 0, productId: null, businessUnitId: "", categoryId: "", oemId: "",
+    oemName: "", buName: "", categoryName: "", partNumber: "", description: "", quantity: 1, unit: "Nos", billingFrequency: "ONE_TIME",
+    termMonths: null, hsnSac: null, gstRatePct: 18, unitCost: null, distributor: null, oemQuoteRef: null, leadTimeDays: null,
+    pricingStatus: "PENDING", costStale: false, ownBrand: false, rateCard: false, costSource: "PURCHASE", costValidTill: null, costSetAt: null,
+    bundleLeadId: null, costNote: null, costExpired: false, unitPrice: null, listPrice: null, standardCost: null, billingStatus: "NOT_READY",
+    lockedAt: null, notes: null, _lead: null, _open: true, ...p,
+  });
+  const setRows = (f: (rs: Line[]) => Line[]) => {
+    setLines((ls) => [...ordered(f(ls.filter((l) => !l.isEstimate))), ...ls.filter((l) => l.isEstimate)]);
     setDirty(true);
   };
-  const remove = (key: string) => {
-    setLines((ls) => ls.filter((l) => l._key !== key));
-    setDirty(true);
-  };
+  const add = () => setRows((rs) => [...rs, blank()]);
+  /** A line priced with this one (RAM or disks for a server), billed the same way */
+  const addComponent = (lead: Line) =>
+    setRows((rs) => [...rs, blank({ _lead: lead._key, billingFrequency: lead.billingFrequency, termMonths: lead.termMonths })]);
+  // A line taken out of a bundle needs a price of its own (it had none while bundled)
+  const own = (r: Line): Line => ({ ...r, _lead: null, unitCost: r._lead ? null : r.unitCost });
+  const remove = (key: string) => setRows((rs) => rs.filter((r) => r._key !== key).map((r) => (r._lead === key ? own(r) : r)));
+  const priceWith = (key: string, lead: string | null) => setRows((rs) => rs.map((r) => (r._key !== key ? r : lead ? { ...r, _lead: lead } : own(r))));
+  const bundleCount = new Set(rows.filter((r) => r._lead).map((r) => r._lead)).size;
+  const no = (key: string | null | undefined) => rows.findIndex((r) => r._key === key) + 1;
 
   const totals = useMemo(() => {
     let sell = 0, cost = 0, sellCosted = 0, costPriced = 0, priced = 0, costed = 0, recurring = 0;
     const byOem = new Map<string, number>();
     const byBu = new Map<string, number>();
-    for (const l of lines) {
+    const shown = rows.length ? rows : estimates;
+    for (const l of shown) {
       const m = mult(l);
       const unit = l.unitPrice ?? l.listPrice ?? 0;
       const value = m * unit;
@@ -130,8 +152,9 @@ export function LineItemsEditor({
       const rest = all.slice(4).reduce((a, [, v]) => a + v, 0);
       return rest > 0 ? [...head, ["Other", rest] as [string, number]] : head;
     };
-    const gm = gmSummary(lines.map((l) => ({ ...l, billingFrequency: l.billingFrequency as BillingFrequencyKey })));
-    return { sell, cost, margin: sellCosted ? ((sellCosted - costPriced) / sellCosted) * 100 : null, gm, priced, costed, recurring, oemMix: toMix(byOem), buMix: toMix(byBu) };
+    const gm = gmSummary(shown.map((l) => ({ ...l, billingFrequency: l.billingFrequency as BillingFrequencyKey })));
+    return { count: shown.length, sell, cost, margin: sellCosted ? ((sellCosted - costPriced) / sellCosted) * 100 : null, gm, priced, costed, recurring, oemMix: toMix(byOem), buMix: toMix(byBu) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines]);
 
   const save = () =>
@@ -139,11 +162,13 @@ export function LineItemsEditor({
       () =>
         saveBoq(
           oppId,
-          lines.map((l) => ({
+          // BOQ lines first (numbered 1..n), the sales estimate after them, unchanged
+          [...rows, ...estimates].map((l) => ({
+            bundleWith: l.isEstimate ? null : l._lead ? rows.findIndex((r) => r._key === l._lead) : null,
             id: l.id || undefined, productId: l.productId, businessUnitId: l.businessUnitId || null, categoryId: l.categoryId || null,
             oemId: l.oemId || null, partNumber: l.partNumber, description: l.description, isEstimate: l.isEstimate, quantity: l.quantity, unit: l.unit,
             billingFrequency: l.billingFrequency, termMonths: l.termMonths, hsnSac: l.hsnSac, gstRatePct: l.gstRatePct,
-            unitCost: l.unitCost, distributor: l.distributor, oemQuoteRef: l.oemQuoteRef, leadTimeDays: l.leadTimeDays,
+            unitCost: l._lead ? 0 : l.unitCost, distributor: l.distributor, oemQuoteRef: l.oemQuoteRef, leadTimeDays: l.leadTimeDays,
             costSource: l.costSource, costValidTill: l.costValidTill, costNote: l.costNote, confirmCost: l._confirm || undefined,
             unitPrice: l.unitPrice, notes: l.notes,
           })),
@@ -156,17 +181,6 @@ export function LineItemsEditor({
       },
     );
 
-  const numIn = (v: number | null, onChange: (n: number | null) => void, disabled: boolean, label: string, placeholder?: number | null) =>
-    disabled ? (
-      <span className="block text-right tabular">{v === null ? <span className="text-ink-3">—</span> : v.toLocaleString("en-IN")}</span>
-    ) : (
-      <Input
-        type="number" inputMode="decimal" min={0} step="any" value={v ?? ""} aria-label={label}
-        placeholder={placeholder !== null && placeholder !== undefined ? placeholder.toLocaleString("en-IN") : undefined}
-        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-        className="h-8 w-full text-right tabular"
-      />
-    );
   const sel = (value: string, onChange: (v: string) => void, opts: Opt[], label: string, placeholder: string) => (
     <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} className="h-7 min-w-0 flex-1 rounded-md border border-border bg-surface px-1.5 text-xs">
       <option value="">{placeholder}</option>
@@ -179,7 +193,7 @@ export function LineItemsEditor({
     <div className="rounded-xl border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
         <p className="text-sm font-semibold">Line items</p>
-        <span className="text-xs text-ink-3">{lines.length} lines</span>
+        <span className="text-xs text-ink-3">{rows.length} line{rows.length === 1 ? "" : "s"}{bundleCount ? ` · ${bundleCount} bundle${bundleCount > 1 ? "s" : ""}` : ""}</span>
         <div className="flex flex-wrap items-center gap-1.5">
           {locked && <Badge tone="green"><Lock className="size-3" /> Locked for billing{lockedAt ? ` · ${fmtDate(lockedAt)}` : ""}</Badge>}
           {!locked && perms.spec && lockReason && <Badge tone="slate"><Lock className="size-3" /> Products and quantities locked</Badge>}
@@ -187,7 +201,7 @@ export function LineItemsEditor({
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {!editing && editable && <Button size="sm" variant="primary" onClick={() => setEditing(true)}><Pencil /> {editLabel}</Button>}
-          {can.spec && <Button size="sm" onClick={add}><Plus /> Add line</Button>}
+          {can.spec && <Button size="sm" onClick={add}><Plus /> Add product</Button>}
           {editing && <Button size="sm" variant="ghost" onClick={stopEditing}><X /> Cancel</Button>}
           {editing && <Button size="sm" variant="primary" disabled={!dirty || pending} onClick={save}><Save /> Save</Button>}
         </div>
@@ -202,153 +216,212 @@ export function LineItemsEditor({
           {Object.entries(errors).map(([path, msg]) => `Line ${Number(path.split(".")[0]) + 1}: ${msg}`).join(" · ")}
         </p>
       )}
+      {estimates.length > 0 && (
+        <div className="border-b border-border bg-surface-2/60 px-5 py-2.5 text-xs text-ink-2" aria-label="Sales estimate">
+          <span className="font-medium text-ink">Sales estimate</span>{" "}
+          {estimates.map((e) => `${[e.buName, e.categoryName, e.oemName].filter(Boolean).join(" · ")}${perms.sales && e.unitPrice !== null ? ` · ${inr(mult(e) * e.unitPrice)}` : ""}`).join("; ")}
+          <span className="text-ink-3"> · {rows.length ? "the BOQ replaces it when it is handed on" : "build the BOQ with Add product; it replaces this estimate"}</span>
+        </div>
+      )}
       {!editing ? (
-        <BoqView lines={lines} viewCost={perms.viewCost} sales={perms.sales} locked={locked} />
+        <BoqView lines={rows} viewCost={perms.viewCost} sales={perms.sales} locked={locked} />
       ) : (
       <div className="overflow-x-auto scrollbar-thin">
-        <table className="w-full min-w-[1140px] table-fixed text-[13px]">
+        <table className="w-full min-w-[900px] table-fixed text-[13px]" aria-label="Edit line items">
           <thead>
             <tr className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wide text-ink-3">
-              <th scope="col" className="w-9 px-3 py-2.5 font-medium">#</th>
-              <th scope="col" className="px-2 py-2.5 font-medium">Product</th>
-              <th scope="col" className="w-[136px] px-2 py-2.5 font-medium">Quantity</th>
-              <th scope="col" className="w-[128px] px-2 py-2.5 font-medium">Billing</th>
+              <th scope="col" className="w-10 px-3 py-2.5 font-medium">#</th>
+              <th scope="col" className="px-2 py-2.5 font-medium">Item</th>
+              <th scope="col" className="w-[110px] px-2 py-2.5 font-medium">Quantity</th>
+              <th scope="col" className="w-[150px] px-2 py-2.5 font-medium">Billing</th>
+              {(can.spec || can.cost) && <th scope="col" className="w-[150px] px-2 py-2.5 font-medium" title="A line can have its own supplier price, or be priced with another line (a bundle)">Priced as</th>}
               {/* One cost column, only for who enters costs: purchase prices third-party lines, presales costs own-brand
                   lines off the rate card. Rate card lines are fixed. Sales prices are set in the pricing step, not here. */}
               {(can.cost || can.internal) && (
-                <th scope="col" className="w-[260px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>{can.cost && !can.internal ? "Purchase price" : "Cost"}</th>
+                <th scope="col" className="w-[240px] px-2 py-2.5 font-medium" style={{ color: "var(--t-amber)" }}>{can.cost && !can.internal ? "Purchase price" : "Cost"}</th>
               )}
-              {can.spec && <th scope="col" className="w-9" />}
+              {can.spec && <th scope="col" className="w-[76px]" />}
             </tr>
           </thead>
           <tbody>
-            {lines.map((l, i) => {
+            {rows.map((l, i) => {
+              const n = i + 1;
               const cats = categories.filter((c) => c.buId === l.businessUnitId);
               const recurring = l.billingFrequency !== "ONE_TIME";
+              const lead = l._lead ? rows.find((r) => r._key === l._lead) : undefined;
+              const members = rows.filter((r) => r._lead === l._key);
+              // Lines this one can be priced with: other purchase lines, not in a bundle themselves, billed the same way
+              const leads = rows.filter((r) => r._key !== l._key && !r._lead && r.costSource === "PURCHASE" && r.billingFrequency === l.billingFrequency
+                && (r.billingFrequency === "ONE_TIME" || r.termMonths === l.termMonths));
               return (
-                <tr key={l._key} className="border-b border-border align-top last:border-0">
-                  <td className="px-3 py-2.5 text-xs text-ink-3 tabular">{i + 1}</td>
+                <tr key={l._key} className={cn("border-b border-border align-top last:border-0", lead && "bg-surface-2/40")}>
+                  <td className="px-3 py-2.5 text-xs text-ink-3 tabular">
+                    {lead ? <span className="inline-flex items-center gap-0.5" title={`Priced with line ${no(lead._key)}`}><CornerDownRight className="size-3" />{n}</span> : n}
+                  </td>
                   <td className="px-2 py-2">
-                    <div className="flex flex-col gap-1.5">
+                    <div className={cn("flex flex-col gap-1.5", lead && "pl-3")}>
                       {can.spec ? (
-                        <ProductPicker products={products} value={l.productId ?? (l._custom ? "custom" : null)} onChange={(p) => pickProduct(l._key, p)} />
-                      ) : null}
+                        <ProductPicker products={products} value={l.productId ?? (l._custom ? "custom" : null)} onChange={(p) => pickProduct(l._key, p)} defaultOpen={!!l._open} placeholder={lead ? "Choose a component" : "Choose product"} />
+                      ) : <span className="text-[13px]">{l.description}</span>}
                       {l.costStale && perms.viewCost && (
-                        <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]" title="The product, quantity or term changed after purchase priced it">
+                        <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]" title="The product, quantity, term or bundle changed after purchase priced it">
                           <RefreshCw className="size-3" /> Changed · needs re-pricing
                         </span>
                       )}
                       {l.costStale && can.cost && l.costSource === "PURCHASE" && (
                         // Purchase either enters the new cost, or confirms the supplier's price holds for the change
                         <label className="inline-flex w-fit items-center gap-1.5 text-[11px] text-ink-2">
-                          <input type="checkbox" checked={!!l._confirm} onChange={(e) => set(l._key, { _confirm: e.target.checked })} className="accent-[var(--primary)]" aria-label={`Line ${i + 1} price unchanged`} />
+                          <input type="checkbox" checked={!!l._confirm} onChange={(e) => set(l._key, { _confirm: e.target.checked })} className="accent-[var(--primary)]" aria-label={`Line ${n} price unchanged`} />
                           Price unchanged for the new spec
                         </label>
                       )}
-                      {l.isEstimate && (
-                        <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[var(--t-amber-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--t-amber)]">
-                          Estimate{can.spec ? " · pick a product above to replace it" : " · presales will replace it with products"}
-                        </span>
-                      )}
-                      {can.spec && (l._custom || !l.productId) ? (
-                        <Input value={l.description} onChange={(e) => set(l._key, { description: e.target.value })} className="h-7 text-xs" placeholder="Description" aria-label={`Line ${i + 1} description`} />
-                      ) : !can.spec ? (
-                        <span className="text-[13px]">{l.description}</span>
-                      ) : null}
                       {can.spec && l._custom ? (
-                        <div className="flex gap-1">
-                          {sel(l.businessUnitId, (v) => set(l._key, { businessUnitId: v, categoryId: "", buName: bus.find((b) => b.id === v)?.name ?? "" }), bus, `Line ${i + 1} business unit`, "BU")}
-                          {sel(l.categoryId, (v) => set(l._key, { categoryId: v, categoryName: cats.find((c) => c.id === v)?.name ?? "" }), cats, `Line ${i + 1} category`, "Category")}
-                          {sel(l.oemId, (v) => {
-                            const oem = oems.find((o) => o.id === v);
-                            const ownBrand = !!oem?.ownBrand;
-                            set(l._key, { oemId: v, oemName: oem?.name ?? oemTbd?.name ?? "", ownBrand, costSource: defaultCostSource({ ownBrand, standardCost: null, isProduct: false, rateCard: false }) });
-                          }, l.isEstimate && oemTbd ? [oemTbd, ...oems] : oems, `Line ${i + 1} OEM`, "OEM")}
-                          <Input value={l.hsnSac ?? ""} onChange={(e) => set(l._key, { hsnSac: e.target.value || null })} className="h-7 w-24 shrink-0 font-mono text-xs" placeholder="HSN/SAC" aria-label={`Line ${i + 1} HSN/SAC`} />
-                        </div>
-                      ) : (
+                        <>
+                          <Input value={l.description} onChange={(e) => set(l._key, { description: e.target.value })} className="h-7 text-xs" placeholder="Description" aria-label={`Line ${n} description`} />
+                          <div className="flex gap-1">
+                            {sel(l.businessUnitId, (v) => set(l._key, { businessUnitId: v, categoryId: "", buName: bus.find((b) => b.id === v)?.name ?? "" }), bus, `Line ${n} business unit`, "BU")}
+                            {sel(l.categoryId, (v) => set(l._key, { categoryId: v, categoryName: cats.find((c) => c.id === v)?.name ?? "" }), cats, `Line ${n} category`, "Category")}
+                            {sel(l.oemId, (v) => {
+                              const oem = oems.find((o) => o.id === v);
+                              const ownBrand = !!oem?.ownBrand;
+                              set(l._key, { oemId: v, oemName: oem?.name ?? oemTbd?.name ?? "", ownBrand, costSource: defaultCostSource({ ownBrand, standardCost: null, isProduct: false, rateCard: false }) });
+                            }, oems, `Line ${n} OEM`, "OEM")}
+                            <Input value={l.hsnSac ?? ""} onChange={(e) => set(l._key, { hsnSac: e.target.value || null })} className="h-7 w-24 shrink-0 font-mono text-xs" placeholder="HSN/SAC" aria-label={`Line ${n} HSN/SAC`} />
+                          </div>
+                        </>
+                      ) : l.productId ? (
                         <span className="text-[11px] text-ink-3">
-                          {l.partNumber && <span className="font-mono">{l.partNumber} · </span>}
-                          {[l.oemName, l.buName && `${l.buName} / ${l.categoryName}`].filter(Boolean).join(" · ") || "Pick a product"}
+                          {[l.oemName, l.categoryName].filter(Boolean).join(" · ")}
                           {locked && <> · {LINE_BILLING_STATUS_LABEL[l.billingStatus]}</>}
                         </span>
-                      )}
+                      ) : null}
                     </div>
                   </td>
                   <td className="px-2 py-2">
                     {can.spec ? (
                       <div className="flex items-center gap-1">
-                        <div className="w-[64px] shrink-0">{numIn(l.quantity, (n) => set(l._key, { quantity: n ?? 0 }), false, `Line ${i + 1} quantity`)}</div>
-                        <select value={l.unit} onChange={(e) => set(l._key, { unit: e.target.value })} aria-label={`Line ${i + 1} unit`} className="h-8 min-w-0 flex-1 rounded-md border border-border bg-surface px-1 text-xs">
-                          {[...new Set([l.unit, ...UNITS])].map((u) => <option key={u}>{u}</option>)}
-                        </select>
+                        <Input
+                          type="number" inputMode="decimal" min={0} step="any" value={l.quantity} data-qty={l._key} aria-label={`Line ${n} quantity`}
+                          onChange={(e) => set(l._key, { quantity: e.target.value === "" ? 0 : Number(e.target.value) })}
+                          // Quick entry: Enter adds the next product
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+                          className="h-8 w-[60px] shrink-0 text-right tabular"
+                        />
+                        {l._custom ? (
+                          <select value={l.unit} onChange={(e) => set(l._key, { unit: e.target.value })} aria-label={`Line ${n} unit`} className="h-8 min-w-0 flex-1 rounded-md border border-border bg-surface px-1 text-xs">
+                            {[...new Set([l.unit, ...UNITS])].map((u) => <option key={u}>{u}</option>)}
+                          </select>
+                        ) : <span className="truncate text-xs text-ink-3">{l.unit}</span>}
                       </div>
                     ) : (
                       <span className="tabular">{l.quantity.toLocaleString("en-IN")} <span className="text-xs text-ink-3">{l.unit}</span></span>
                     )}
                   </td>
                   <td className="px-2 py-2">
-                    {can.spec ? (
+                    {lead ? (
+                      <span className="text-xs text-ink-3">As line {no(lead._key)}</span>
+                    ) : can.spec && (recurring || l._custom) ? (
                       <div className="flex items-center gap-1">
                         <select
                           value={l.billingFrequency}
                           onChange={(e) => {
                             const f = e.target.value as BillingFrequencyKey;
-                            set(l._key, { billingFrequency: f, termMonths: f === "ONE_TIME" ? null : l.termMonths ?? defaultTerm ?? 12 });
+                            const term = f === "ONE_TIME" ? null : l.termMonths ?? defaultTerm ?? 12;
+                            // Lines priced with this one follow its billing
+                            setRows((rs) => rs.map((r) => (r._key === l._key || r._lead === l._key ? { ...r, billingFrequency: f, termMonths: term } : r)));
                           }}
-                          aria-label={`Line ${i + 1} billing`}
+                          aria-label={`Line ${n} billing`}
                           className="h-8 min-w-0 flex-1 rounded-md border border-border bg-surface px-1 text-xs"
                         >
                           {Object.entries(BILLING_FREQUENCY_LABEL).map(([v, lab]) => <option key={v} value={v}>{lab}</option>)}
                         </select>
                         {recurring && (
                           <Tooltip content="Term in months">
-                            <input type="number" min={1} value={l.termMonths ?? 12} onChange={(e) => set(l._key, { termMonths: Number(e.target.value) || 12 })} aria-label={`Line ${i + 1} term months`} className="h-8 w-11 rounded-md border border-border bg-surface px-1 text-right text-xs tabular" />
+                            <input
+                              type="number" min={1} value={l.termMonths ?? 12} aria-label={`Line ${n} term months`}
+                              onChange={(e) => { const t = Number(e.target.value) || 12; setRows((rs) => rs.map((r) => (r._key === l._key || r._lead === l._key ? { ...r, termMonths: t } : r))); }}
+                              className="h-8 w-11 rounded-md border border-border bg-surface px-1 text-right text-xs tabular"
+                            />
                           </Tooltip>
                         )}
                       </div>
                     ) : (
-                      <span className="text-xs text-ink-2">{BILLING_FREQUENCY_LABEL[l.billingFrequency]}{recurring && ` × ${billingPeriods({ billingFrequency: l.billingFrequency, termMonths: l.termMonths })}`}</span>
+                      <span className="text-xs text-ink-2">{recurring ? `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo` : "One-time"}</span>
                     )}
                   </td>
+                  {(can.spec || can.cost) && (
+                    <td className="px-2 py-2">
+                      {members.length ? (
+                        <span className="text-xs text-ink-2">Bundle · {linesLabel([n, ...members.map((m) => no(m._key))])}</span>
+                      ) : l.costSource === "PURCHASE" && (leads.length > 0 || lead) ? (
+                        <select
+                          value={l._lead ?? ""} onChange={(e) => priceWith(l._key, e.target.value || null)} aria-label={`Line ${n} priced with`}
+                          className="h-8 w-full rounded-md border border-border bg-surface px-1 text-xs"
+                        >
+                          <option value="">Own price</option>
+                          {leads.map((r) => <option key={r._key} value={r._key}>With line {no(r._key)}</option>)}
+                        </select>
+                      ) : <span className="text-xs text-ink-3">{l.costSource === "PURCHASE" ? "Own price" : "—"}</span>}
+                    </td>
+                  )}
                   {(can.cost || can.internal) && (
                     <td className="px-2 py-2">
-                      <EditCostCell
-                        line={l} n={i + 1} distributors={distributors} canPurchase={can.cost} canInternal={can.internal}
-                        canSubcontract={sourcesFor(l).includes("PURCHASE") && sourcesFor(l).includes("PRESALES")}
-                        onChange={(patch) => set(l._key, patch)}
-                      />
+                      {lead ? (
+                        <span className="text-xs text-ink-3">In line {no(lead._key)}&apos;s price</span>
+                      ) : (
+                        <EditCostCell
+                          line={l} n={n} distributors={distributors} canPurchase={can.cost} canInternal={can.internal}
+                          canSubcontract={sourcesFor(l).includes("PURCHASE") && sourcesFor(l).includes("PRESALES")}
+                          coversLabel={members.length ? `Price for ${linesLabel([n, ...members.map((m) => no(m._key))])}` : undefined}
+                          onChange={(patch) => set(l._key, patch)}
+                        />
+                      )}
                     </td>
                   )}
                   {can.spec && (
                     <td className="px-1 py-2">
-                      <button onClick={() => remove(l._key)} disabled={lines.length === 1} title={lines.length === 1 ? "A deal needs at least one line item" : undefined} className="rounded p-1.5 disabled:pointer-events-none disabled:opacity-30 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label="Remove line">
-                        <Trash2 className="size-3.5" />
-                      </button>
+                      <div className="flex items-center justify-end gap-0.5">
+                        {!lead && l.costSource === "PURCHASE" && (
+                          <Tooltip content="Add a component priced with this line (RAM, disks…)">
+                            <button type="button" onClick={() => addComponent(l)} className="rounded p-1.5 text-ink-3 hover:bg-surface-hover hover:text-ink cursor-pointer" aria-label={`Add component to line ${n}`}>
+                              <CornerDownRight className="size-3.5" />
+                            </button>
+                          </Tooltip>
+                        )}
+                        <button onClick={() => remove(l._key)} disabled={rows.length === 1 && !estimates.length} className="rounded p-1.5 disabled:pointer-events-none disabled:opacity-30 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label={`Remove line ${n}`}>
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
                     </td>
                   )}
                 </tr>
               );
             })}
-            {lines.length === 0 && (
+            {rows.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-3 py-12 text-center text-sm text-ink-3">
-                  No line items yet. {can.spec ? "Add products from the catalogue to build the solution." : "Presales will prepare the bill of quantities."}
+                <td colSpan={12} className="px-3 py-10 text-center text-sm text-ink-3">
+                  {can.spec ? <Button size="sm" variant="primary" onClick={add}><Plus /> Add the first product</Button> : "Presales will prepare the bill of quantities."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        {can.spec && rows.length > 0 && (
+          <div className="flex items-center gap-2 border-t border-border px-5 py-2">
+            <Button size="sm" variant="ghost" onClick={add}><Plus /> Add product</Button>
+            <span className="text-[11px] text-ink-3">Tip: Enter in a quantity adds the next product. ↳ adds a component priced with that line.</span>
+          </div>
+        )}
       </div>
       )}
       {!perms.sales ? (
         <div className="grid gap-6 border-t border-border px-5 py-4 sm:grid-cols-4">
-          <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${lines.length} lines costed`} />
+          <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${totals.count} lines costed`} />
         </div>
       ) : (
       <div className="grid gap-6 border-t border-border px-5 py-4 md:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,2fr)]">
-        <Total label="Sell value" value={inr(totals.sell)} sub={`${totals.priced}/${lines.length} lines priced`} />
-        {perms.viewCost && <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${lines.length} lines costed`} />}
+        <Total label="Sell value" value={inr(totals.sell)} sub={`${totals.priced}/${totals.count} lines priced`} />
+        {perms.viewCost && <Total label="Cost" value={inr(totals.cost)} sub={`${totals.costed}/${totals.count} lines costed`} />}
         {perms.viewCost && (
           <Total
             label="Contract GM" value={totals.gm.contract.gmPct === null ? "—" : pct(totals.gm.contract.gmPct, 1)}
@@ -394,9 +467,11 @@ function SourceBadge({ line: l }: { line: Line }) {
  * (subcontracted work). Anything else reads as who prices it.
  */
 function EditCostCell({
-  line: l, n, distributors, canPurchase, canInternal, canSubcontract, onChange,
+  line: l, n, distributors, canPurchase, canInternal, canSubcontract, onChange, coversLabel,
 }: {
   line: Line; n: number; distributors: string[]; canPurchase: boolean; canInternal: boolean; canSubcontract: boolean;
+  /** "Price for lines 1–3": this line's price covers a bundle */
+  coversLabel?: string;
   onChange: (patch: Partial<Line>) => void;
 }) {
   const field = "h-7 w-full rounded-md border border-border bg-surface px-1.5 text-xs";
@@ -420,6 +495,7 @@ function EditCostCell({
       );
     return (
       <div className="flex flex-col gap-1">
+        {coversLabel && <span className="text-[11px] font-medium text-ink-2">{coversLabel}</span>}
         {num(`Line ${n} unit cost`)}
         <div className="flex gap-1">
           <select value={l.distributor ?? ""} onChange={(e) => onChange({ distributor: e.target.value || null })} aria-label={`Line ${n} distributor`} className={field}>
@@ -489,15 +565,18 @@ function MixBar({ label, mix }: { label: string; mix: [string, number][] }) {
  */
 function BoqView({ lines, viewCost, sales, locked }: { lines: Line[]; viewCost: boolean; sales: boolean; locked: boolean }) {
   if (!lines.length) return <p className="px-5 py-12 text-center text-sm text-ink-3">No line items yet.</p>;
+  // Components priced with a line sit under it, in that line's business unit
+  const leadOf = (l: Line) => (l._lead ? lines.find((x) => x._key === l._lead) : undefined);
+  const buOf = (l: Line) => (leadOf(l) ?? l).buName || "Unclassified";
   const groups = new Map<string, Line[]>();
-  for (const l of lines) groups.set(l.buName || "Unclassified", [...(groups.get(l.buName || "Unclassified") ?? []), l]);
+  for (const l of lines) groups.set(buOf(l), [...(groups.get(buOf(l)) ?? []), l]);
+  const numberOf = (l: Line | undefined) => (l ? lines.indexOf(l) + 1 : 0);
   // Sales reads sell value; presales and purchase read cost
   const value = (l: Line) => {
     const unit = sales ? l.unitPrice ?? l.listPrice : l.unitCost;
     return unit === null ? null : mult(l) * unit;
   };
   const cols = !sales ? 5 : viewCost ? 7 : 5;
-  let n = 0;
   return (
     <div className="overflow-x-auto scrollbar-thin">
       <table className="w-full min-w-[760px] text-[13px]" aria-label="Line items">
@@ -523,15 +602,17 @@ function BoqView({ lines, viewCost, sales, locked }: { lines: Line[]; viewCost: 
                 </tr>
               ),
               ...ls.map((l) => {
-                n++;
+                const n = numberOf(l);
+                const lead = leadOf(l);
+                const members = lines.filter((x) => x._lead === l._key);
                 const v = value(l);
                 const gm = l.unitPrice && l.unitCost !== null ? ((l.unitPrice - l.unitCost) / l.unitPrice) * 100 : null;
                 const recurring = l.billingFrequency !== "ONE_TIME";
                 return (
-                  <tr key={l._key} className="border-t border-border align-top">
-                    <td className="px-5 py-3">
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 shrink-0 pt-px text-xs tabular text-ink-3">{n}</span>
+                  <tr key={l._key} className={cn("border-t border-border align-top", lead && "border-dashed")}>
+                    <td className={cn("px-5", lead ? "py-2" : "py-3")}>
+                      <div className={cn("flex items-start gap-2", lead && "pl-5")}>
+                        <span className="w-5 shrink-0 pt-px text-xs tabular text-ink-3">{lead ? <CornerDownRight className="inline size-3" /> : null}{n}</span>
                         <div className="min-w-0">
                           <p className="font-medium">{l.description}</p>
                           <p className="mt-0.5 text-xs text-ink-3">
@@ -541,8 +622,9 @@ function BoqView({ lines, viewCost, sales, locked }: { lines: Line[]; viewCost: 
                           </p>
                           <div className="mt-1 flex flex-wrap gap-1 empty:hidden">
                             {l.isEstimate && <Badge tone="amber">Estimate</Badge>}
+                            {members.length > 0 && <Badge tone="slate">One price for {linesLabel([n, ...members.map(numberOf)])}</Badge>}
                             {l.costStale && viewCost && <Badge tone="amber"><RefreshCw className="size-3" /> Needs re-pricing</Badge>}
-                            {viewCost && !l.isEstimate && <SourceBadge line={l} />}
+                            {viewCost && !l.isEstimate && !lead && <SourceBadge line={l} />}
                             {locked && <Badge tone="green">{LINE_BILLING_STATUS_LABEL[l.billingStatus]}</Badge>}
                           </div>
                         </div>
@@ -550,12 +632,16 @@ function BoqView({ lines, viewCost, sales, locked }: { lines: Line[]; viewCost: 
                     </td>
                     <td className="px-3 py-3 text-right tabular">{l.quantity.toLocaleString("en-IN")} <span className="text-xs text-ink-3">{l.unit}</span></td>
                     <td className="px-3 py-3 text-xs text-ink-2">{recurring ? `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo` : "One-time"}</td>
+                    {lead ? (
+                      <td colSpan={cols - 3} className="px-5 py-2 text-right text-xs text-ink-3">Included in line {numberOf(lead)}</td>
+                    ) : <>
                     {viewCost && <td className="px-3 py-3 text-right tabular text-ink-2">{l.unitCost === null ? <span className="text-ink-3">—</span> : l.unitCost.toLocaleString("en-IN")}</td>}
                     {sales && <td className="px-3 py-3 text-right tabular">{l.unitPrice === null ? <span className="text-ink-3" title="Not priced yet">—</span> : l.unitPrice.toLocaleString("en-IN")}</td>}
                     <td className="px-3 py-3 text-right font-medium tabular">
                       {v === null ? <span className="text-ink-3">—</span> : <span className={cn(sales && l.unitPrice === null && "text-ink-3")} title={sales && l.unitPrice === null ? "At list price until priced" : undefined}>{inr(v)}</span>}
                     </td>
                     {sales && viewCost && <td className="px-5 py-3 text-right tabular" style={{ color: gm !== null && gm < 0 ? "var(--t-red)" : undefined }}>{gm === null ? <span className="text-ink-3">—</span> : pct(gm, 1)}</td>}
+                    </>}
                   </tr>
                 );
               }),

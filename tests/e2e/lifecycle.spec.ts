@@ -70,7 +70,9 @@ test.describe.serial("Lead to closure", () => {
     await login(page, SALES);
     await page.goto(`${dealUrl}?tab=boq`);
     await page.getByRole("button", { name: "Edit line items" }).click();
-    await page.getByRole("button", { name: "Product", exact: true }).first().click();
+    // The estimate from deal creation stays as a reference until the lines go to purchase
+    await expect(page.getByLabel("Sales estimate")).toBeVisible();
+    await page.getByRole("button", { name: "Add product" }).first().click();
     await page.getByPlaceholder("Search SKU, product, OEM or category").fill("LNV-NBK-01");
     await page.getByRole("button", { name: /LNV-NBK-01/ }).click();
     await page.getByLabel("Line 1 quantity").fill("40");

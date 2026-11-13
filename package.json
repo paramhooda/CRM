@@ -1,6 +1,6 @@
 {
   "name": "progression-crm",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "description": "Progression CRM - pipeline, presales and purchase workflow for a Systems Integrator / MSP",
   "scripts": {

@@ -2,6 +2,44 @@
 
 Each release says what changed, what happens to existing data, and any steps needed to upgrade.
 
+## 1.7.0: a clean BOQ editor, and one price for several lines
+
+**Building the BOQ**
+- Sales' quick-estimate lines (BU, category, OEM, value) are no longer rows in the editor. They show in a one-line **Sales estimate** box above the BOQ, as a reference.
+- Presales builds the BOQ from scratch. The estimate is removed when the BOQ is handed on (**Submit BOQ**, or **Request pricing** on a resale deal; also when a quote is created or approval is requested), and History records what it said. Until then, the deal value comes from the BOQ lines once there are any.
+- **Add product** adds a row with the catalogue search open. Picking a product moves to its quantity, and **Enter** adds the next product.
+- Rows show only what matters:
+  - the product;
+  - the quantity, with the unit from the catalogue;
+  - billing, only for recurring items;
+  - how the line is priced;
+  - remove.
+
+  Custom lines keep their description, BU, category, OEM, HSN/SAC and unit fields.
+- The line count no longer includes the estimate.
+
+**One price for several lines (bundles)**
+- A supplier can price a server with its extra memory and disks as one figure, or line by line, so the BOQ supports both, case by case.
+- **↳ Add component** adds a part priced with a line. **Priced as** (Own price / With line N) groups or ungroups any third-party line. Presales sets it while building the BOQ, and purchase can regroup to match the supplier's quote.
+- **Purchase** enters one cost on the main line ("Price for lines 1–3"). Included lines show "In line 1's price" and need no supplier quote of their own.
+- **Sales** sets one sales price on the main line. The pricing step, the BOQ page and the printed quote list the included lines under it as **Included**.
+- **Rules:**
+  - one level only;
+  - third-party lines only;
+  - included lines bill like their main line.
+- Changing a priced bundle sends the main line back to purchase. A line taken out of a bundle needs its own price.
+- **Reporting and billing:** a bundle's value counts under its main line's OEM, category and BU. The billing export (`opportunity.won`) carries included lines at ₹0 with the new field `includedInLineNo`.
+
+**Catalogue (demo data only):** server memory and NVMe SSD components were added to the seed catalogue.
+
+**Data:**
+- One new nullable column, `OpportunityLineItem.bundleLeadId`, with an index and a foreign key; it is set to null if the main line is deleted. Existing lines are not bundled and are unchanged.
+- From now on, estimate lines are removed when a BOQ is handed on (submit, pricing request, approval request or quote). Deals already past that point keep any estimate lines they have until their next such step.
+- A deal that has both estimate and BOQ lines gets its value from the BOQ lines only, recalculated the next time its lines change (before, both were added up).
+- Existing quotes are unchanged.
+
+**Upgrade steps:** none. The migration runs on start.
+
 ## 1.6.0: approval rules, quote-backed pricing, and one path for revisions
 
 **Approvals**

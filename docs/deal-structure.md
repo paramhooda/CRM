@@ -34,7 +34,7 @@ BU and category are **your** taxonomy for how you organise practices, targets an
 
 No. Start at **line level from the first estimate**, but keep it light:
 - **Qualification:** sales adds one quick-estimate line per practice or vendor. That takes 30 seconds, and the forecast by BU and OEM is right from day one. If the vendor is not chosen yet, use **OEM: To be decided**. It reports as its own bucket, so you can see how much pipeline is still vendor-open.
-- **BOQ:** presales replaces estimates with catalogue lines. "To be decided" is not allowed on BOQ lines, so an OEM must be chosen before pricing and quoting.
+- **BOQ:** presales builds catalogue lines beside the estimate, which stays as a reference until the BOQ is handed on and is then removed (History keeps what it said). "To be decided" is not allowed on BOQ lines, so an OEM must be chosen before pricing and quoting.
 - **Quote and won:** only real, priced lines can be quoted or billed.
 
 Waiting until the BOQ to add lines leaves the early pipeline (often 60–70% of it by value) classified only at deal level. That is exactly where forecasting by practice and vendor matters most.
@@ -46,6 +46,8 @@ Waiting until the BOQ to add lines leaves the early pipeline (often 60–70% of 
 - **Quota credit** goes to the deal owner on the deal value. Practice or BU targets use the line split.
 
 The **cost source** is also a line attribute. Third-party lines are costed by purchase, each with its own supplier validity. Own-brand lines (an OEM marked **Own brand**, today Progression and Neon Cloud) take the rate card's standard cost in rate card categories (Cloud, NOC, SOC) and a cost from presales elsewhere. GM is always sales price minus that cost, per line, over the contract and per month for recurring lines. See "Where each line's cost comes from" in `sales-workflow.md`.
+
+**Bundles.** When a supplier gives one price for several lines (a server with its memory and disks), the included lines carry ₹0 and the main line carries the whole price. Reports by OEM, category or BU therefore count the bundle's value under the main line. That is usually right (the components are part of the configured item); if a component belongs in another practice's numbers, price it on its own line.
 
 ## Possible later refinements (not needed now)
 

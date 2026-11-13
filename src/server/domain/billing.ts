@@ -49,6 +49,8 @@ export type BillableLine = {
   currency: "INR";
   billingStatus: "NOT_READY" | "READY" | "SENT" | "INVOICED";
   externalRef: string | null;
+  /** Set when this line is a component included in another line's price (unit price 0): that line's number. Added in 1.7.0. */
+  includedInLineNo: number | null;
 };
 
 const lineInclude = {
@@ -107,6 +109,7 @@ export async function toBillableLines(tx: Tx, opportunityId: string): Promise<Bi
       currency: "INR",
       billingStatus: l.billingStatus,
       externalRef: l.externalRef,
+      includedInLineNo: o.lineItems.find((x) => x.id === l.bundleLeadId)?.lineNo ?? null,
     };
   });
 }

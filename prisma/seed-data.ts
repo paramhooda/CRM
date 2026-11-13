@@ -331,6 +331,9 @@ export const PRODUCT_TEMPLATES: Record<string, ProductTpl[]> = {
     { name: "2U Rack Server, 2x Xeon Gold, 512 GB", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84715000", price: 1_150_000, cost: 0.88 },
     { name: "1U Rack Server, 1x Xeon Silver, 128 GB", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84715000", price: 420_000, cost: 0.88 },
     { name: "3-year 24x7 4-hour onsite support", unit: "Nos", type: "SUPPORT_AMC", freq: "ONE_TIME", hsn: "998713", price: 145_000, cost: 0.8 },
+    // Components a server is configured with; suppliers often price them into the server (a bundle)
+    { name: "64 GB DDR5 memory module", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84733020", price: 38_000, cost: 0.85 },
+    { name: "1.92 TB NVMe SSD", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84717020", price: 72_000, cost: 0.86 },
   ],
   "IT Infrastructure|Storage": [
     { name: "All-flash array, 100 TB usable, dual controller", unit: "Nos", type: "HARDWARE", freq: "ONE_TIME", hsn: "84717020", price: 6_800_000, cost: 0.86 },

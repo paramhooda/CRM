@@ -38,6 +38,8 @@ export const lineInputSchema = z
     costNote: z.string().trim().max(500).nullish(),
     unitPrice: z.coerce.number().min(0).nullish(),
     notes: z.string().max(500).nullish(),
+    /** Priced together with the line at this index in the same list (a bundle); null: its own price; omitted: unchanged */
+    bundleWith: z.number().int().min(0).max(199).nullish(),
   })
   .superRefine((l, ctx) => {
     if (!l.productId && (!l.businessUnitId || !l.categoryId || !l.oemId)) {
@@ -171,21 +173,23 @@ export async function rollUpDeal(tx: Tx, opportunityId: string, userId: string) 
     include: { lineItems: { include: { product: { select: { listPrice: true } } } } },
   });
   if (!o.lineItems.length) return;
+  // Sales' quick estimates stand in for the deal until real lines exist; then the real lines alone count
+  const lines = o.lineItems.some((l) => !l.isEstimate) ? o.lineItems.filter((l) => !l.isEstimate) : o.lineItems;
   let estimate = 0;
-  let top: { value: number; l: (typeof o.lineItems)[number] } | null = null;
-  for (const l of o.lineItems) {
+  let top: { value: number; l: (typeof lines)[number] } | null = null;
+  for (const l of lines) {
     const unit = l.unitPrice !== null ? toNumber(l.unitPrice) : l.product?.listPrice ? toNumber(l.product.listPrice) : 0;
     const value = lineMultiplier(l) * unit;
     estimate += value;
     if (!top || value > top.value) top = { value, l };
   }
-  const totals = boqTotals(o.lineItems);
+  const totals = boqTotals(lines);
   const data: Prisma.OpportunityUncheckedUpdateInput = {};
   if (estimate > 0) data.amount = new Prisma.Decimal(Math.round(estimate));
   // Revenue model, term and ARR follow the lines: any recurring line makes it an ARR deal; ARR is the yearly value
   // of the recurring lines only, so one-time hardware in the same deal does not inflate it
   const PER_YEAR: Record<string, number> = { MONTHLY: 12, QUARTERLY: 4, ANNUAL: 1 };
-  const recurring = o.lineItems.filter((l) => l.billingFrequency !== "ONE_TIME");
+  const recurring = lines.filter((l) => l.billingFrequency !== "ONE_TIME");
   data.revenueModel = recurring.length ? "ARR" : "ONE_TIME";
   data.contractTermMonths = recurring.length ? Math.max(...recurring.map((l) => l.termMonths ?? 12)) : o.contractTermMonths;
   if (recurring.length) {
@@ -210,4 +214,29 @@ export async function rollUpDeal(tx: Tx, opportunityId: string, userId: string) 
     fields: ["amount", "arrAmount", "revenueModel", "contractTermMonths", "expectedMarginPct", "businessUnitId", "categoryId", "oemId"],
     userId,
   });
+}
+
+/**
+ * Sales' quick estimates are a reference while presales (or sales, on a resale deal) builds the real lines. When the
+ * BOQ is handed on (submitted, pricing requested, quoted), they are removed and recorded in the deal's history.
+ */
+export async function retireEstimates(tx: Tx, opportunityId: string, userId: string) {
+  const lines = await tx.opportunityLineItem.findMany({
+    where: { opportunityId }, orderBy: { lineNo: "asc" },
+    select: { id: true, isEstimate: true, description: true, unitPrice: true, quantity: true, billingFrequency: true, termMonths: true },
+  });
+  const estimates = lines.filter((l) => l.isEstimate);
+  if (!estimates.length || estimates.length === lines.length) return 0;
+  await tx.opportunityLineItem.deleteMany({ where: { id: { in: estimates.map((l) => l.id) } } });
+  // Number the real lines 1..n again
+  let n = 0;
+  for (const l of lines.filter((x) => !x.isEstimate)) await tx.opportunityLineItem.update({ where: { id: l.id }, data: { lineNo: ++n } });
+  await tx.auditLog.create({
+    data: {
+      entityType: "Opportunity", entityId: opportunityId, action: "ESTIMATE_REPLACED", changedById: userId,
+      oldValue: estimates.map((e) => `${e.description} (${Math.round(lineMultiplier(e) * toNumber(e.unitPrice ?? 0)).toLocaleString("en-IN")})`).join("; ").slice(0, 2000),
+      newValue: `${lines.length - estimates.length} line${lines.length - estimates.length === 1 ? "" : "s"}`,
+    },
+  });
+  return estimates.length;
 }

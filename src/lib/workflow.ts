@@ -77,7 +77,6 @@ export function deriveWorkflow(i: WorkflowInput): WorkflowView {
   const internal = lines.filter(needsInternalCost);
   const expired = lines.filter((l) => costExpired(l, i.now));
   const needsPrice = real.filter((l) => l.unitPrice === null).length;
-  const estimates = i.lines.filter((l) => l.isEstimate).length;
   const blockers: string[] = [];
   let state: WorkflowState;
   let owner: string | null = null;
@@ -123,7 +122,6 @@ export function deriveWorkflow(i: WorkflowInput): WorkflowView {
     blockers.push(`The lines changed after quote v${i.quote.version} was sent. Send a revised quote before the customer accepts or the deal is won.`);
   if (i.stage === "HOLD") blockers.push("The deal is on hold: reminders are paused and no quote can be sent until it resumes.");
   if (state === "READY_TO_QUOTE" || state === "CHANGES_REQUESTED") {
-    if (estimates) blockers.push(`Replace ${estimates} estimate line${estimates > 1 ? "s" : ""} with catalogue products.`);
     if (expired.length) {
       const first = new Date(Math.min(...expired.map((l) => l.costValidTill!.getTime())));
       const which = expired.every((l) => l.lineNo) ? ` on ${linesText(expired.map((l) => l.lineNo!))}` : "";

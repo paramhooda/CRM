@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { Prisma, type DocumentKind } from "@prisma/client";
 import { DELIVERABLE_LABEL, DOC_DELIVERABLES } from "@/lib/deal-setup";
 import { linesNeedingQuote, uncoveredLines } from "@/lib/quote-coverage";
+import { bundleProblems, linesLabel } from "@/lib/bundles";
 import { matchRules, mergeSteps, nextOpenStep, priceFingerprint, rateCardDiscountLines, resolveSteps, type DealPricing, type ResolvedStep, type RuleInput } from "@/lib/approvals";
 import { z } from "zod";
 import { db, type Tx } from "@/lib/db";
@@ -22,7 +23,7 @@ import { THRESHOLDS, STAGE_META, CLOSED_STAGES, type StageKey } from "@/lib/cons
 import { OPEN_PRESALES, OPEN_PRICING, resumeDueDate, specChanged, specLock } from "@/lib/workflow";
 import { zodErrors, type ActionResult } from "@/lib/validation";
 import { applyStageChange, UserError } from "@/server/domain/stage";
-import { lineInputSchema, resolveSpec, rollUpDeal, costFactsLoader } from "@/server/domain/lines";
+import { lineInputSchema, resolveSpec, rollUpDeal, costFactsLoader, retireEstimates } from "@/server/domain/lines";
 import { costExpired, lineCostStatus, linesText, needsInternalCost, needsPurchaseCost, resolveCostSource, type CostSourceKey } from "@/lib/costing";
 import { safeAction } from "@/server/action-error";
 
@@ -367,6 +368,8 @@ export const submitBoq = safeAction("submitBoq", async function submitBoq(reques
 
   const res = await run(() =>
     db.$transaction(async (tx) => {
+      // Sales' quick estimates were a reference while presales built the BOQ: the BOQ replaces them now
+      await retireEstimates(tx, r.opportunityId, user.id);
       const count = await assertRealBoq(tx, r.opportunityId, "submitting");
       // Documents sales asked for are part of the hand-over: attached to this request, or added since it was raised
       const askedDocs = r.deliverables.filter((k) => DOC_DELIVERABLES.includes(k));
@@ -469,6 +472,7 @@ export const requestPricing = safeAction("requestPricing", async function reques
       // A solution deal is priced from presales' BOQ, never from lines sales put together
       if (opp.presalesRequired && !(await tx.presalesRequest.count({ where: { opportunityId: oppId, status: "BOQ_SUBMITTED" } })))
         throw new UserError("This deal needs a BOQ from presales before pricing. Request a BOQ from presales, or mark it as a resale deal in Edit.");
+      await retireEstimates(tx, oppId, user.id);
       await assertRealBoq(tx, oppId, "requesting pricing");
       const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId } });
       const purchaseLines = lines.filter((l) => !l.isEstimate && l.costSource === "PURCHASE");
@@ -547,7 +551,7 @@ export const completePricing = safeAction("completePricing", async function comp
   const needing = linesNeedingQuote(
     (await db.opportunityLineItem.findMany({
       where: { opportunityId: r.opportunityId }, orderBy: { lineNo: "asc" },
-      select: { id: true, lineNo: true, isEstimate: true, costSource: true, costSetAt: true, pricingStatus: true, costValidTill: true, oem: { select: { ownBrand: true } } },
+      select: { id: true, lineNo: true, isEstimate: true, costSource: true, costSetAt: true, pricingStatus: true, costValidTill: true, bundleLeadId: true, oem: { select: { ownBrand: true } } },
     })).map((l) => ({ ...l, ownBrand: l.oem.ownBrand })),
     r.createdAt, new Date(),
   );
@@ -818,7 +822,11 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
       let repriced = 0;
       if (toDelete.length) await tx.opportunityLineItem.deleteMany({ where: { id: { in: toDelete.map((l) => l.id) } } });
       let lineNo = 0;
-      for (const l of parsed.data) {
+      // Per submitted line: its id once saved, whether its specification changed, whether purchase set its cost now
+      const savedIds: (string | undefined)[] = [];
+      const specChangedAt: boolean[] = [];
+      const costSetNow: boolean[] = [];
+      for (const [i, l] of parsed.data.entries()) {
         lineNo++;
         const cur = l.id ? byId.get(l.id) : undefined;
         const priceData = { unitPrice: dec(l.unitPrice) };
@@ -856,12 +864,13 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
         if (!cur) {
           if (lock) throw new UserError(lock);
           const { status } = lineCostStatus({ source, prevStatus: null, sourceChanged: false, specChanged: false, canCost, costChanged: true, hasCost });
-          await tx.opportunityLineItem.create({
+          savedIds[i] = (await tx.opportunityLineItem.create({
             data: {
               opportunityId: oppId, lineNo, ...specData!, ...costData,
               pricingStatus: status, ...(price ? priceData : {}), createdById: user.id, updatedById: user.id,
             },
-          });
+            select: { id: true },
+          })).id;
           saved++;
           continue;
         }
@@ -888,11 +897,20 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
         data.needsReprice = st.stale;
         if (st.repriced) repriced++;
         await tx.opportunityLineItem.update({ where: { id: cur.id }, data });
+        savedIds[i] = cur.id;
+        specChangedAt[i] = changedSpec;
+        costSetNow[i] = !!data.costSetAt;
         saved++;
       }
+
+      // ── Bundles: lines priced together. The lead carries the price; lines bundled into it carry none. ──
+      const bundleNote = await applyBundles(tx, {
+        oppId, parsed: parsed.data, savedIds, specChangedAt, costSetNow,
+        before: new Map(existing.map((l) => [l.id, l.bundleLeadId])), mayRegroup: spec || cost, lock: cost ? null : lock,
+      });
       await recordEvent(tx, {
         entityType: "Opportunity", entityId: oppId, action: "BOQ_UPDATED", userId: user.id,
-        newValue: `${saved} lines saved, ${toDelete.length} removed${repriced ? `, ${repriced} need re-pricing` : ""}`,
+        newValue: `${saved} lines saved, ${toDelete.length} removed${repriced ? `, ${repriced} need re-pricing` : ""}${bundleNote ? ` · ${bundleNote}` : ""}`,
       });
       await tx.opportunity.update({ where: { id: oppId }, data: { lastActivityAt: new Date() } });
       await rollUpDeal(tx, oppId, user.id);
@@ -903,6 +921,80 @@ export const saveBoq = safeAction("saveBoq", async function saveBoq(oppId: strin
   if (res.ok) refresh(oppId);
   return res;
 });
+
+/**
+ * Apply the bundles asked for in a BOQ save (after every line is written). A bundled line carries no cost or price of
+ * its own (0 and current: the lead's price covers it); a line taken out of a bundle goes back to purchase. When a
+ * priced lead gains or loses lines, or one of its lines changes, its price is re-confirmed by purchase, unless
+ * purchase set it in this same save. Returns a note for the history, or null when nothing changed.
+ */
+async function applyBundles(
+  tx: Tx,
+  a: {
+    oppId: string; parsed: { bundleWith?: number | null }[]; savedIds: (string | undefined)[]; specChangedAt: boolean[]; costSetNow: boolean[];
+    before: Map<string, string | null>; mayRegroup: boolean; lock: string | null;
+  },
+): Promise<string | null> {
+  const lines = await tx.opportunityLineItem.findMany({
+    where: { opportunityId: a.oppId }, orderBy: { lineNo: "asc" },
+    select: { id: true, lineNo: true, costSource: true, isEstimate: true, billingFrequency: true, termMonths: true, pricingStatus: true, unitCost: true },
+  });
+  const byId = new Map(lines.map((l) => [l.id, l]));
+  // What each saved line should be priced with: the line at the index asked for, unchanged when not given
+  const desired = new Map<string, string | null>();
+  a.parsed.forEach((l, i) => {
+    const id = a.savedIds[i];
+    if (!id) return;
+    if (l.bundleWith === undefined) {
+      const was = a.before.get(id) ?? null;
+      desired.set(id, was && byId.has(was) ? was : null);
+    } else desired.set(id, l.bundleWith === null ? null : a.savedIds[l.bundleWith] ?? "missing");
+  });
+  const changed = [...desired.entries()].filter(([id, lead]) => (a.before.get(id) ?? null) !== lead);
+  if (!changed.length && ![...desired.values()].some(Boolean)) return null;
+  if (changed.length && !a.mayRegroup) throw new UserError("Only presales or purchase can change which lines are priced together.");
+  if (changed.length && a.lock) throw new UserError(a.lock);
+  const idx = new Map(lines.map((l, i) => [l.id, i]));
+  const problems = bundleProblems(lines.map((l) => {
+    const lead = desired.get(l.id) ?? null;
+    return { ...l, bundleWith: lead === null ? null : lead === "missing" ? lines.length + 1 : idx.get(lead) ?? lines.length + 1 };
+  }));
+  if (problems.length) throw new UserError(problems[0]!);
+
+  const affectedLeads = new Set<string>();
+  for (const [id, lead] of desired) {
+    const was = a.before.get(id) ?? null;
+    if (lead) {
+      // Bundled: no cost or price of its own, always current
+      await tx.opportunityLineItem.update({
+        where: { id },
+        data: { bundleLeadId: lead, unitCost: new Prisma.Decimal(0), unitPrice: new Prisma.Decimal(0), pricingStatus: "QUOTED", needsReprice: false, costSetAt: null, distributor: null, costValidTill: null },
+      });
+      if (was !== lead || a.specChangedAt[a.savedIds.indexOf(id)]) affectedLeads.add(lead);
+    } else if (was) {
+      // Out of a bundle: it needs a price of its own. Purchase may have entered its cost in this same save; otherwise
+      // it goes back to purchase. Sales prices it again either way.
+      const pricedNow = a.costSetNow[a.savedIds.indexOf(id)];
+      await tx.opportunityLineItem.update({
+        where: { id },
+        data: pricedNow ? { bundleLeadId: null, unitPrice: null } : { bundleLeadId: null, unitCost: null, unitPrice: null, pricingStatus: "PENDING", needsReprice: false },
+      });
+    }
+    if (was && was !== lead) affectedLeads.add(was);
+  }
+  for (const leadId of affectedLeads) {
+    const lead = byId.get(leadId);
+    if (!lead || lead.costSource !== "PURCHASE" || lead.pricingStatus !== "QUOTED" || lead.unitCost === null) continue;
+    if (a.costSetNow[a.savedIds.indexOf(leadId)]) continue; // purchase priced the new bundle just now
+    await tx.opportunityLineItem.update({ where: { id: leadId }, data: { pricingStatus: "PENDING", needsReprice: true } });
+  }
+  if (!changed.length) return null;
+  const groups = new Map<string, number[]>();
+  for (const [id, lead] of desired) if (lead) groups.set(lead, [...(groups.get(lead) ?? []), byId.get(id)!.lineNo]);
+  return groups.size
+    ? `Priced together: ${[...groups.entries()].map(([lead, nos]) => `${linesLabel(nos)} with line ${byId.get(lead)!.lineNo}`).join("; ")}`
+    : "Every line has its own price";
+}
 
 // ───────────── Sales prices and quotes ─────────────
 
@@ -929,14 +1021,15 @@ async function assertCosted(tx: Tx, opp: { id: string; presalesRequired: boolean
 
 /** Write the sales prices given; every line of the deal must have one. Returns how many changed. */
 async function applyPrices(tx: Tx, oppId: string, prices: z.infer<typeof pricesSchema>, userId: string) {
-  const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId }, select: { id: true, lineNo: true, unitPrice: true } });
+  const lines = await tx.opportunityLineItem.findMany({ where: { opportunityId: oppId }, select: { id: true, lineNo: true, unitPrice: true, bundleLeadId: true } });
   const given = new Map(prices.map((p) => [p.id, Math.round(p.unitPrice * 100) / 100]));
   if ([...given.keys()].some((id) => !lines.some((l) => l.id === id))) throw new UserError("The line items changed since you opened this. Reload the page and price them again.");
-  const missing = lines.filter((l) => !given.has(l.id)).map((l) => l.lineNo);
+  // Lines in a bundle are included in their lead's price: they never carry one of their own
+  const missing = lines.filter((l) => !l.bundleLeadId && !given.has(l.id)).map((l) => l.lineNo);
   if (missing.length) throw new UserError(`Set a sales price on ${linesText(missing)}.`);
   let changed = 0;
   for (const l of lines) {
-    const price = given.get(l.id)!;
+    const price = l.bundleLeadId ? 0 : given.get(l.id)!;
     if (l.unitPrice !== null && toNumber(l.unitPrice) === price) continue;
     await tx.opportunityLineItem.update({ where: { id: l.id }, data: { unitPrice: new Prisma.Decimal(price), updatedById: userId } });
     changed++;
@@ -994,6 +1087,7 @@ export const requestApproval = safeAction("requestApproval", async function requ
     db.$transaction(async (tx) => {
       await lockDeal(tx, oppId);
       await claimBoqVersion(tx, oppId, parsed.data.version);
+      await retireEstimates(tx, oppId, user.id);
       await assertCosted(tx, opp, "asking for approval");
       await applyPrices(tx, oppId, parsed.data.prices, user.id);
       const { pricing, fingerprint, totals } = await pricingFacts(tx, oppId);
@@ -1110,6 +1204,7 @@ export const createQuote = safeAction("createQuote", async function createQuote(
     db.$transaction(async (tx) => {
       await lockDeal(tx, oppId);
       if (parsed.data.version !== undefined) await claimBoqVersion(tx, oppId, parsed.data.version);
+      await retireEstimates(tx, oppId, user.id);
       await assertCosted(tx, opp, "quoting");
       if (parsed.data.prices) await applyPrices(tx, oppId, parsed.data.prices, user.id);
       // Prices an approval rule applies to go out only once approved, exactly as approved
@@ -1148,9 +1243,11 @@ export const createQuote = safeAction("createQuote", async function createQuote(
           marginPct: new Prisma.Decimal(Math.round((t.marginPct ?? 0) * 100) / 100), validTill: parsed.data.validTill,
           terms: parsed.data.terms || null, createdById: user.id,
           // What the customer sees; src/lib/quote.ts compares the deal's lines against this to keep the quote honest
+          // Lines priced with another (a bundle) are listed under it as included
           snapshot: lines.map((l) => ({
             ...quotedLine(l), oem: l.oem?.name ?? null, hsnSac: l.hsnSac ?? l.product?.hsnSac ?? null,
             unitPrice: toNumber(l.unitPrice), extended: lineMultiplier(l) * toNumber(l.unitPrice),
+            bundledInto: l.bundleLeadId ? lines.find((x) => x.id === l.bundleLeadId)?.lineNo ?? null : null,
           })),
         },
       });
