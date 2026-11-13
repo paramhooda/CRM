@@ -13,7 +13,7 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
       <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
-      <Toaster position="top-center" richColors closeButton />
+      <Toaster position="top-center" closeButton />
     </ThemeProvider>
   );
 }
