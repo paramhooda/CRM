@@ -44,8 +44,10 @@ describe("accounts", () => {
   });
 
   it("support roles see accounts only through assigned deals, read-only", async () => {
+    const a = expectOk(await (await as("rep")).post<Account>("/accounts", { name: uniq("Unassigned Co") }));
     const presales = await as("presales");
-    expect(expectOk(await presales.get<{ rows: Account[]; total: number }>("/accounts")).total).toBe(0);
+    expect(expectOk(await presales.get<{ rows: Account[] }>(`/accounts?q=${encodeURIComponent(a.name)}`)).rows).toEqual([]);
+    expectError(await presales.get(`/accounts/${a.id}`), 404);
     expectError(await presales.post("/accounts", { name: "Nope" }), 403);
   });
 

@@ -100,8 +100,10 @@ describe("deals", () => {
     const h = expectOk(await rep.get<{ audit: { entityType: string; field: string | null; oldValue: string | null; newValue: string | null; action: string }[] }>(`/deals/${d.id}/history`));
     expect(h.audit.map((a) => [a.entityType, a.action, a.field, a.oldValue, a.newValue])).toEqual(expect.arrayContaining([["deal_line", "UPDATE", "quantity", "10", "12"], ["deal_line", "UPDATE", "unitSalesPrice", "70000", "72000"], ["deal_line", "DELETE", null, expect.stringMatching(/^Line 2/), null], ["deal", "UPDATE", "dealValue", "700000", "879000"]]));
     expect(h.audit.filter((a) => a.field === "annualRecurringValue")).toEqual([]); // unchanged values are not logged
-    // own-IP lines can't carry a sales method
-    expectError(await rep.patch(`/deals/${d.id}/lines`, { version: u.version, upserts: [{ productId: noc.id, salesMethodId: L.salesMethods[0]!.id }] }), 400);
+    // own-IP lines never carry a sales method, whatever was sent
+    const v = expectOk(await rep.patch<Deal & { lines: (Line & { salesMethodId: string | null })[] }>(`/deals/${d.id}/lines`, { version: u.version, upserts: [{ productId: noc.id, salesMethodId: L.salesMethods[0]!.id }] }));
+    expect(v.lines[2]!.salesMethodId).toBeNull();
+    expect(v.lines[2]!.oem.isOwnIp).toBe(true);
   });
 
   it("list filters by BU, OEM, stage and search, with totals for sales roles", async () => {

@@ -13,7 +13,7 @@ export const lineInputSchema = z.object({
   businessUnitId: uuid.optional(),
   subBusinessUnitId: uuid.optional(),
   oemId: uuid.optional(),
-  quantity: quantity.default("1"),
+  quantity: quantity.optional(),
   unit: trimmed(20, 1).optional(),
   revenueModel: z.enum(["ONE_TIME", "ARR"]).optional(),
   termMonths: z.number().int().min(1).max(120).nullable().optional(),

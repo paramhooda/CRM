@@ -252,8 +252,9 @@ type ResolvedLine = {
 
 /** Fills a line from its product (when given), checks the Sub BU belongs to the BU, and applies the line rules. */
 function resolveLine(input: LineInput, refs: LineRefs, existing?: Partial<ResolvedLine>, lineNo = 0): ResolvedLine {
-  const product = input.productId ? refs.products.get(input.productId) : undefined;
-  if (input.productId && !product) throw new ValidationError("Pick a product from the catalogue.", { [`lines.${lineNo}.productId`]: "Not in the catalogue." });
+  const productId = input.productId === undefined ? existing?.productId ?? null : input.productId;
+  const product = productId ? refs.products.get(productId) : undefined;
+  if (productId && !product) throw new ValidationError("Pick a product from the catalogue.", { [`lines.${lineNo}.productId`]: "Not in the catalogue." });
   const businessUnitId = product?.businessUnitId ?? input.businessUnitId ?? existing?.businessUnitId;
   const subBusinessUnitId = product?.subBusinessUnitId ?? input.subBusinessUnitId ?? existing?.subBusinessUnitId;
   const oemId = product?.oemId ?? input.oemId ?? existing?.oemId;
@@ -316,24 +317,29 @@ export async function createDeal(actor: Actor, input: CreateDealInput, requestId
   const refs = await lineRefs();
   const lines = (input.lines ?? []).map((l, i) => resolveLine(l, refs, undefined, i));
   const needsPresales = input.needsPresales ?? defaultNeedsPresales(lines.map((l) => l.subBusinessUnitId), [...refs.subs.values()]);
-  const id = await db.$transaction(async (tx) => {
-    const code = await nextCode(tx, "OPP");
-    const deal = await tx.deal.create({
-      data: {
-        code, name: input.name, accountId: account.id, primaryContactId: input.primaryContactId ?? null, ownerId, expectedCloseDate: toDate(input.expectedCloseDate), forecastCategory: input.forecastCategory,
-        needsPresales, leadSourceId: input.leadSourceId ?? null, description: input.description ?? null, nextStep: input.nextStep ?? null, nextStepDate: input.nextStepDate ? toDate(input.nextStepDate) : null, createdById: actor.id,
-      },
-    });
-    for (const [i, l] of lines.entries()) {
-      const { ownIp: _o, ...data } = l;
-      await tx.dealLine.create({ data: { ...data, dealId: deal.id, lineNo: i + 1, ...deriveLine(l), updatedById: actor.id, costSetById: l.unitPurchaseCost ? actor.id : null, costSetAt: l.unitPurchaseCost ? new Date() : null } });
-    }
-    await recomputeDeal(tx, deal.id, actor.id, requestId);
-    await tx.dealStageHistory.create({ data: { dealId: deal.id, fromStage: null, toStage: "QUALIFIED", changedById: actor.id, dealValueAtChange: (await tx.deal.findUniqueOrThrow({ where: { id: deal.id } })).dealValue, note: "Created" } });
-    await recordEvent(tx, { entityType: "deal", entityId: deal.id, dealId: deal.id, action: "CREATE", userId: actor.id, requestId, newValue: `${code} ${input.name}` });
-    return deal.id;
-  });
+  const id = await db.$transaction((tx) => createDealInTx(tx, actor.id, { ...input, ownerId, accountId: account.id, needsPresales, lines }, requestId));
   return getDeal(actor, id);
+}
+
+export type NewDealRecord = Omit<CreateDealInput, "lines" | "ownerId" | "needsPresales"> & { ownerId: string; needsPresales: boolean; lines: ResolvedLine[]; note?: string };
+
+/** Writes a new deal, its lines, roll-ups, first stage-history row and audit row. Validation happens before. */
+export async function createDealInTx(tx: Tx, actorId: string, input: NewDealRecord, requestId: string): Promise<string> {
+  const code = await nextCode(tx, "OPP");
+  const deal = await tx.deal.create({
+    data: {
+      code, name: input.name, accountId: input.accountId, primaryContactId: input.primaryContactId ?? null, ownerId: input.ownerId, expectedCloseDate: toDate(input.expectedCloseDate), forecastCategory: input.forecastCategory,
+      needsPresales: input.needsPresales, leadSourceId: input.leadSourceId ?? null, description: input.description ?? null, nextStep: input.nextStep ?? null, nextStepDate: input.nextStepDate ? toDate(input.nextStepDate) : null, createdById: actorId,
+    },
+  });
+  for (const [i, l] of input.lines.entries()) {
+    const { ownIp: _o, ...data } = l;
+    await tx.dealLine.create({ data: { ...data, dealId: deal.id, lineNo: i + 1, ...deriveLine(l), updatedById: actorId, costSetById: l.unitPurchaseCost ? actorId : null, costSetAt: l.unitPurchaseCost ? new Date() : null } });
+  }
+  await recomputeDeal(tx, deal.id, actorId, requestId);
+  await tx.dealStageHistory.create({ data: { dealId: deal.id, fromStage: null, toStage: "QUALIFIED", changedById: actorId, dealValueAtChange: (await tx.deal.findUniqueOrThrow({ where: { id: deal.id } })).dealValue, note: input.note ?? "Created" } });
+  await recordEvent(tx, { entityType: "deal", entityId: deal.id, dealId: deal.id, action: "CREATE", userId: actorId, requestId, newValue: `${code} ${input.name}` });
+  return deal.id;
 }
 
 async function assertLeadSource(id: string | null | undefined) {
