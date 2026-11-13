@@ -451,6 +451,14 @@ test.describe("Cost sources", () => {
     await expect(inv.getByText("Quote v1 stays with the customer. Send a revised quote once presales submits the BOQ.")).toBeVisible();
     await expect(inv.getByText(/moves .*BOQ stage/)).toHaveCount(0);
     await inv.getByRole("button", { name: "Cancel" }).click();
+    // The customer says no: the deal says so, and the next steps are closing it or re-pricing
+    await page.getByRole("button", { name: "Record customer response" }).click();
+    const resp = page.getByRole("dialog");
+    await resp.getByRole("radio", { name: "Rejected" }).click();
+    await resp.locator("textarea[name=note]").fill("Chose the incumbent");
+    await resp.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByLabel("Deal status")).toContainText("Customer rejected quote v1");
+    await expect(page.getByLabel("Deal status")).toContainText("Close the deal as lost");
   });
 });
 
@@ -713,6 +721,57 @@ test.describe("Deal setup", () => {
     await expect(page.getByRole("radiogroup", { name: "Deal type" })).toHaveCount(0);
     await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
     await expect(page.getByRole("radiogroup", { name: "Deal type" }).getByRole("radio")).toHaveText(["Upsell", "Cross-sell", "Renewal"]);
+  });
+
+  test("a deal can start without a value and gets one before it is qualified; missing fields show on their line", async ({ page }) => {
+    await login(page, SALES);
+    await page.goto("/opportunities/new");
+    await page.fill("#name", `E2E No value yet ${Date.now().toString().slice(-6)}`);
+    await page.selectOption("#accountId", { label: "Zenith Capital Finance Ltd" });
+    await page.getByLabel("Line 1 business unit").selectOption({ label: "Cloud" });
+    await page.click("button:has-text('Create opportunity')");
+    // The line says what is missing, and the first missing field is focused
+    await expect(page.getByLabel("Line 1 problems")).toContainText("Choose a category");
+    await expect(page.getByLabel("Line 1 category")).toBeFocused();
+    await page.getByLabel("Line 1 category").selectOption({ label: "Hosting" });
+    await expect(page.getByLabel("Line 1 problems")).toHaveCount(0);
+    await expect(page.getByLabel("Line 1 billing")).toHaveValue("RECURRING"); // hosting usually bills monthly
+    await page.getByLabel("Line 1 OEM").selectOption({ label: "Neon Cloud" });
+    await expect(page.getByText("not known yet")).toBeVisible(); // no value yet, and that's fine
+    await page.click("button:has-text('Create opportunity')");
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    const url = new URL(page.url()).pathname;
+    await expect(page.getByLabel("Deal status")).toContainText("add the estimated value");
+    await expect(page.getByRole("button", { name: /Advance to Qualified \(not available: Add the estimated value/ })).toBeVisible();
+    // The value goes on the line; then the deal qualifies
+    await page.getByRole("link", { name: /Not known yet/ }).click();
+    await page.getByLabel("Line 1 unit price").fill("50000");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Line items saved")).toBeVisible();
+    await page.goto(url);
+    await page.getByRole("button", { name: "Advance to Qualified" }).click();
+    await expect(page.getByText("Moved to Qualified")).toBeVisible();
+  });
+
+  test("a lead converted without a value starts the deal at Identified", async ({ page }) => {
+    const company = `E2E No Value Lead ${Date.now().toString().slice(-6)}`;
+    await login(page, SALES);
+    await page.goto("/leads");
+    await page.getByRole("button", { name: "New lead" }).click();
+    let dlg = page.getByRole("dialog");
+    await dlg.locator("[name=firstName]").fill("Asha");
+    await dlg.locator("[name=lastName]").fill("Menon");
+    await dlg.locator("[name=company]").fill(company);
+    await dlg.getByRole("button", { name: /Save/ }).click();
+    await expect(page.getByText("Lead saved")).toBeVisible();
+    await page.locator("tr", { hasText: company }).getByRole("button", { name: "Convert" }).click();
+    dlg = page.getByRole("dialog");
+    await dlg.locator("[name=categoryId]").selectOption({ index: 1 });
+    await dlg.locator("[name=oemId]").selectOption({ index: 1 });
+    await dlg.getByRole("button", { name: "Convert" }).click();
+    await page.waitForURL((u) => /\/opportunities\/c[a-z0-9]{20,}$/.test(u.pathname));
+    await expect(currentStage(page)).toHaveText("Identified");
+    await expect(page.getByRole("link", { name: /Not known yet/ })).toBeVisible();
   });
 
   test("choosing No presales is respected everywhere, including a deal already in BOQ", async ({ page }) => {

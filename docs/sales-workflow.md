@@ -18,7 +18,7 @@ Each person enters only what they know at their step. Everything else is derived
 
 | Step | Who | Asked for | Derived, never typed |
 |---|---|---|---|
-| **New deal** | Sales | Account, customer contact (optional until Qualified), name, expected close, next step; what's being sold as business unit → category → OEM → value (one-time or recurring with a term); presales yes / no; procurement (bid date for RFP / tender); deal registration (only for OEMs that run it). Lead source, competition and notes are optional, under More details. | Account type (from the account), deal type options, stage (Identified), probability, forecast (Pipeline), revenue model, contract term and ARR (from the lines), owner (you) |
+| **New deal** | Sales | Account, customer contact (optional until Qualified), name, expected close, next step; what's being sold as business unit → category → OEM, with a value if known (one-time or recurring with a term; categories that usually bill monthly, such as hosting, NOC and SOC, start as recurring); presales yes / no; procurement (bid date for RFP / tender); deal registration (only for OEMs that run it). Lead source, competition and notes are optional, under More details. | Account type (from the account), deal type options, stage (Identified), probability, forecast (Pipeline), revenue model, contract term and ARR (from the lines), owner (you) |
 | **Request BOQ** | Sales | Presales engineer, needed by, customer requirement, deliverables (BOQ, solution document, presentation, site survey, PoC / demo); sites, only when a survey is asked for | Presales owner, stage (BOQ) |
 | **Submit BOQ** | Presales | BOQ lines (catalogue products), solution summary, assumptions and exclusions; the cost of own-brand lines not on the rate card | Each line's cost source, which lines purchase must price, rate card costs, stage (Pricing) |
 | **Pricing** | Purchase | Purchase price, distributor and supplier validity, per third-party line | The earliest validity |
@@ -103,8 +103,8 @@ These rules apply to the stage bar, the pipeline board and the edit form, and th
 
 | Move | Who | Rule |
 |---|---|---|
-| New deal | Sales | Starts at **Identified** or **Qualified**; Qualified needs a customer contact. |
-| Identified → Qualified | Owner or manager | Needs a customer contact and a close date that has not passed. BOQ and pricing can only be requested once the deal is qualified. |
+| New deal | Sales | Starts at **Identified** or **Qualified**; Qualified needs a customer contact and a value. The value may be left blank at Identified: the deal shows "Not known yet" and the home page lists it under Needs your action. A lead converted without a value also starts at Identified. |
+| Identified → Qualified | Owner or manager | Needs a customer contact, an estimated value and a close date that has not passed. BOQ and pricing can only be requested once the deal is qualified. |
 | → BOQ, → Pricing, → Proposal Submitted | Nobody by hand | Set by the workflow: request a BOQ, submit the BOQ (or request pricing), send the quote. |
 | Proposal Submitted → Negotiation | Owner or manager | Needs a quote with the customer and nothing open with presales or purchase. |
 | → Won | Owner or manager | Only from Proposal Submitted or Negotiation, with nothing open with presales or purchase. The latest quote must be with the customer or accepted (**not** one they asked to change), the deal's lines must still match it, and it must not have expired. Lines must be priced with HSN/SAC. The customer's PO number **and the PO document** are required; a PO number can close only one deal. |

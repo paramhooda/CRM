@@ -51,7 +51,7 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
   switch (w.state) {
     case "ESTIMATE":
       headline = solution ? "Estimate only · needs presales" : "Estimate only · resale";
-      detail = o.stage === "IDENTIFIED" ? "Next: qualify the deal (customer contact and a current close date), then advance it to Qualified."
+      detail = o.stage === "IDENTIFIED" ? o.amount > 0 ? "Next: qualify the deal (customer contact and a current close date), then advance it to Qualified." : "Next: add the estimated value on Line items, then qualify the deal (customer contact and a current close date)."
         : solution ? "Next: request a BOQ from presales." : "Next: pick the catalogue products on Line items, then request pricing.";
       who = { name: sales, role: "Sales" };
       break;
@@ -93,6 +93,11 @@ export function DealStatus({ d, options }: { d: OppDetail; options: Options }) {
         headline = "Prices set · waiting for the quote";
         detail = `${p.manager ?? "A sales manager"} reviews the sales prices and sends the quote.`;
         who = { name: p.manager ?? "Sales manager", role: "Sales manager" };
+      } else if (quote?.status === "REJECTED") {
+        // The customer said no: the deal stays open in case they come back
+        headline = `Customer rejected quote v${quote.version}`;
+        detail = <>{quote.responseNote ? `“${quote.responseNote}”. ` : ""}Close the deal as lost (stage menu), or revise the prices if they come back.</>;
+        who = { name: sales, role: "Sales" };
       } else {
         headline = quote ? "BOQ changed · send a revised quote" : "Priced · set the sales prices";
         detail = "Next: set the sales price of each line. A sales manager sends the quote.";

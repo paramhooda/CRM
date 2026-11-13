@@ -26,6 +26,8 @@ export type StageFacts = {
   /** Last open stage before the deal was closed (where a reopen returns to) */
   lastOpenStage: StageKey | null;
   hasContact: boolean;
+  /** The deal has an estimated value (a new deal may start without one). Omitted means yes. */
+  hasValue?: boolean;
   closeDatePast: boolean;
   realLines: number;
   openPresales: boolean;
@@ -126,6 +128,7 @@ export function checkMove(f: StageFacts, a: Actor, to: StageKey): Move {
     if (WORKFLOW_STAGES.includes(to)) return no("forward", AUTOMATIC[to]!);
     if (to === "QUALIFIED") {
       if (!f.hasContact) return no("forward", "Add the customer contact before qualifying the deal.");
+      if (f.hasValue === false) return no("forward", "Add the estimated value on Line items before qualifying the deal.");
       if (f.closeDatePast) return no("forward", "The expected close date has passed. Update it before moving the deal on.");
       return yes("forward");
     }

@@ -240,7 +240,7 @@ test.describe.serial("Lead to closure", () => {
     dlg = page.getByRole("dialog");
     await expect(dlg.getByLabel("Reason")).toHaveAttribute("required", "");
     await dlg.getByLabel("Reason").selectOption("Price");
-    await dlg.getByRole("button", { name: "Confirm" }).click();
+    await dlg.getByRole("button", { name: "Close as lost" }).click();
     await expect(page.getByText("Moved to Closed-Lost")).toBeVisible();
   });
 

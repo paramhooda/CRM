@@ -42,3 +42,44 @@ export const PRESALES_DELIVERABLES = [
   { key: "POC", label: "PoC / demo" },
 ] as const;
 export const DELIVERABLE_LABEL: Record<string, string> = Object.fromEntries(PRESALES_DELIVERABLES.map((d) => [d.key, d.label]));
+
+/** A line on the New opportunity form, as far as checking it goes */
+export type DraftCheck = {
+  kind: "product" | "estimate";
+  productId?: string;
+  buId?: string;
+  categoryId?: string;
+  oemId?: string;
+  value?: number | null;
+  unitPrice?: number | null;
+};
+
+/**
+ * What is missing on each line of the New opportunity form, keyed "lines.<n>.<field>" with n the line's place on the
+ * form. The value of an estimate may be left blank (not known yet): it is needed before the deal is qualified.
+ */
+export function draftLineErrors(lines: DraftCheck[], formIndex: number[] = lines.map((_, i) => i)): Record<string, string> {
+  const out: Record<string, string> = {};
+  lines.forEach((l, j) => {
+    const at = (field: string, msg: string) => (out[`lines.${formIndex[j]}.${field}`] = msg);
+    if (l.kind === "product") {
+      if (!l.productId) at("productId", "Pick a product");
+      if ((l.unitPrice ?? 0) < 0) at("unitPrice", "The price can't be negative");
+      return;
+    }
+    // One step at a time: the OEM list opens once the category is chosen, so it isn't asked for before
+    if (!l.buId) at("buId", "Choose a business unit");
+    else if (!l.categoryId) at("categoryId", "Choose a category");
+    else if (!l.oemId) at("oemId", "Choose an OEM, or To be decided");
+    if ((l.value ?? 0) < 0) at("value", "The value can't be negative");
+    else if ((l.value ?? 0) > 1e11) at("value", "That value is too large");
+  });
+  return out;
+}
+
+/** Billing a category usually has: recurring when most of its catalogue products bill monthly, quarterly or yearly. */
+export function typicalBilling(categoryId: string, products: { categoryId: string; billingFrequency: string }[]): "RECURRING" | "ONE_TIME" {
+  const inCat = products.filter((p) => p.categoryId === categoryId);
+  const recurring = inCat.filter((p) => p.billingFrequency !== "ONE_TIME").length;
+  return inCat.length > 0 && recurring * 2 > inCat.length ? "RECURRING" : "ONE_TIME";
+}

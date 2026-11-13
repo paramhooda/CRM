@@ -85,7 +85,7 @@ export function StagePath({
       close: [
         m.to === "WON" ? "Close as won" : m.to === "LOST" ? "Close as lost" : "Drop opportunity",
         m.to === "WON" ? "Record the customer's purchase order and attach it. This locks the line items for billing and accepts the latest quote." : "Loss reasons feed the win/loss report. Be specific in the notes.",
-        m.to === "WON" ? "Mark as won" : "Confirm",
+        m.to === "WON" ? "Mark as won" : m.to === "LOST" ? "Close as lost" : "Drop",
       ],
       forward: [label, "", "Advance"],
       resume: [`Resume to ${label}`, "The expected close date passed while the deal was on hold. Set a new one.", "Resume"],

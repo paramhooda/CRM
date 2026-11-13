@@ -16,7 +16,7 @@ export async function loadStageFacts(tx: Tx, ids: string[], now = new Date()): P
   const rows = await tx.opportunity.findMany({
     where: { id: { in: ids } },
     select: {
-      id: true, stage: true, heldFromStage: true, presalesRequired: true, expectedCloseDate: true, primaryContactId: true,
+      id: true, stage: true, heldFromStage: true, presalesRequired: true, expectedCloseDate: true, primaryContactId: true, amount: true,
       primaryContact: { select: { deletedAt: true } },
       _count: {
         select: {
@@ -55,6 +55,7 @@ export async function loadStageFacts(tx: Tx, ids: string[], now = new Date()): P
         lastOpenStage: (o.stageHistory.find((h) => FUNNEL.includes(h.toStage as StageKey))?.toStage as StageKey | undefined) ?? null,
         // A deleted contact no longer counts as the customer contact
         hasContact: (!!o.primaryContactId && !o.primaryContact?.deletedAt) || o._count.contacts > 0,
+        hasValue: Number(o.amount) > 0,
         closeDatePast: o.expectedCloseDate.getTime() < new Date(now.toDateString()).getTime(),
         realLines: o._count.lineItems,
         openPresales: o._count.presalesRequests > 0,

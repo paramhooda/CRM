@@ -2,6 +2,33 @@
 
 Each release says what changed, what happens to existing data, and any steps needed to upgrade.
 
+## 1.5.0: a deal can start without a value; fixes from a full walk-through
+
+**New deals**
+- The value of each line is optional when the deal is created. A blank (or 0) means "not known yet".
+- The deal shows "Not known yet · add value", and the home page lists "Add the estimated value".
+- A deal can't move to Qualified until it has a value.
+- A lead converted without a value starts the deal at Identified.
+- Missing fields are marked on the form itself:
+  - the account, name and close date, all at once;
+  - for each line, its own message under it, with the first missing field focused;
+  - the generic pop-up is gone.
+- A category that usually bills monthly (hosting, NOC, SOC…) starts the line as recurring, 36 months.
+
+**Fixes found by the walk-through**
+- Pop-up messages appear at the top of the screen, no longer covering a form's main button.
+- On a phone:
+  - the pricing step shows one card per line, with the sales price and GM % in view;
+  - the Quotes, Buying group and History tabs no longer scroll sideways.
+- After a customer rejects a quote, the deal says so, with the next steps (close as lost, or re-price), instead of "BOQ changed".
+- The close-as-lost and drop dialogs say what they do ("Close as lost", "Drop") instead of "Confirm".
+- The pricing step:
+  - catches a negative price on the form;
+  - names who gets the prices when the owner has no manager.
+- No more "ARR term missing" warning on a recurring deal that has no value yet.
+
+**Data:** none. Existing deals keep their values; only new deals can be ₹0 until they are qualified. **Upgrade steps:** none.
+
 ## 1.4.0: sales prices and GM
 
 **Pricing step**

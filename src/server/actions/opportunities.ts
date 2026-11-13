@@ -18,12 +18,21 @@ import { lineInputSchema, resolveSpec, rollUpDeal, draftLineSchema, createEstima
 import { z } from "zod";
 import { toNumber } from "@/lib/format";
 
+/** The New opportunity form's lines. Problems come back per line ("lines.1.categoryId") so the form marks the field. */
 function parseDraftLines(form: FormData) {
   try {
     const parsed = z.array(draftLineSchema).min(1).max(100).safeParse(JSON.parse(String(form.get("lines") ?? "[]")));
-    return parsed.success ? { ok: true as const, lines: parsed.data } : { ok: false as const };
+    if (parsed.success) return { ok: true as const, lines: parsed.data };
+    const fieldErrors: Record<string, string> = {};
+    for (const i of parsed.error.issues) {
+      if (i.path.length < 2) continue;
+      const k = `lines.${i.path.join(".")}`;
+      if (!fieldErrors[k]) fieldErrors[k] = i.message;
+    }
+    const first = parsed.error.issues.find((i) => i.path.length >= 2);
+    return { ok: false as const, fieldErrors, error: first ? `Line ${Number(first.path[0]) + 1}: ${first.message}` : null };
   } catch {
-    return { ok: false as const };
+    return { ok: false as const, fieldErrors: {}, error: null };
   }
 }
 import {
@@ -177,8 +186,13 @@ export const createOpportunity = safeAction("createOpportunity", async function 
   if (!drafts.ok)
     return {
       ok: false,
-      error: "Add at least one line item: a catalogue product, or a quick estimate with OEM, category and value.",
+      error: drafts.error ?? "Add what is being sold: a catalogue product, or a quick estimate with business unit, category and OEM.",
+      fieldErrors: drafts.fieldErrors,
     };
+  // A qualified deal needs its estimated value (a new deal may start without one)
+  const draftValue = (d: DraftLine) => (d.kind === "estimate" ? d.value : (d.unitPrice ?? 0) * d.quantity);
+  if (input.stage === "QUALIFIED" && !drafts.lines.some((d) => draftValue(d) > 0 || d.kind === "product"))
+    return { ok: false, error: "Add the estimated value to create a qualified deal." };
   const account = await db.account.findFirst({ where: { AND: [{ id: input.accountId }, accountScope(user)] }, select: { accountType: true } });
   if (!account) return { ok: false, error: "Select one of your accounts.", fieldErrors: { accountId: "Select an account" } };
   const people = await checkPeople(input.accountId, input.primaryContactId, user.role === "SALES" || !input.salesOwnerId ? user.id : input.salesOwnerId);

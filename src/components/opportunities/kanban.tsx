@@ -96,7 +96,7 @@ export function Kanban({ cards, editableIds, drops }: { cards: Card[]; editableI
                     <p className="mt-0.5 truncate text-xs text-ink-3">{c.account}</p>
                     <div className="mt-2 flex items-center justify-between">
                       <span className="text-[13px] font-semibold tabular" title={c.dealAmount && c.dealAmount !== c.amount ? `Filtered share of a ${inr(c.dealAmount)} deal` : undefined}>
-                        {inr(c.amount)}
+                        {c.amount > 0 ? inr(c.amount) : <span className="font-normal text-ink-3" title="Value not known yet">—</span>}
                         {c.dealAmount !== undefined && Math.round(c.dealAmount) !== Math.round(c.amount) && <span className="ml-1 text-[11px] font-normal text-ink-3">of {inr(c.dealAmount)}</span>}
                       </span>
                       <HealthBadge label={c.healthLabel} score={c.healthScore} compact />

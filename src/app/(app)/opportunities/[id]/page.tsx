@@ -110,7 +110,11 @@ export default async function OpportunityPage({ params, searchParams }: { params
           <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3">
             <Metric
               label="Value"
-              value={<span className="text-lg font-semibold">{inr(o.amount)}</span>}
+              value={
+                o.amount > 0 || closed ? <span className="text-lg font-semibold">{inr(o.amount)}</span>
+                : d.perms.price ? <Link href={`/opportunities/${o.id}?tab=boq&edit=1`} className="text-[13px] font-normal text-primary hover:underline">Not known yet · add value</Link>
+                : <span className="text-[13px] font-normal text-ink-3">Not known yet</span>
+              }
               sub={o.revenueModel === "ARR" && o.arrAmount ? `${inr(o.arrAmount)} a year` : undefined}
             />
             <Metric
@@ -281,8 +285,8 @@ function Quotes({ d }: { d: OppDetail }) {
     return <Card className="p-8 text-center text-sm text-ink-3">No quotes yet. Once the line items are costed, send one from the deal status above.</Card>;
   }
   return (
-    <Card>
-      <table className="w-full text-[13px]">
+    <Card className="overflow-x-auto scrollbar-thin">
+      <table className="w-full min-w-[560px] text-[13px]">
         <thead>
           <tr className="border-b border-border bg-surface-2 text-left text-[11px] uppercase tracking-wide text-ink-3">
             <th className="px-4 py-2 font-medium">Quote</th><th className="px-4 py-2 font-medium">Status</th>
@@ -348,8 +352,8 @@ function HistoryTab({ d }: { d: OppDetail }) {
     QUOTE_RESPONSE: "Recorded the customer response", DOCUMENT_ADDED: "Added a document", DOCUMENT_REMOVED: "Removed a document",
   };
   return (
-    <div className="grid gap-6 lg:grid-cols-5">
-      <div className="flex flex-col gap-6 lg:col-span-2">
+    <div className="grid gap-6 [overflow-wrap:anywhere] lg:grid-cols-5">
+      <div className="flex min-w-0 flex-col gap-6 lg:col-span-2">
         <Card>
           <CardHeader title="Stage journey" description="Days spent in each stage" />
           <CardContent>
@@ -376,7 +380,7 @@ function HistoryTab({ d }: { d: OppDetail }) {
           <CardContent className="px-0 pb-0"><RequestHistory d={d} /></CardContent>
         </Card>
       </div>
-      <Card className="lg:col-span-3">
+      <Card className="min-w-0 lg:col-span-3">
         <CardHeader title={<span className="flex items-center gap-2"><HistoryIcon className="size-4" />Audit trail</span>} description="Every field change, who made it and when" />
         <CardContent className="px-0">
           <ul>

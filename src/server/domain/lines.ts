@@ -114,8 +114,8 @@ export const draftLineSchema = z.discriminatedUnion("kind", [
     kind: z.literal("estimate"),
     oemId: z.string().min(1, "Choose an OEM"),
     categoryId: z.string().min(1, "Choose a category"),
-    /** Total value of the line over its term */
-    value: z.coerce.number().positive("Enter an estimated value").max(1e11),
+    /** Total value of the line over its term. Blank or 0: not known yet (it is needed before the deal is qualified). */
+    value: z.preprocess((v) => (v === "" || v === null || v === undefined ? 0 : v), z.coerce.number().min(0, "The value can't be negative").max(1e11, "That value is too large")),
     billingFrequency: z.enum(BILLING_FREQUENCIES),
     termMonths: z.coerce.number().int().min(1).max(120).nullish(),
     description: z.string().trim().max(200).nullish(),

@@ -17,7 +17,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Card } from "@/components/ui/card";
 import { createOpportunity, updateOpportunity } from "@/server/actions/opportunities";
 import { STAGE_META, FORECAST_LABEL, DEAL_TYPE_LABEL, PROCUREMENT_LABEL, DEAL_REG_LABEL, type StageKey } from "@/lib/constants";
-import { dealTypesFor, dealTypeFor, suggestPresales, needsBidDate, dealRegOems, type AccountTypeKey } from "@/lib/deal-setup";
+import { dealTypesFor, dealTypeFor, suggestPresales, needsBidDate, dealRegOems, draftLineErrors as draftErrors, typicalBilling, type AccountTypeKey } from "@/lib/deal-setup";
 import { inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -40,8 +40,12 @@ type Draft = {
   value: number | null;
   billingFrequency: BillingFrequencyKey;
   termMonths: number | null;
+  /** The person chose the billing themselves: picking a category no longer changes it */
+  billingSet?: boolean;
 };
 let draftSeq = 0;
+/** Line field → the words in its aria-label ("Line 2 category"), to focus the first one with a problem */
+const FIELD_LABEL: Record<string, string> = { buId: "business unit", categoryId: "category", oemId: "OEM", value: "value", unitPrice: "unit price" };
 const TERMS = [12, 24, 36, 48, 60];
 
 export function OppForm({
@@ -67,7 +71,11 @@ export function OppForm({
   const [v, setV] = useState<OppFormValues>(initial);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, start] = useTransition();
-  const set = (k: string, val: string) => setV((x) => ({ ...x, [k]: val }));
+  const set = (k: string, val: string) => {
+    setV((x) => ({ ...x, [k]: val }));
+    // Changing a field clears its message
+    setErrors((es) => (es[k] ? Object.fromEntries(Object.entries(es).filter(([e]) => e !== k)) : es));
+  };
   // The owner shown is the owner saved: an admin creating a deal hands it to a sales person, never to themselves
   const ownerValue = v.salesOwnerId && (mode === "edit" || options.sales.some((u) => u.id === v.salesOwnerId))
     ? v.salesOwnerId
@@ -115,8 +123,12 @@ export function OppForm({
   const involveOnly = mode === "edit" && initial.presalesRequired === "false" && initial.stage !== "IDENTIFIED";
   const today = new Date().toISOString().slice(0, 10);
 
+  const focusLine = (i: number, label: string) =>
+    setTimeout(() => (document.querySelector(`[aria-label="Line ${i + 1} ${label}"]`) as HTMLElement | null)?.focus(), 0);
+
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    let sentIndex: number[] = [];
     const fd = new FormData();
     for (const [k, val] of Object.entries(v)) fd.set(k, val ?? "");
     fd.set("salesOwnerId", ownerValue);
@@ -127,14 +139,42 @@ export function OppForm({
     if (mode === "create") {
       fd.set("stage", "IDENTIFIED");
       fd.set("forecastCategory", "PIPELINE");
-      const lines = drafts.filter((d) => d.kind === "product" ? d.productId : d.buId || d.categoryId || d.oemId || d.value);
-      if (!lines.length) return void toast.error("Add what is being sold: a business unit, category, OEM and value.");
-      if (lines.some((d) => d.kind === "estimate" && (!d.categoryId || !d.oemId || !d.value)))
-        return void toast.error("Each line needs a category, an OEM (or To be decided) and a value.");
+      // Lines left completely empty are ignored; the rest must say what is sold. The value may be left for later.
+      const sent = drafts.map((d, i) => ({ d, i })).filter(({ d }) => (d.kind === "product" ? !!d.productId : !!(d.buId || d.categoryId || d.oemId || d.value)));
+      if (!sent.length) {
+        setErrors({
+          "lines.0.buId": "Choose what is being sold: a business unit, category and OEM",
+          ...(!v.accountId ? { accountId: "Select an account" } : {}),
+          ...((v.name ?? "").trim().length < 3 ? { name: "Give the deal a name" } : {}),
+          ...(!v.expectedCloseDate ? { expectedCloseDate: "Pick the expected close date" } : {}),
+        });
+        focusLine(0, "business unit");
+        return void toast.error("Add what is being sold: a business unit, category and OEM.");
+      }
+      // Everything missing is shown at once: the deal's own fields and each line's
+      const head: Record<string, string> = {};
+      if (!v.accountId) head.accountId = "Select an account";
+      if ((v.name ?? "").trim().length < 3) head.name = "Give the deal a name";
+      if (!v.expectedCloseDate) head.expectedCloseDate = "Pick the expected close date";
+      else if (v.expectedCloseDate < today) head.expectedCloseDate = "Can't be in the past";
+      const lineErrors = draftErrors(sent.map((x) => x.d), sent.map((x) => x.i));
+      if (Object.keys(head).length || Object.keys(lineErrors).length) {
+        setErrors({ ...head, ...lineErrors });
+        const firstHead = Object.keys(head)[0];
+        if (firstHead) {
+          setTimeout(() => document.getElementById(firstHead)?.focus(), 0);
+          return void toast.error(`${Object.keys(head).length + Object.keys(lineErrors).length > 1 ? "Some fields need attention: " : ""}${head[firstHead]!.toLowerCase().replace(/^./, (c) => c.toUpperCase())}.`);
+        }
+        const [k, msg] = Object.entries(lineErrors)[0]!;
+        const [, n, field] = k.split(".");
+        focusLine(Number(n), FIELD_LABEL[field!] ?? "value");
+        return void toast.error(`Line ${Number(n) + 1}: ${msg.charAt(0).toLowerCase()}${msg.slice(1)}.`);
+      }
+      sentIndex = sent.map((x) => x.i);
       fd.set(
         "lines",
         JSON.stringify(
-          lines.map((d) =>
+          sent.map(({ d }) =>
             d.kind === "product"
               ? { kind: "product", productId: d.productId, quantity: d.quantity, unitPrice: d.unitPrice, billingFrequency: d.billingFrequency, termMonths: d.termMonths }
               : { kind: "estimate", oemId: d.oemId, categoryId: d.categoryId, value: d.value, billingFrequency: d.billingFrequency, termMonths: d.termMonths },
@@ -145,7 +185,11 @@ export function OppForm({
     start(async () => {
       const r = mode === "create" ? await createOpportunity(fd) : await updateOpportunity(id!, fd);
       if (!r.ok) {
-        setErrors(r.fieldErrors ?? {});
+        // Line problems come back numbered by the lines sent; show them on the lines as they appear on the form
+        setErrors(Object.fromEntries(Object.entries(r.fieldErrors ?? {}).map(([k, m]) => {
+          const p = k.split(".");
+          return p[0] === "lines" && sentIndex[Number(p[1])] !== undefined ? [`lines.${sentIndex[Number(p[1])]}.${p.slice(2).join(".")}`, m] : [k, m];
+        })));
         toast.error(r.error);
         return;
       }
@@ -160,12 +204,19 @@ export function OppForm({
   const text = (name: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <Input id={name} value={v[name] ?? ""} onChange={(e) => set(name, e.target.value)} aria-invalid={!!errors[name]} {...props} />
   );
-  const upd = (key: string, patch: Partial<Draft>) => setDrafts((xs) => xs.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+  const upd = (key: string, patch: Partial<Draft>) => {
+    const i = drafts.findIndex((x) => x.key === key);
+    setDrafts((xs) => xs.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+    // Fixing a line clears its messages
+    setErrors((es) => Object.fromEntries(Object.entries(es).filter(([k]) => !k.startsWith(`lines.${i}.`) && !(i === 0 && k === "lines.0.buId"))));
+  };
+  const lineError = (i: number, field: string) => errors[`lines.${i}.${field}`];
+  const lineMessages = (i: number) => Object.entries(errors).filter(([k]) => k.startsWith(`lines.${i}.`)).map(([, m]) => m);
   const billing = (d: Draft, i: number) => (
     <div className="flex gap-1">
       <Select
         value={d.billingFrequency === "ONE_TIME" ? "ONE_TIME" : "RECURRING"}
-        onChange={(e) => upd(d.key, e.target.value === "ONE_TIME" ? { billingFrequency: "ONE_TIME", termMonths: null } : { billingFrequency: "MONTHLY", termMonths: d.termMonths ?? 36 })}
+        onChange={(e) => upd(d.key, e.target.value === "ONE_TIME" ? { billingFrequency: "ONE_TIME", termMonths: null, billingSet: true } : { billingFrequency: "MONTHLY", termMonths: d.termMonths ?? 36, billingSet: true })}
         aria-label={`Line ${i + 1} billing`}
         className="min-w-0 flex-1"
       >
@@ -187,7 +238,9 @@ export function OppForm({
           <Select
             id="accountId"
             value={v.accountId}
+            aria-invalid={!!errors.accountId}
             onChange={(e) => {
+              set("accountId", e.target.value);
               const a = accounts.find((x) => x.id === e.target.value);
               setV((x) => ({ ...x, accountId: e.target.value, accountType: a?.accountType ?? x.accountType, primaryContactId: a?.contacts[0]?.id ?? "", dealType: "" }));
             }}
@@ -221,14 +274,15 @@ export function OppForm({
           <div className="flex flex-col gap-2 sm:col-span-3">
             {drafts.map((d, i) => {
               const remove = drafts.length > 1 && (
-                <button type="button" onClick={() => setDrafts((xs) => xs.filter((x) => x.key !== d.key))} className="justify-self-end rounded p-1.5 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label={`Remove line ${i + 1}`}>
+                <button type="button" onClick={() => { setDrafts((xs) => xs.filter((x) => x.key !== d.key)); setErrors((es) => Object.fromEntries(Object.entries(es).filter(([k]) => !k.startsWith("lines.")))); }} className="justify-self-end rounded p-1.5 text-ink-3 hover:bg-surface-hover hover:text-[var(--t-red)] cursor-pointer" aria-label={`Remove line ${i + 1}`}>
                   <Trash2 className="size-3.5" />
                 </button>
               );
               if (d.kind === "product") {
                 const p = productById.get(d.productId);
                 return (
-                  <div key={d.key} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-2.5 md:grid-cols-[minmax(0,1fr)_72px_minmax(0,230px)_140px_28px] md:items-center">
+                  <div key={d.key}>
+                  <div className={cn("grid grid-cols-1 gap-2 rounded-lg border p-2.5 md:grid-cols-[minmax(0,1fr)_72px_minmax(0,230px)_140px_28px] md:items-center", lineMessages(i).length ? "border-[var(--t-red)]" : "border-border")}>
                     <ProductPicker
                       products={options.products}
                       value={d.productId || null}
@@ -237,8 +291,10 @@ export function OppForm({
                     />
                     <Input type="number" min={1} value={d.quantity} onChange={(e) => upd(d.key, { quantity: Math.max(1, Number(e.target.value) || 1) })} className="text-right tabular" aria-label={`Line ${i + 1} quantity`} title="Quantity" />
                     {billing(d, i)}
-                    <Input type="number" min={0} value={d.unitPrice ?? ""} placeholder={p?.listPrice?.toLocaleString("en-IN") ?? "Unit price"} onChange={(e) => upd(d.key, { unitPrice: e.target.value === "" ? null : Number(e.target.value) })} className="text-right tabular" aria-label={`Line ${i + 1} unit price`} title="Unit price (blank uses list price)" />
+                    <Input type="number" min={0} value={d.unitPrice ?? ""} placeholder={p?.listPrice?.toLocaleString("en-IN") ?? "Unit price"} aria-invalid={!!lineError(i, "unitPrice")} onChange={(e) => upd(d.key, { unitPrice: e.target.value === "" ? null : Number(e.target.value) })} className="text-right tabular" aria-label={`Line ${i + 1} unit price`} title="Unit price (blank uses list price)" />
                     {remove || <span />}
+                  </div>
+                  <LineMessages n={i + 1} messages={lineMessages(i)} />
                   </div>
                 );
               }
@@ -247,16 +303,27 @@ export function OppForm({
               const listed = catalogue ? options.oems.filter((o) => catalogue.has(o.id)) : [];
               const others = options.oems.filter((o) => !catalogue?.has(o.id));
               return (
-                <div key={d.key} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-2.5 md:grid-cols-[repeat(3,minmax(0,1fr))_140px_minmax(0,230px)_28px] md:items-center">
-                  <Select value={d.buId} onChange={(e) => upd(d.key, { buId: e.target.value, categoryId: "", oemId: "" })} aria-label={`Line ${i + 1} business unit`}>
+                <div key={d.key}>
+                <div className={cn("grid grid-cols-1 gap-2 rounded-lg border p-2.5 md:grid-cols-[repeat(3,minmax(0,1fr))_140px_minmax(0,230px)_28px] md:items-center", lineMessages(i).length ? "border-[var(--t-red)]" : "border-border")}>
+                  <Select value={d.buId} onChange={(e) => upd(d.key, { buId: e.target.value, categoryId: "", oemId: "" })} aria-label={`Line ${i + 1} business unit`} aria-invalid={!!lineError(i, "buId")}>
                     <option value="">Business unit</option>
                     {options.bus.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </Select>
-                  <Select value={d.categoryId} disabled={!d.buId} onChange={(e) => upd(d.key, { categoryId: e.target.value, oemId: "" })} aria-label={`Line ${i + 1} category`}>
+                  <Select
+                    value={d.categoryId} disabled={!d.buId} aria-label={`Line ${i + 1} category`} aria-invalid={!!lineError(i, "categoryId")}
+                    onChange={(e) => {
+                      // Hosting, NOC, SOC… usually bill monthly: start the line that way unless billing was already chosen
+                      const typical = d.billingSet || !e.target.value ? null : typicalBilling(e.target.value, options.products);
+                      upd(d.key, {
+                        categoryId: e.target.value, oemId: "",
+                        ...(typical === "RECURRING" ? { billingFrequency: "MONTHLY" as const, termMonths: d.termMonths ?? 36 } : typical === "ONE_TIME" ? { billingFrequency: "ONE_TIME" as const, termMonths: null } : {}),
+                      });
+                    }}
+                  >
                     <option value="">{d.buId ? "Category" : "Category (pick BU first)"}</option>
                     {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </Select>
-                  <Select value={d.oemId} disabled={!d.categoryId} onChange={(e) => upd(d.key, { oemId: e.target.value })} aria-label={`Line ${i + 1} OEM`}>
+                  <Select value={d.oemId} disabled={!d.categoryId} onChange={(e) => upd(d.key, { oemId: e.target.value })} aria-label={`Line ${i + 1} OEM`} aria-invalid={!!lineError(i, "oemId")}>
                     <option value="">{d.categoryId ? "OEM" : "OEM (pick category first)"}</option>
                     {options.oemTbd && <option value={options.oemTbd.id}>{options.oemTbd.name}</option>}
                     {listed.length > 0 ? (
@@ -268,16 +335,25 @@ export function OppForm({
                       others.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)
                     )}
                   </Select>
-                  <Input type="number" min={0} step={1000} value={d.value ?? ""} placeholder="Value ₹" onChange={(e) => upd(d.key, { value: e.target.value === "" ? null : Number(e.target.value) })} className="text-right tabular" aria-label={`Line ${i + 1} value`} title="Estimated value over the whole term" />
+                  <Input
+                    type="number" min={0} step="any" value={d.value ?? ""} placeholder="Value (optional)" aria-invalid={!!lineError(i, "value")}
+                    onChange={(e) => upd(d.key, { value: e.target.value === "" ? null : Number(e.target.value) })} className="text-right tabular" aria-label={`Line ${i + 1} value`}
+                    title="Estimated value over the whole term. Leave blank if not known yet: it is needed before the deal is qualified."
+                  />
                   {billing(d, i)}
                   {remove || <span />}
+                </div>
+                <LineMessages n={i + 1} messages={lineMessages(i)} />
                 </div>
               );
             })}
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <Button type="button" size="sm" onClick={() => setDrafts((xs) => [...xs, newDraft("estimate")])}><Plus /> Add another</Button>
               <Button type="button" size="sm" variant="ghost" onClick={() => setDrafts((xs) => [...xs, newDraft("product")])}><Package /> Pick an exact product</Button>
-              <span className="ml-auto text-[13px] text-ink-2">Deal value <span className="font-semibold tabular text-ink">{inr(total)}</span></span>
+              <span className="ml-auto text-[13px] text-ink-2">
+                Deal value{" "}
+                {total > 0 ? <span className="font-semibold tabular text-ink">{inr(total)}</span> : <span className="text-ink-3" title="Add it before qualifying the deal">not known yet</span>}
+              </span>
             </div>
           </div>
         </Section>
@@ -452,5 +528,15 @@ function Section({ title, description, children, stacked }: { title: string; des
       </div>
       <div className="grid content-start gap-4 sm:grid-cols-3">{children}</div>
     </Card>
+  );
+}
+
+/** What is missing on one line of the New opportunity form, right under it */
+function LineMessages({ n, messages }: { n: number; messages: string[] }) {
+  if (!messages.length) return null;
+  return (
+    <p role="alert" aria-label={`Line ${n} problems`} className="mt-1 px-1 text-xs text-[var(--t-red)]">
+      Line {n}: {messages.map((m, i) => (i ? m.charAt(0).toLowerCase() + m.slice(1) : m)).join(", ")}.
+    </p>
   );
 }

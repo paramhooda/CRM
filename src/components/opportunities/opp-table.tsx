@@ -25,7 +25,7 @@ const COLS: Col[] = [
       </div>
     ),
   },
-  { id: "amount", label: "Deal value", sort: "amount", align: "right", def: true, render: (o) => <span className="font-medium tabular">{inr(o.amount)}</span> },
+  { id: "amount", label: "Deal value", sort: "amount", align: "right", def: true, render: (o) => (o.amount > 0 ? <span className="font-medium tabular">{inr(o.amount)}</span> : <span className="text-ink-3" title="Value not known yet">—</span>) },
   { id: "stage", label: "Stage", sort: "stage", def: true, render: (o) => <StageBadge stage={o.stage} /> },
   { id: "health", label: "Health", sort: "health", def: false, render: (o) => <HealthBadge label={o.healthLabel} score={o.healthScore} /> },
   { id: "flags", label: "Concerns", def: false, className: "min-w-[180px]", render: (o) => <FlagChips flags={o.flags} max={2} /> },

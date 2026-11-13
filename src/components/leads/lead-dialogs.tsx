@@ -101,7 +101,7 @@ export function ConvertLeadDialog({
       <DialogTrigger asChild>
         <Button size="sm" variant="primary"><ArrowRightLeft /> Convert</Button>
       </DialogTrigger>
-      <DialogContent title={`Convert ${company}`} description="Creates the account (or links an existing one), the contact, and an opportunity in Qualified stage.">
+      <DialogContent title={`Convert ${company}`} description="Creates the account (or links an existing one), the contact, and an opportunity: Qualified when the value is known, Identified until then.">
         <form
           className="flex flex-col gap-3"
           onSubmit={(e) => {
@@ -142,7 +142,7 @@ export function ConvertLeadDialog({
             </Select>
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Estimated value (INR)" required error={errors.amount}><Input name="amount" type="number" defaultValue={estimatedValue ?? ""} /></Field>
+            <Field label="Estimated value (INR)" error={errors.amount} hint="If known. Without it the deal starts at Identified."><Input name="amount" type="number" min={0} defaultValue={estimatedValue ?? ""} /></Field>
             <Field label="Expected close" required error={errors.expectedCloseDate}><Input name="expectedCloseDate" type="date" min={isoDate(new Date())} defaultValue={isoDate(new Date(Date.now() + 90 * 86_400_000))} /></Field>
           </div>
           <div className="flex justify-end gap-2">

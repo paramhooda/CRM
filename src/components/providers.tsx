@@ -8,7 +8,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
       <TooltipProvider>
         {children}
-        <Toaster position="bottom-right" toastOptions={{ className: "text-[13px]" }} richColors closeButton />
+        <Toaster position="top-center" toastOptions={{ className: "text-[13px]" }} richColors closeButton />
       </TooltipProvider>
     </ThemeProvider>
   );

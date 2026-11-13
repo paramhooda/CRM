@@ -2,7 +2,7 @@
 // The pricing step: once purchase has priced the BOQ, the deal owner sets the sales price of each line against its
 // purchase price (or internal cost for rate card and presales lines) and sees the GM as they type. A sales manager
 // reviews the same table and sends the quote. Rate-to-rate lines (0% GM) are allowed.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Send, UserCheck } from "lucide-react";
 import { DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -57,7 +57,11 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
   const [prices, setPrices] = useState<Record<string, string>>(() => Object.fromEntries(a.lines.map((l) => [l.id, l.price === null ? "" : String(l.price)])));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { pending, run } = useAction();
-  const setPrice = (id: string, v: number | string) => setPrices((p) => ({ ...p, [id]: String(v) }));
+  const phone = usePhone();
+  const setPrice = (id: string, v: number | string) => {
+    setPrices((p) => ({ ...p, [id]: String(v) }));
+    setErrors((e) => (e.prices ? { ...e, prices: "" } : e));
+  };
 
   const groups = useMemo(() => {
     const m = new Map<string, PriceLine[]>();
@@ -66,6 +70,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
   }, [a.lines]);
   const priced = a.lines.map((l) => ({ ...l, unitCost: l.cost, unitPrice: asPrice(prices[l.id]) }));
   const unpriced = priced.filter((l) => l.unitPrice === null).length;
+  const negative = priced.filter((l) => l.unitPrice !== null && l.unitPrice < 0).map((l) => l.n);
   const gm = gmSummary(priced);
   const input = () => priced.map((l) => ({ id: l.id, unitPrice: l.unitPrice ?? 0 }));
 
@@ -81,6 +86,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
         onSubmit={(e) => {
           e.preventDefault();
           if (unpriced) return setErrors({ prices: `Set a sales price on ${unpriced} more line${unpriced > 1 ? "s" : ""}.` });
+          if (negative.length) return setErrors({ prices: `A sales price can't be negative (line ${negative.join(", ")}).` });
           const f = Object.fromEntries(new FormData(e.currentTarget).entries());
           if (a.send)
             run(() => createQuote(a.oppId, { validTill: f.validTill, terms: f.terms, prices: input(), version: a.boqVersion }), {
@@ -94,12 +100,50 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
             });
           else
             run(() => savePrices(a.oppId, { prices: input(), version: a.boqVersion }), {
-              success: `Prices saved. ${a.managerName ?? "Your manager"} has been asked to send the quote.`,
+              success: `Prices saved. ${a.managerName ?? "A sales manager"} has been asked to send the quote.`,
               onOk: close,
               onError: (r) => setErrors(r.fieldErrors ?? {}),
             });
         }}
       >
+        {phone ? (
+          <div className="-mx-5 flex flex-col border-y border-border" aria-label="Sales prices">
+            {groups.map(([bu, ls]) => (
+              <div key={bu}>
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-2/60 px-5 py-1.5 text-xs font-medium text-ink-2">
+                  <span>{bu} <span className="font-normal text-ink-3">· {ls.length} line{ls.length > 1 ? "s" : ""}</span></span>
+                  {(groups.length > 1 || ls.length > 1) && <BuMargin bu={bu} onMargin={(m) => ls.forEach((l) => setPrice(l.id, priceAtMargin(l.cost, m)))} />}
+                </div>
+                {ls.map((l) => {
+                  const price = asPrice(prices[l.id]);
+                  const lineGm = price === null ? null : l.mult * (price - l.cost);
+                  const meta = COST_SOURCE_META[l.costSource as CostSourceKey];
+                  return (
+                    <div key={l.id} className="border-t border-border px-5 py-3">
+                      <p className="text-[13px] font-medium">{l.n}. {l.description}</p>
+                      <p className="text-xs text-ink-3">
+                        {l.quantity.toLocaleString("en-IN")} {l.unit} · {l.billingFrequency === "ONE_TIME" ? "One-time" : `${BILLING_FREQUENCY_LABEL[l.billingFrequency]} · ${l.termMonths ?? 12} mo`}
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="text-xs text-ink-3">{meta?.costLabel ?? "Cost"}{l.costSource !== "PURCHASE" ? ` · ${meta?.label.toLowerCase()}` : ""}<p className="text-[13px] tabular text-ink-2">{l.cost.toLocaleString("en-IN")}</p></div>
+                        <div className="text-right text-xs text-ink-3">GM<p className={cn("text-[13px] tabular text-ink-2", lineGm !== null && lineGm < 0 && "text-[var(--t-red)]")}>{lineGm === null ? "—" : inr(lineGm)}</p></div>
+                        <label className="text-xs text-ink-3">Sales price
+                          <Input
+                            type="number" inputMode="decimal" min={0} step="any" value={prices[l.id] ?? ""} aria-label={`Line ${l.n} sales price`} aria-invalid={price !== null && price < 0}
+                            placeholder={l.listPrice !== null ? l.listPrice.toLocaleString("en-IN") : undefined} onChange={(e) => setPrice(l.id, e.target.value)} className="mt-0.5 h-9 text-right tabular"
+                          />
+                        </label>
+                        <label className="text-xs text-ink-3">GM %
+                          <div className="mt-0.5"><MarginInput cost={l.cost} price={price} onPrice={(p) => setPrice(l.id, p)} label={`Line ${l.n} GM %`} /></div>
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        ) : (
         <div className="-mx-5 overflow-x-auto border-y border-border scrollbar-thin">
           <table className="w-full min-w-[820px] text-[13px]" aria-label="Sales prices">
             <thead>
@@ -141,7 +185,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
                         <Input
                           type="number" inputMode="decimal" min={0} step="any" value={prices[l.id] ?? ""} aria-label={`Line ${l.n} sales price`}
                           placeholder={l.listPrice !== null ? l.listPrice.toLocaleString("en-IN") : undefined} title={l.listPrice !== null ? "List price" : undefined}
-                          onChange={(e) => setPrice(l.id, e.target.value)} className="h-8 text-right tabular"
+                          onChange={(e) => setPrice(l.id, e.target.value)} className="h-8 text-right tabular" aria-invalid={price !== null && price < 0}
                         />
                       </td>
                       <td className="px-2 py-2"><MarginInput cost={l.cost} price={price} onPrice={(p) => setPrice(l.id, p)} label={`Line ${l.n} GM %`} /></td>
@@ -153,6 +197,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
             </tbody>
           </table>
         </div>
+        )}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-[13px] sm:grid-cols-4" aria-label="GM summary">
           <Fact label="Contract value" value={inr(gm.contract.value)} />
@@ -160,7 +205,7 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
           <Fact label="Contract GM" value={inr(gm.contract.gm)} sub={gm.contract.gmPct === null ? undefined : pct(gm.contract.gmPct, 1)} danger={gm.contract.gm < 0} />
           {gm.monthly && <Fact label="Monthly GM (recurring)" value={inr(gm.monthly.gm)} sub={`${pct(gm.monthly.gmPct ?? 0, 1)} of ${inr(gm.monthly.value)} a month`} danger={gm.monthly.gm < 0} />}
         </dl>
-        {(errors.prices || unpriced > 0) && <p className="text-xs text-[var(--t-amber)]">{errors.prices ?? `${unpriced} line${unpriced > 1 ? "s" : ""} still need${unpriced > 1 ? "" : "s"} a sales price.`}</p>}
+        {(errors.prices || unpriced > 0) && <p role="status" className={cn("text-xs", errors.prices ? "text-[var(--t-red)]" : "text-[var(--t-amber)]")}>{errors.prices || `${unpriced} line${unpriced > 1 ? "s" : ""} still need${unpriced > 1 ? "" : "s"} a sales price.`}</p>}
 
         {a.send && (
           <>
@@ -189,27 +234,45 @@ export function PricingForm({ a, close }: { a: PricingAction; close: () => void 
 
 /** Business unit heading, with one margin applied to all its lines (products and services usually differ) */
 function BuRow({ bu, count, show, onMargin }: { bu: string; count: number; show: boolean; onMargin: (m: number) => void }) {
-  const [m, setM] = useState("");
   if (!show) return null;
+  return (
+    <tr className="border-t border-border bg-surface-2/60">
+      <td colSpan={3} className="px-5 py-1.5 text-xs font-medium text-ink-2">{bu} <span className="font-normal text-ink-3">· {count} line{count > 1 ? "s" : ""}</span></td>
+      <td colSpan={3} className="px-5 py-1.5"><BuMargin bu={bu} onMargin={onMargin} /></td>
+    </tr>
+  );
+}
+
+/** One GM for every line of a business unit */
+function BuMargin({ bu, onMargin }: { bu: string; onMargin: (m: number) => void }) {
+  const [m, setM] = useState("");
   const apply = () => {
     const v = Number(m);
     if (m.trim() !== "" && Number.isFinite(v) && v < 100) onMargin(v);
   };
   return (
-    <tr className="border-t border-border bg-surface-2/60">
-      <td colSpan={3} className="px-5 py-1.5 text-xs font-medium text-ink-2">{bu} <span className="font-normal text-ink-3">· {count} line{count > 1 ? "s" : ""}</span></td>
-      <td colSpan={3} className="px-5 py-1.5">
-        <div className="flex items-center justify-end gap-1.5 text-xs text-ink-3">
-          GM
-          <input
-            value={m} onChange={(e) => setM(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); apply(); } }}
-            inputMode="decimal" aria-label={`${bu} GM %`} placeholder="%" className="h-7 w-14 rounded-md border border-border bg-surface px-1.5 text-right tabular text-ink"
-          />
-          <Button type="button" size="sm" variant="ghost" onClick={apply}>Apply to {bu}</Button>
-        </div>
-      </td>
-    </tr>
+    <div className="flex items-center justify-end gap-1.5 text-xs text-ink-3">
+      GM
+      <input
+        value={m} onChange={(e) => setM(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); apply(); } }}
+        inputMode="decimal" aria-label={`${bu} GM %`} placeholder="%" className="h-7 w-14 rounded-md border border-border bg-surface px-1.5 text-right tabular text-ink"
+      />
+      <Button type="button" size="sm" variant="ghost" onClick={apply}>Apply to {bu}</Button>
+    </div>
   );
+}
+
+/** Narrow screens get one card per line instead of the wide table */
+function usePhone() {
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia("(max-width: 639px)");
+    const on = () => setPhone(m.matches);
+    on();
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return phone;
 }
 
 /** GM % of a line: shows the margin of its price, and typing a margin sets the price from the cost */

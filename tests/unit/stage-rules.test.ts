@@ -26,6 +26,9 @@ describe("stage moves", () => {
   it("qualifying needs a customer contact and a close date that has not passed", () => {
     expect(checkMove(facts({ stage: "IDENTIFIED", hasContact: false }), owner, "QUALIFIED").reason).toMatch(/customer contact/);
     expect(checkMove(facts({ stage: "IDENTIFIED", closeDatePast: true }), owner, "QUALIFIED").reason).toMatch(/close date/);
+    // A deal created without a value gets one before it is qualified
+    expect(checkMove(facts({ stage: "IDENTIFIED", hasValue: false }), owner, "QUALIFIED").reason).toMatch(/estimated value/);
+    expect(checkMove(facts({ stage: "IDENTIFIED", hasValue: true }), owner, "QUALIFIED").allowed).toBe(true);
   });
 
   it("BOQ, Pricing and Proposal Submitted are entered only by the workflow", () => {

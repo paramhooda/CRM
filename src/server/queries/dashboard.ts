@@ -381,7 +381,7 @@ export async function getActionItems(user: CurrentUser) {
   const deals = await db.opportunity.findMany({
     where: { AND: [opportunityScope(user), { deletedAt: null, stage: { notIn: ["WON", "LOST", "DROPPED", "HOLD"] } }] },
     select: {
-      id: true, name: true, stage: true, expectedCloseDate: true, nextStep: true, nextStepDate: true, healthLabel: true, pricesReadyAt: true,
+      id: true, name: true, stage: true, expectedCloseDate: true, nextStep: true, nextStepDate: true, healthLabel: true, pricesReadyAt: true, amount: true, createdAt: true,
       account: { select: { name: true } },
       salesOwner: { select: { name: true } },
       quotes: { orderBy: { version: "desc" }, take: 1, select: { status: true, validTill: true, createdAt: true } },
@@ -398,6 +398,8 @@ export async function getActionItems(user: CurrentUser) {
       pricedAt: d.pricingRequests.find((r) => r.status === "QUOTED")?.quotedAt ?? null,
       workOpen: d.presalesRequests.length > 0 || d.pricingRequests.some((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS"),
       pricesReadyAt: d.pricesReadyAt,
+      amount: Number(d.amount),
+      createdAt: d.createdAt,
     })),
     now,
     isManager(user),

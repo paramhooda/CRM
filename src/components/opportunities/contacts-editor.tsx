@@ -44,7 +44,7 @@ export function ContactsEditor({
                 {c.contact.firstName} {c.contact.lastName}
                 {c.contact.id === primaryId && <Star className="size-3 fill-current" style={{ color: "var(--warning)" }} aria-label="Primary contact" />}
               </p>
-              <p className="text-xs text-ink-3">{c.contact.title} · {c.contact.email} · {c.contact.mobile ?? c.contact.phone}</p>
+              <p className="truncate text-xs text-ink-3">{[c.contact.title, c.contact.email, c.contact.mobile ?? c.contact.phone].filter(Boolean).join(" · ")}</p>
             </div>
             {canEdit ? (
               <Select
@@ -69,7 +69,7 @@ export function ContactsEditor({
       </div>
       {canEdit && available.length > 0 && (
         <div className="flex items-center gap-2">
-          <Select value={adding} onChange={(e) => setAdding(e.target.value)} className="w-72">
+          <Select value={adding} onChange={(e) => setAdding(e.target.value)} className="min-w-0 flex-1 sm:w-72 sm:flex-none" aria-label="Add a contact">
             <option value="">Add a contact from the account…</option>
             {available.map((c) => <option key={c.id} value={c.id}>{c.firstName} {c.lastName} · {c.title}</option>)}
           </Select>

@@ -25,6 +25,8 @@ describe("needs your action", () => {
     expect(kind({ expectedCloseDate: days(-3) })).toBe("CLOSE_DATE_PASSED");
     expect(kind({ nextStep: "Call", nextStepDate: days(-1) })).toBe("NEXT_STEP_OVERDUE");
     expect(kind({ healthLabel: "DYING" })).toBe("NO_ACTIVITY");
+    expect(kind({ amount: 0 })).toBe("ADD_VALUE");
+    expect(kind({ amount: 250000 })).toBeUndefined();
   });
   it("priced deals already quoted since, or with work still open, are not 'ready to quote'", () => {
     expect(actionItems([deal({ pricedAt: days(-5), quote: { status: "SUBMITTED", validTill: days(20), createdAt: days(-2) } })], now)).toEqual([]);

@@ -121,7 +121,8 @@ export function evaluateOpportunity(o: RuleInput, now: Date = new Date()): RuleR
 
   // Commercials
   if (o.marginPct !== null && o.marginPct < THRESHOLDS.lowMarginPct) flags.add("LOW_MARGIN");
-  if (o.revenueModel === "ARR" && (!o.contractTermMonths || !o.arrAmount)) flags.add("ARR_TERM_MISSING");
+  // A deal without a value yet is reminded about the value itself, not its annual split
+  if (o.revenueModel === "ARR" && o.amount > 0 && (!o.contractTermMonths || !o.arrAmount)) flags.add("ARR_TERM_MISSING");
 
   // Relationship coverage
   if (!o.primaryContactId) flags.add("NO_CONTACT");

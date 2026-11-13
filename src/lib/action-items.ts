@@ -3,12 +3,12 @@
 
 export type ActionKind =
   | "ANSWER_PRESALES" | "QUOTE_EXPIRED" | "QUOTE_EXPIRING" | "REVISE_QUOTE" | "RECORD_PO" | "READY_TO_QUOTE"
-  | "CLOSE_DATE_PASSED" | "NEXT_STEP_OVERDUE" | "NO_ACTIVITY" | "SEND_QUOTE";
+  | "CLOSE_DATE_PASSED" | "NEXT_STEP_OVERDUE" | "NO_ACTIVITY" | "SEND_QUOTE" | "ADD_VALUE";
 
 /** Lower is more urgent */
 const URGENCY: Record<ActionKind, number> = {
   ANSWER_PRESALES: 0, QUOTE_EXPIRED: 0, RECORD_PO: 1, REVISE_QUOTE: 1, QUOTE_EXPIRING: 1, SEND_QUOTE: 1, READY_TO_QUOTE: 2,
-  CLOSE_DATE_PASSED: 2, NEXT_STEP_OVERDUE: 3, NO_ACTIVITY: 4,
+  CLOSE_DATE_PASSED: 2, NEXT_STEP_OVERDUE: 3, ADD_VALUE: 3, NO_ACTIVITY: 4,
 };
 
 export type ActionDeal = {
@@ -31,6 +31,10 @@ export type ActionDeal = {
   workOpen: boolean;
   /** When the deal owner set the sales prices and asked a sales manager to send the quote */
   pricesReadyAt?: Date | null;
+  /** Deal value; 0 when it was created without one (needed before it is qualified) */
+  amount?: number;
+  /** When the deal was created */
+  createdAt?: Date;
 };
 
 export type ActionItem = { dealId: string; deal: string; account: string; owner: string; kind: ActionKind; label: string; at: Date };
@@ -63,6 +67,7 @@ function itemsFor(d: ActionDeal, now: Date, manager: boolean): Omit<ActionItem, 
   if (q?.status === "ACCEPTED") out.push({ kind: "RECORD_PO", label: "Quote accepted: record the PO", at: q.createdAt });
   if (!ready && !d.workOpen && d.pricedAt && (!q || q.createdAt < d.pricedAt)) out.push({ kind: "READY_TO_QUOTE", label: "Purchase priced it: set the sales prices", at: d.pricedAt });
   if (d.expectedCloseDate < now) out.push({ kind: "CLOSE_DATE_PASSED", label: `Close date passed (${short(d.expectedCloseDate)})`, at: d.expectedCloseDate });
+  if (d.amount === 0) out.push({ kind: "ADD_VALUE", label: "Add the estimated value", at: d.createdAt ?? d.expectedCloseDate });
   if (d.nextStepDate && d.nextStepDate < now) out.push({ kind: "NEXT_STEP_OVERDUE", label: `Overdue: ${d.nextStep ?? "next step"}`, at: d.nextStepDate });
   if (d.healthLabel === "DYING") out.push({ kind: "NO_ACTIVITY", label: "Going cold: no recent activity", at: d.expectedCloseDate });
   return out.sort((a, b) => URGENCY[a.kind] - URGENCY[b.kind] || a.at.getTime() - b.at.getTime());
