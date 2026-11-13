@@ -5,58 +5,94 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Every colour in the application is defined here, once, as a token. Components use the Tailwind classes that
- * map to these tokens (bg-primary, text-muted-foreground, bg-stage-qualified…) and never a raw colour.
+ * The design system (docs/DESIGN.md) lives here, once, as tokens: every colour, font, radius and shadow.
+ * Components use the Tailwind classes that map to these tokens (bg-card, text-muted-foreground, shadow-card,
+ * bg-stage-qualified…) and never a raw value. tests/unit/design-tokens.test.ts enforces that and checks the
+ * contrast of every tinted pair.
  *
- * Palette: primary indigo (harmonised with the navy wordmark in the logo), tinted sidebar and cards, semantic
- * colours for stage and forecast pills, and one colour per business unit for tags and charts. Every pill pair
- * meets WCAG AA at small text sizes.
+ * Light, flat and quiet: zinc neutrals, a brand-blue scale for the primary, links, focus and selection, 1px
+ * borders and faint shadows. Status colour only for actual status (stage, forecast, request and approval
+ * states), one colour per business unit in tags and charts, Geist Mono for codes and numbers that align.
  */
 @theme inline {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: var(--font-geist-sans), -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-foreground-subtle: var(--foreground-subtle);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-surface-3: var(--surface-3);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-selected: var(--selected);
+  --color-selected-strong: var(--selected-strong);
+  --color-selected-foreground: var(--selected-foreground);
+  --color-link: var(--link);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-card-tint: var(--card-tint);
-  --color-foreground: var(--foreground);
-  --color-background: var(--background);
-  --color-brand-navy: var(--brand-navy);
-  --color-brand-red: var(--brand-red);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
+  --color-ink-900: var(--ink-900);
+  --color-ink-800: var(--ink-800);
 
-  /* Stage pills: blues for the early stages, amber for proposal and negotiation, slate for hold,
-     green won, red lost, grey dropped */
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Categorical series, blue-led, in order */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  /* One hue, light to dark, for ordered magnitudes */
+  --color-chart-mag-1: var(--chart-mag-1);
+  --color-chart-mag-2: var(--chart-mag-2);
+  --color-chart-mag-3: var(--chart-mag-3);
+  --color-chart-mag-4: var(--chart-mag-4);
+  --color-chart-mag-5: var(--chart-mag-5);
+
+  /* Stage tags: tinted background, darker text of the same hue */
   --color-stage-qualified: var(--stage-qualified);
   --color-stage-qualified-foreground: var(--stage-qualified-fg);
   --color-stage-boq: var(--stage-boq);
@@ -74,7 +110,7 @@
   --color-stage-dropped: var(--stage-dropped);
   --color-stage-dropped-foreground: var(--stage-dropped-fg);
 
-  /* Forecast pills */
+  /* Forecast tags */
   --color-forecast-commit: var(--forecast-commit);
   --color-forecast-commit-foreground: var(--forecast-commit-fg);
   --color-forecast-upside: var(--forecast-upside);
@@ -96,192 +132,261 @@
   --color-bu-cyber-soft: var(--bu-cyber-soft);
   --color-bu-cyber-foreground: var(--bu-cyber-fg);
 
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  /* Shape: 12px cards and dialogs, 8px buttons, inputs and chips, 6px small tags */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+  --radius-4xl: 24px;
+
+  /* Depth: faint */
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-popover: var(--shadow-popover);
 }
 
 :root {
-  --radius: 0.625rem;
+  --radius: 8px;
 
-  --background: #ffffff;
-  --foreground: #1c1b2e;
+  /* Brand blue scale */
+  --brand-50: #eff6ff;
+  --brand-100: #dbeafe;
+  --brand-200: #bfdbfe;
+  --brand-300: #93c5fd;
+  --brand-400: #60a5fa;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+  --brand-800: #1e40af;
+  --brand-900: #1e3a8a;
+
+  /* Neutrals (zinc) */
+  --background: #fafafa;
+  --foreground: #09090b;
+  --foreground-secondary: #3f3f46;
+  --foreground-subtle: #a1a1aa;
   --card: #ffffff;
-  --card-foreground: #1c1b2e;
-  --card-tint: #f4f4fd;
+  --card-foreground: #09090b;
   --popover: #ffffff;
-  --popover-foreground: #1c1b2e;
-  --primary: #5b5bd6;
+  --popover-foreground: #09090b;
+  --surface-3: #e4e4e7;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #09090b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #09090b;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --input: #e4e4e7;
+  --ink-900: #18181b;
+  --ink-800: #27272a;
+  --overlay: rgb(9 9 11 / 0.2);
+
+  /* Brand in use */
+  --primary: var(--brand-600);
+  --primary-hover: var(--brand-700);
   --primary-foreground: #ffffff;
-  --secondary: #ececfa;
-  --secondary-foreground: #292345;
-  --muted: #f3f3f9;
-  --muted-foreground: #5f5e7a;
-  --accent: #e9e9fb;
-  --accent-foreground: #292345;
-  --destructive: #d7262c;
+  --link: var(--brand-700);
+  --ring: var(--brand-500);
+  --selected: var(--brand-50);
+  --selected-strong: var(--brand-100);
+  --selected-foreground: var(--brand-700);
+
+  /* Status */
+  --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --success: #15803d;
   --success-foreground: #ffffff;
   --warning: #b45309;
   --warning-foreground: #ffffff;
-  --border: #e3e3ef;
-  --input: #d9d9e8;
-  --ring: #5b5bd6;
-  --brand-navy: #292345;
-  --brand-red: #ee3137;
 
-  --chart-1: #4f46e5;
-  --chart-2: #0d9488;
-  --chart-3: #d97706;
-  --chart-4: #e11d48;
-  --chart-5: #64748b;
+  /* Depth */
+  --shadow-card: 0 1px 2px rgb(9 9 11 / 0.04);
+  --shadow-raised: 0 2px 8px rgb(9 9 11 / 0.06), 0 1px 2px rgb(9 9 11 / 0.04);
+  --shadow-popover: 0 0 0 1px rgb(9 9 11 / 0.05), 0 20px 50px -16px rgb(9 9 11 / 0.28);
 
-  --sidebar: #eeeefb;
-  --sidebar-foreground: #292345;
-  --sidebar-primary: #5b5bd6;
+  /* Charts */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+  --chart-7: #4a3aa7;
+  --chart-8: #e34948;
+  --chart-mag-1: var(--brand-300);
+  --chart-mag-2: var(--brand-400);
+  --chart-mag-3: var(--brand-500);
+  --chart-mag-4: var(--brand-600);
+  --chart-mag-5: var(--brand-800);
+
+  /* Sidebar: same surface as the page, brand tint on the active item */
+  --sidebar: #fafafa;
+  --sidebar-foreground: #3f3f46;
+  --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e1e1f7;
-  --sidebar-accent-foreground: #292345;
-  --sidebar-border: #dcdcf0;
-  --sidebar-ring: #5b5bd6;
+  --sidebar-accent: var(--selected);
+  --sidebar-accent-foreground: var(--selected-foreground);
+  --sidebar-hover: #f4f4f5;
+  --sidebar-border: #e4e4e7;
+  --sidebar-ring: var(--ring);
 
-  --stage-qualified: #e0e7ff;
-  --stage-qualified-fg: #3730a3;
-  --stage-boq: #dbeafe;
-  --stage-boq-fg: #1e40af;
+  --stage-qualified: #eff6ff;
+  --stage-qualified-fg: #1d4ed8;
+  --stage-boq: #ede9fe;
+  --stage-boq-fg: #5b21b6;
   --stage-proposal: #fef3c7;
   --stage-proposal-fg: #92400e;
-  --stage-negotiation: #fde68a;
-  --stage-negotiation-fg: #78350f;
-  --stage-hold: #e2e8f0;
-  --stage-hold-fg: #334155;
+  --stage-negotiation: #ffedd5;
+  --stage-negotiation-fg: #9a3412;
+  --stage-hold: #f4f4f5;
+  --stage-hold-fg: #3f3f46;
   --stage-won: #dcfce7;
   --stage-won-fg: #166534;
   --stage-lost: #fee2e2;
   --stage-lost-fg: #991b1b;
-  --stage-dropped: #e5e7eb;
-  --stage-dropped-fg: #374151;
+  --stage-dropped: #f4f4f5;
+  --stage-dropped-fg: #52525b;
 
   --forecast-commit: #dcfce7;
   --forecast-commit-fg: #166534;
   --forecast-upside: #fef3c7;
   --forecast-upside-fg: #92400e;
-  --forecast-pipeline: #dbeafe;
-  --forecast-pipeline-fg: #1e40af;
+  --forecast-pipeline: #eff6ff;
+  --forecast-pipeline-fg: #1d4ed8;
 
-  --bu-iti: #4f46e5;
-  --bu-iti-soft: #e0e7ff;
-  --bu-iti-fg: #3730a3;
-  --bu-cloud: #0d9488;
-  --bu-cloud-soft: #ccfbf1;
-  --bu-cloud-fg: #115e59;
-  --bu-services: #d97706;
-  --bu-services-soft: #ffedd5;
-  --bu-services-fg: #9a3412;
-  --bu-cyber: #e11d48;
-  --bu-cyber-soft: #ffe4e6;
-  --bu-cyber-fg: #9f1239;
+  --bu-iti: #2a78d6;
+  --bu-iti-soft: #e8f1fb;
+  --bu-iti-fg: #1d4ed8;
+  --bu-cloud: #1baf7a;
+  --bu-cloud-soft: #e3f6ee;
+  --bu-cloud-fg: #0f6b4b;
+  --bu-services: #eda100;
+  --bu-services-soft: #fdf3dc;
+  --bu-services-fg: #8a5a00;
+  --bu-cyber: #eb6834;
+  --bu-cyber-soft: #fdebe3;
+  --bu-cyber-fg: #9a3412;
 }
 
 .dark {
-  --background: #0f1020;
-  --foreground: #ececf4;
-  --card: #171830;
-  --card-foreground: #ececf4;
-  --card-tint: #1b1c36;
-  --popover: #171830;
-  --popover-foreground: #ececf4;
-  --primary: #8585ee;
-  --primary-foreground: #0f1020;
-  --secondary: #26274a;
-  --secondary-foreground: #ececf4;
-  --muted: #22233f;
-  --muted-foreground: #a5a4c2;
-  --accent: #2a2b52;
-  --accent-foreground: #ececf4;
-  --destructive: #f26b6e;
-  --destructive-foreground: #0f1020;
+  --background: #09090b;
+  --foreground: #fafafa;
+  --foreground-secondary: #d4d4d8;
+  --foreground-subtle: #71717a;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --surface-3: #3f3f46;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --border: #27272a;
+  --border-strong: #3f3f46;
+  --input: #3f3f46;
+  --ink-900: #e4e4e7;
+  --ink-800: #d4d4d8;
+  --overlay: rgb(0 0 0 / 0.6);
+
+  --primary: var(--brand-600);
+  --primary-hover: var(--brand-500);
+  --primary-foreground: #ffffff;
+  --link: var(--brand-400);
+  --ring: var(--brand-500);
+  --selected: #172036;
+  --selected-strong: #1e2a47;
+  --selected-foreground: var(--brand-300);
+
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
   --success: #4ade80;
-  --success-foreground: #0f1020;
+  --success-foreground: #09090b;
   --warning: #fbbf24;
-  --warning-foreground: #0f1020;
-  --border: #2b2c4c;
-  --input: #34355c;
-  --ring: #8585ee;
+  --warning-foreground: #09090b;
 
-  --chart-1: #818cf8;
-  --chart-2: #2dd4bf;
-  --chart-3: #fbbf24;
-  --chart-4: #fb7185;
-  --chart-5: #94a3b8;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-popover: 0 0 0 1px rgb(255 255 255 / 0.08), 0 20px 50px -16px rgb(0 0 0 / 0.7);
 
-  --sidebar: #131430;
-  --sidebar-foreground: #d9d9f0;
-  --sidebar-primary: #8585ee;
-  --sidebar-primary-foreground: #0f1020;
-  --sidebar-accent: #22234a;
-  --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #2b2c4c;
-  --sidebar-ring: #8585ee;
+  --chart-mag-1: var(--brand-300);
+  --chart-mag-2: var(--brand-400);
+  --chart-mag-3: var(--brand-500);
+  --chart-mag-4: var(--brand-600);
+  --chart-mag-5: var(--brand-800);
 
-  --stage-qualified: #312e81;
-  --stage-qualified-fg: #c7d2fe;
-  --stage-boq: #1e3a8a;
-  --stage-boq-fg: #bfdbfe;
-  --stage-proposal: #78350f;
-  --stage-proposal-fg: #fde68a;
-  --stage-negotiation: #92400e;
-  --stage-negotiation-fg: #fef3c7;
-  --stage-hold: #334155;
-  --stage-hold-fg: #e2e8f0;
-  --stage-won: #14532d;
-  --stage-won-fg: #bbf7d0;
-  --stage-lost: #7f1d1d;
-  --stage-lost-fg: #fecaca;
-  --stage-dropped: #374151;
-  --stage-dropped-fg: #e5e7eb;
+  --sidebar: #09090b;
+  --sidebar-foreground: #d4d4d8;
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--selected);
+  --sidebar-accent-foreground: var(--selected-foreground);
+  --sidebar-hover: #18181b;
+  --sidebar-border: #27272a;
+  --sidebar-ring: var(--ring);
 
-  --forecast-commit: #14532d;
-  --forecast-commit-fg: #bbf7d0;
-  --forecast-upside: #78350f;
-  --forecast-upside-fg: #fde68a;
-  --forecast-pipeline: #1e3a8a;
-  --forecast-pipeline-fg: #bfdbfe;
+  --stage-qualified: #172554;
+  --stage-qualified-fg: #93c5fd;
+  --stage-boq: #2e1065;
+  --stage-boq-fg: #c4b5fd;
+  --stage-proposal: #451a03;
+  --stage-proposal-fg: #fcd34d;
+  --stage-negotiation: #431407;
+  --stage-negotiation-fg: #fdba74;
+  --stage-hold: #27272a;
+  --stage-hold-fg: #d4d4d8;
+  --stage-won: #052e16;
+  --stage-won-fg: #86efac;
+  --stage-lost: #450a0a;
+  --stage-lost-fg: #fca5a5;
+  --stage-dropped: #27272a;
+  --stage-dropped-fg: #a1a1aa;
 
-  --bu-iti: #818cf8;
-  --bu-iti-soft: #312e81;
-  --bu-iti-fg: #c7d2fe;
-  --bu-cloud: #2dd4bf;
-  --bu-cloud-soft: #134e4a;
-  --bu-cloud-fg: #99f6e4;
+  --forecast-commit: #052e16;
+  --forecast-commit-fg: #86efac;
+  --forecast-upside: #451a03;
+  --forecast-upside-fg: #fcd34d;
+  --forecast-pipeline: #172554;
+  --forecast-pipeline-fg: #93c5fd;
+
+  --bu-iti: #60a5fa;
+  --bu-iti-soft: #172554;
+  --bu-iti-fg: #93c5fd;
+  --bu-cloud: #34d399;
+  --bu-cloud-soft: #06281c;
+  --bu-cloud-fg: #6ee7b7;
   --bu-services: #fbbf24;
-  --bu-services-soft: #7c2d12;
-  --bu-services-fg: #fed7aa;
-  --bu-cyber: #fb7185;
-  --bu-cyber-soft: #881337;
-  --bu-cyber-fg: #fecdd3;
+  --bu-services-soft: #3b2a05;
+  --bu-services-fg: #fcd34d;
+  --bu-cyber: #fb923c;
+  --bu-cyber-soft: #431407;
+  --bu-cyber-fg: #fdba74;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    @apply font-sans;
+  }
   body {
     @apply bg-background text-foreground;
+    font-size: 14px;
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
-  html {
-    @apply font-sans;
-  }
+  /* Numbers that align: Geist Mono, tabular figures */
   .tabular {
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 }
