@@ -47,8 +47,7 @@ export function fiscalYearRange(fiscalYear: number): DateRange {
   return { from: dateOnly(fiscalYear - 1, 4, 1), to: dateOnly(fiscalYear, 3, 31), label: fyLabel(fiscalYear) };
 }
 
-const PERIOD_KEYS = ["this-q", "next-q", "last-q", "this-fy", "last-fy", "next-30", "next-60", "next-90", "all"] as const;
-export type PeriodKey = (typeof PERIOD_KEYS)[number];
+export type PeriodKey = "this-q" | "next-q" | "last-q" | "this-fy" | "last-fy" | "next-30" | "next-60" | "next-90" | "all";
 
 /**
  * Turns a period key from the URL into a date range on expected close date. Accepts the named keys, `FY27-Q3`,
