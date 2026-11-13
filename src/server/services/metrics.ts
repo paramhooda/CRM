@@ -78,9 +78,9 @@ export async function homeMetrics(actor: Actor, f: DealListQuery) {
     },
     todo: {
       approvals: myApprovalsCount,
-      pastClose: pastClose.sort((a, b) => a.expectedCloseDate.getTime() - b.expectedCloseDate.getTime()).slice(0, 10).map(dealRef),
+      pastClose: pastClose.sort((a, b) => a.expectedCloseDate.getTime() - b.expectedCloseDate.getTime()).slice(0, 6).map(dealRef),
       pastCloseCount: pastClose.length,
-      nextStep: noNextStep.slice(0, 10).map(dealRef),
+      nextStep: noNextStep.slice(0, 6).map(dealRef),
       nextStepCount: noNextStep.length,
       overdueRequests: myOpenRequests.map((r) => ({ id: r.id, dueDate: r.dueDate, deal: r.deal, assignedTo: r.assignedTo.fullName })),
     },

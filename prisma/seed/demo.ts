@@ -194,13 +194,13 @@ export async function seedDemo(db: PrismaClient, ref: Reference, log: (s: string
       const boqAt = history.find((h) => h.to === "BOQ")!.at;
       const submitted = walk.indexOf("BOQ") < walk.length - 1 || closed;
       const inBoq = stage === "BOQ";
-      await db.presalesRequest.create({ data: { dealId: deal.id, requestedById: owner, assignedToId: deal.presalesOwnerId!, dueDate: dateOnly(new Date(boqAt.getTime() + r.int(5, 14) * DAY)), scope: `BOQ for ${deal.name}`, status: submitted ? "SUBMITTED" : inBoq ? (r.chance(0.5) ? "IN_PROGRESS" : "REQUESTED") : "CANCELLED", requestedAt: boqAt, startedAt: submitted || r.chance(0.5) ? new Date(boqAt.getTime() + DAY) : null, submittedAt: submitted ? new Date(boqAt.getTime() + r.int(3, 12) * DAY) : null, summary: submitted ? "Sized and specified with the customer's IT team." : null } });
+      await db.presalesRequest.create({ data: { dealId: deal.id, requestedById: owner, assignedToId: deal.presalesOwnerId!, dueDate: dateOnly(new Date(boqAt.getTime() + r.int(5, 14) * DAY)), scope: `BOQ for ${deal.name}`, status: submitted ? "SUBMITTED" : inBoq ? (r.chance(0.5) ? "IN_PROGRESS" : "REQUESTED") : "CANCELLED", requestedAt: boqAt, startedAt: submitted || r.chance(0.5) ? new Date(boqAt.getTime() + DAY) : null, submittedAt: submitted ? new Date(boqAt.getTime() + r.int(3, 12) * DAY) : null, summary: submitted ? "Sized and specified with the customer's IT team." : null, updatedAt: submitted ? new Date(boqAt.getTime() + r.int(3, 12) * DAY) : boqAt } });
     }
     if (lines.some((l) => !ref.oems.get(chosen[l.lineNo - 1]!.oem)!.isOwnIp)) {
       const pricingAt = new Date(createdAt.getTime() + r.int(2, 10) * DAY);
       const complete = costed && priced;
       if (complete || stage === "BOQ" || (stage === "QUALIFIED" && r.chance(0.3)))
-        await db.pricingRequest.create({ data: { dealId: deal.id, requestedById: owner, assignedToId: r.pick(purchase).id, dueDate: dateOnly(new Date(pricingAt.getTime() + r.int(3, 10) * DAY)), notes: "Best supplier price, 30-day validity.", status: complete ? "COMPLETED" : closed ? "CANCELLED" : r.chance(0.5) ? "IN_PROGRESS" : "REQUESTED", requestedAt: pricingAt, startedAt: complete ? new Date(pricingAt.getTime() + DAY) : null, completedAt: complete ? new Date(pricingAt.getTime() + r.int(2, 8) * DAY) : null, completionNotes: complete ? "Ingram Micro, valid 30 days" : null } });
+        await db.pricingRequest.create({ data: { dealId: deal.id, requestedById: owner, assignedToId: r.pick(purchase).id, dueDate: dateOnly(new Date(pricingAt.getTime() + r.int(3, 10) * DAY)), notes: "Best supplier price, 30-day validity.", status: complete ? "COMPLETED" : closed ? "CANCELLED" : r.chance(0.5) ? "IN_PROGRESS" : "REQUESTED", requestedAt: pricingAt, startedAt: complete ? new Date(pricingAt.getTime() + DAY) : null, completedAt: complete ? new Date(pricingAt.getTime() + r.int(2, 8) * DAY) : null, completionNotes: complete ? "Ingram Micro, valid 30 days" : null, updatedAt: complete ? new Date(pricingAt.getTime() + r.int(2, 8) * DAY) : pricingAt } });
     }
     // approvals on low-margin deals
     if (lowMargin && roll.expectedGmPct !== null) {
