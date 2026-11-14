@@ -112,7 +112,7 @@ export async function seedReference(db: PrismaClient, log: (s: string) => void) 
   log(`Catalogue: ${products.length} products`);
 
   // Approval rules (two examples; admins change them)
-  const salesHeadRule = async (name: string, data: { gmBelowPct?: number; dealValueAtLeast?: number }, steps: { kind: "OWNER_MANAGER" | "ROLE"; role?: "SALES_HEAD" | "ADMIN" }[]) => {
+  const salesHeadRule = async (name: string, data: { gmBelowPct?: number; dealValueAtLeast?: number; isActive?: boolean }, steps: { kind: "OWNER_MANAGER" | "ROLE"; role?: "SALES_HEAD" | "ADMIN" }[]) => {
     const existing = await db.approvalRule.findUnique({ where: { name } });
     if (existing) return;
     await db.approvalRule.create({
@@ -122,8 +122,9 @@ export async function seedReference(db: PrismaClient, log: (s: string) => void) 
       },
     });
   };
-  await salesHeadRule("Low margin: GM below 12%", { gmBelowPct: 12 }, [{ kind: "OWNER_MANAGER" }, { kind: "ROLE", role: "SALES_HEAD" }]);
-  await salesHeadRule("Large deal: ₹1 Cr or more", { dealValueAtLeast: 10_000_000 }, [{ kind: "ROLE", role: "SALES_HEAD" }]);
+  // Both examples start switched off: the owner turns approvals on from Admin → Approval rules when the process is set
+  await salesHeadRule("Low margin: GM below 12%", { gmBelowPct: 12, isActive: false }, [{ kind: "OWNER_MANAGER" }, { kind: "ROLE", role: "SALES_HEAD" }]);
+  await salesHeadRule("Large deal: ₹1 Cr or more", { dealValueAtLeast: 10_000_000, isActive: false }, [{ kind: "ROLE", role: "SALES_HEAD" }]);
 
   // Quarterly targets for every sales person, this fiscal year and the last
   const fy = fiscalYearOf(new Date());

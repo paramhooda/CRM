@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BASE, Client, as, expectError, expectOk, isoDate, uniq } from "./helpers";
 
 type Deal = { id: string; version: number; stage: string; approvalState: string; approvalReasons: string[]; moves: { action: string; enabled: boolean; reason?: string }[]; lines: { id: string; unitPurchaseCost: string | null }[]; expectedGmPct: string | null; poNumber: string | null; documents: { id: string; kind: { name: string } }[] };
@@ -78,12 +78,22 @@ describe("documents", () => {
   });
 });
 
+/** The seeded rules start switched off; these tests turn them on and off again. */
+async function seededRules(active: boolean) {
+  type Rule = { id: string; name: string; gmBelowPct: string | null; dealValueAtLeast: string | null; businessUnitId: string | null; steps: { approverKind: string; approverRole: string | null; approverUserId: string | null }[] };
+  const rules = expectOk(await admin.get<{ rows: Rule[] }>("/admin/approval-rules")).rows.filter((r) => r.name === "Low margin: GM below 12%" || r.name === "Large deal: ₹1 Cr or more");
+  for (const r of rules) expectOk(await admin.patch(`/admin/approval-rules/${r.id}`, { name: r.name, isActive: active, gmBelowPct: r.gmBelowPct, dealValueAtLeast: r.dealValueAtLeast, businessUnitId: r.businessUnitId, steps: r.steps.map((s) => ({ approverKind: s.approverKind, approverRole: s.approverRole, approverUserId: s.approverUserId })) }));
+}
+
 describe("approvals", () => {
+  beforeAll(() => seededRules(true));
+  afterAll(() => seededRules(false));
+
   it("a low-margin deal needs approval: owner's manager, then any Sales Head; prices changing afterwards lapse it", async () => {
     let d = expectOk(await rep.post<Deal>("/deals", { name: uniq("Thin margin"), accountId, primaryContactId: contactId, expectedCloseDate: isoDate(30), lines: [{ productId: laptopId, quantity: 10, unitSalesPrice: "62000", unitPurchaseCost: "60000" }] }));
     expect(Number(d.expectedGmPct)).toBeCloseTo(3.23, 1);
     expect(d.approvalState).toBe("NEEDED");
-    expect(d.approvalReasons[0]).toMatch(/GM 3.2% is below 12.0%/);
+    expect(d.approvalReasons[0]).toMatch(/^Low margin: GM below 12%: GM 3.2% is below 12.0%/);
     expect(d.moves.find((m) => m.action === "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/approval/) });
     expectError(await stage(rep, d, { action: "ADVANCE" }), 409);
     expectError(await (await as("rep2")).post(`/deals/${d.id}/approvals`), 404);

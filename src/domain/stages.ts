@@ -57,6 +57,8 @@ export type DealFacts = {
   openPresalesRequest: boolean;
   openPricingRequest: boolean;
   approvalState: ApprovalState;
+  /** Names of the approval rules the prices match right now (empty when none) */
+  approvalRules: string[];
   hasPrimaryContact: boolean;
   closeDatePast: boolean;
   hasPoDocument: boolean;
@@ -91,7 +93,7 @@ export function priceBlockers(f: DealFacts): string[] {
   if (f.lineCount === 0) out.push("Add at least one line.");
   if (f.uncostedLines > 0) out.push(`Enter the purchase cost on ${plural(f.uncostedLines, "the remaining line", "N lines")} (ask purchase for prices) so the margin is known.`);
   if (f.unpricedLines > 0) out.push(`Set a sales price on ${plural(f.unpricedLines, "the remaining line", "N lines")}.`);
-  if (f.approvalState === "NEEDED" || f.approvalState === "STALE") out.push("These prices need approval first.");
+  if (f.approvalState === "NEEDED" || f.approvalState === "STALE") out.push(`These prices need approval first${f.approvalRules.length ? ` (${f.approvalRules.join(", ")})` : ""}.`);
   if (f.approvalState === "PENDING") out.push("Waiting for approval.");
   if (f.approvalState === "REJECTED") out.push("Approval was rejected; change the prices and ask again.");
   return out;

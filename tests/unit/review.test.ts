@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changesSince, flagsFor, personSummary } from "@/domain/review";
+import { ALL_ALERTS, changesSince, flagLabel, flagsFor, personSummary } from "@/domain/review";
 
 const d = (iso: string) => new Date(iso);
 const now = d("2026-11-13T10:00:00Z");
@@ -31,15 +31,24 @@ describe("changes since a date", () => {
 describe("flags", () => {
   const base = { stage: "QUALIFIED" as const, forecastCategory: "PIPELINE" as const, expectedCloseDate: d("2026-12-31"), stageEnteredAt: d("2026-11-10"), updatedAt: d("2026-11-12"), nextStep: "Demo" };
   it("raises each concern at its boundary and nothing on a closed deal", () => {
-    expect(flagsFor(base, 0, now)).toEqual([]);
-    expect(flagsFor({ ...base, expectedCloseDate: d("2026-11-10") }, 0, now)).toContain("CLOSE_DATE_PASSED");
-    expect(flagsFor(base, 2, now)).toContain("SLIPPED");
-    expect(flagsFor({ ...base, updatedAt: d("2026-10-01") }, 0, now)).toContain("NO_ACTIVITY_21D");
-    expect(flagsFor({ ...base, stageEnteredAt: d("2026-10-01") }, 0, now)).toContain("STUCK");
-    expect(flagsFor({ ...base, forecastCategory: "COMMIT" }, 0, now)).toContain("COMMIT_WITHOUT_PROPOSAL");
-    expect(flagsFor({ ...base, forecastCategory: "COMMIT", stage: "NEGOTIATION" }, 0, now)).not.toContain("COMMIT_WITHOUT_PROPOSAL");
-    expect(flagsFor({ ...base, nextStep: null }, 0, now)).toContain("NO_NEXT_STEP");
-    expect(flagsFor({ ...base, stage: "CLOSED_WON", updatedAt: d("2025-01-01") }, 3, now)).toEqual([]);
+    const on = ALL_ALERTS;
+    expect(flagsFor(base, 0, now, on)).toEqual([]);
+    expect(flagsFor({ ...base, expectedCloseDate: d("2026-11-10") }, 0, now, on)).toContain("CLOSE_DATE_PASSED");
+    expect(flagsFor(base, 2, now, on)).toContain("SLIPPED");
+    expect(flagsFor({ ...base, updatedAt: d("2026-10-01") }, 0, now, on)).toContain("NO_ACTIVITY");
+    expect(flagsFor({ ...base, stageEnteredAt: d("2026-10-01") }, 0, now, on)).toContain("STUCK");
+    expect(flagsFor({ ...base, forecastCategory: "COMMIT" }, 0, now, on)).toContain("COMMIT_WITHOUT_PROPOSAL");
+    expect(flagsFor({ ...base, forecastCategory: "COMMIT", stage: "NEGOTIATION" }, 0, now, on)).not.toContain("COMMIT_WITHOUT_PROPOSAL");
+    expect(flagsFor({ ...base, nextStep: null }, 0, now, on)).toContain("NO_NEXT_STEP");
+    expect(flagsFor({ ...base, stage: "CLOSED_WON", updatedAt: d("2025-01-01") }, 3, now, on)).toEqual([]);
+  });
+  it("every alert is off until the admin switches it on; a pushed close date always shows", () => {
+    const off = { quietDays: null, stuck: false, closeDatePassed: false, commitWithoutProposal: false, noNextStep: false };
+    const worst = { ...base, expectedCloseDate: d("2026-11-10"), updatedAt: d("2026-10-01"), stageEnteredAt: d("2026-10-01"), forecastCategory: "COMMIT" as const, nextStep: null };
+    expect(flagsFor(worst, 1, now, off)).toEqual(["SLIPPED"]);
+    expect(flagsFor(worst, 0, now, { ...off, quietDays: 60 })).toEqual([]);
+    expect(flagsFor(worst, 0, now, { ...off, quietDays: 30 })).toEqual(["NO_ACTIVITY"]);
+    expect(flagLabel("NO_ACTIVITY", { ...off, quietDays: 30 })).toBe("No activity for 30 days");
   });
 });
 
@@ -51,7 +60,7 @@ describe("person summary", () => {
       [
         { stage: "CLOSED_WON", dealValue: 4_000_000, forecastCategory: "COMMIT", closedAt: d("2026-11-05"), flags: [], changes: empty },
         { stage: "NEGOTIATION", dealValue: 3_000_000, forecastCategory: "COMMIT", closedAt: null, flags: ["CLOSE_DATE_PASSED"], changes: { changes: { stage: { from: "PROPOSAL_SUBMITTED", to: "NEGOTIATION" } }, pushes: 1, isNew: false } },
-        { stage: "QUALIFIED", dealValue: 1_000_000, forecastCategory: "PIPELINE", closedAt: null, flags: ["NO_ACTIVITY_21D"], changes: { ...empty, isNew: true } },
+        { stage: "QUALIFIED", dealValue: 1_000_000, forecastCategory: "PIPELINE", closedAt: null, flags: ["NO_ACTIVITY"], changes: { ...empty, isNew: true } },
       ],
       since,
       10_000_000,

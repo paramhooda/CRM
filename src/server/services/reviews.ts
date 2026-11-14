@@ -4,7 +4,8 @@ import type { Actor } from "../auth/actor";
 import { NotFound, ValidationError } from "../errors";
 import { assertPermission, usersLite, visibleOwnerIds } from "../authz/scope";
 import { recordEvent } from "../audit";
-import { changesSince, flagsFor, personSummary, FLAG_LABEL, type Flag } from "@/domain/review";
+import { changesSince, flagLabel, flagsFor, personSummary, type Flag } from "@/domain/review";
+import { getSetting } from "./settings";
 import { STAGE_META, isOpen } from "@/domain/stages";
 import { teamUserIds } from "@/domain/scope";
 import { fiscalQuarterOf, fiscalYearOf, quarterRange } from "@/domain/fiscal";
@@ -64,16 +65,17 @@ export async function pipelineReview(actor: Actor, s: ReviewScopeInput) {
   const targets = new Map((await db.salesTarget.findMany({ where: { userId: { in: ids }, fiscalYear: fy, quarter: q } })).map((t) => [t.userId, toNumber(t.targetValue)]));
   const users = await db.user.findMany({ where: { id: { in: ids } }, select: { id: true, fullName: true } });
 
+  const alerts = await getSetting("alerts");
   const rows = deals.map((d) => {
     const since = sinceByUser.get(d.ownerId)!;
     const changes = changesSince(d, byDeal.get(d.id) ?? [], since);
-    const flags = flagsFor(d, changes.pushes, now);
-    return { ...d, dealValue: toNumber(d.dealValue), expectedGmPct: d.expectedGmPct?.toString() ?? null, stageLabel: STAGE_META[d.stage].label, open: isOpen(d.stage), changes, flags, flagLabels: flags.map((f: Flag) => FLAG_LABEL[f]), daysInStage: Math.floor((now.getTime() - d.stageEnteredAt.getTime()) / 86_400_000) };
+    const flags = flagsFor(d, changes.pushes, now, alerts);
+    return { ...d, dealValue: toNumber(d.dealValue), expectedGmPct: d.expectedGmPct?.toString() ?? null, stageLabel: STAGE_META[d.stage].label, open: isOpen(d.stage), changes, flags, flagLabels: flags.map((f: Flag) => flagLabel(f, alerts)), daysInStage: Math.floor((now.getTime() - d.stageEnteredAt.getTime()) / 86_400_000) };
   });
   const people = users.map((u) => {
     const mine = rows.filter((r) => r.ownerId === u.id);
     const since = sinceByUser.get(u.id)!;
-    return { user: u, since, lastReview: lastFor(u.id), summary: personSummary(mine.map((r) => ({ stage: r.stage, dealValue: r.dealValue, forecastCategory: r.forecastCategory, closedAt: r.closedAt, flags: r.flags, changes: r.changes })), since, targets.get(u.id) ?? null), deals: mine.length };
+    return { user: u, since, lastReview: lastFor(u.id), summary: personSummary(mine.map((r) => ({ stage: r.stage, dealValue: r.dealValue, forecastCategory: r.forecastCategory, closedAt: r.closedAt, flags: r.flags, changes: r.changes })), since, targets.get(u.id) ?? null, alerts), deals: mine.length };
   });
   return { scope: s.scope, scopeUserId, since: s.since, people, deals: rows, flagged: rows.filter((r) => r.flags.length).length, changed: rows.filter((r) => Object.keys(r.changes.changes).length || r.changes.isNew).length };
 }

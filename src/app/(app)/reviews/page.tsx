@@ -7,7 +7,6 @@ import { pipelineReview } from "@/server/services/reviews";
 import { salesPeopleFor } from "@/server/services/people";
 import { NotFound, ValidationError } from "@/server/errors";
 import { can } from "@/domain/permissions";
-import { FLAG_LABEL } from "@/domain/review";
 import { PageHeader } from "@/components/crm/page-header";
 import { StatTile } from "@/components/crm/stat-tile";
 import { SectionLabel } from "@/components/crm/section-label";
@@ -117,7 +116,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
                                 <div key={f}><span className="text-muted-foreground">{fieldLabel(f)}:</span> {show(f, c.from)} → <span className="font-medium">{show(f, c.to)}</span></div>
                               ))}
                             </td>
-                            <td className="px-3 py-2"><div className="flex flex-wrap gap-1">{d.flags.map((f) => <NeutralPill key={f} className="bg-stage-proposal text-stage-proposal-foreground">{FLAG_LABEL[f]}</NeutralPill>)}</div></td>
+                            <td className="px-3 py-2"><div className="flex flex-wrap gap-1">{d.flagLabels.map((f) => <NeutralPill key={f} className="bg-stage-proposal text-stage-proposal-foreground">{f}</NeutralPill>)}</div></td>
                           </tr>
                         );
                       })}

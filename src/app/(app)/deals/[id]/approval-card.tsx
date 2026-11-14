@@ -24,7 +24,7 @@ const STATE_TEXT: Record<ApprovalState, { label: string; tone: string; text: str
   STALE: { label: "Prices changed", tone: "text-warning", text: "The lines changed since the last approval; ask again." },
 };
 
-export function ApprovalCard({ dealId, stage, state, reasons, approvals, canEdit }: { dealId: string; stage: string; state: ApprovalState; reasons: string[]; approvals: Approval[]; canEdit: boolean }) {
+export function ApprovalCard({ dealId, stage, state, reasons, rules, approvals, canEdit }: { dealId: string; stage: string; state: ApprovalState; reasons: string[]; rules: string[]; approvals: Approval[]; canEdit: boolean }) {
   const actor = useActor();
   const router = useRouter();
   const [decide, setDecide] = useState<{ id: string; decision: "APPROVED" | "REJECTED" } | null>(null);
@@ -51,12 +51,14 @@ export function ApprovalCard({ dealId, stage, state, reasons, approvals, canEdit
         <h2 className="flex items-center gap-1.5 text-sm font-semibold"><ShieldCheck className="size-4 text-muted-foreground" /> Price approval</h2>
         <span className={cn("text-xs font-medium", s.tone)}>{s.label}</span>
       </div>
-      <p className="text-sm text-muted-foreground">{s.text}</p>
+      <p className="text-sm text-muted-foreground">{state !== "NONE_NEEDED" && rules.length > 0 ? <><span className="font-medium text-foreground">{rules.join(", ")}</span> applies. </> : null}{s.text}</p>
       {reasons.length > 0 && state !== "NONE_NEEDED" && <ul className="mt-2 list-disc pl-5 text-xs text-muted-foreground">{reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
+      {state === "NONE_NEEDED" && <p className="mt-1 text-xs text-muted-foreground">Rules are set by an administrator under Approval rules.</p>}
       {canAsk && <Button size="sm" className="mt-3" onClick={request} disabled={asking}>Ask for approval</Button>}
       {latest && (
         <div className="mt-3 border-t border-border pt-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><StatusPill status={latest.status} /> Requested by {latest.requestedBy.fullName} on {fmtDate(latest.requestedAt)}</div>
+          {latest.reasons.length > 0 && <div className="mt-1 text-xs text-muted-foreground">At the time of the request: {latest.reasons.join("; ")}</div>}
           <ol className="mt-2 flex flex-col gap-1.5">
             {latest.steps.map((st) => (
               <li key={st.stepNo} className={cn("flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5 text-sm", st.current && "bg-stage-proposal/40")}>

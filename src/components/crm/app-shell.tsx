@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { Briefcase, Building2, CheckSquare, ClipboardList, Contact, Home, KeyRound, ListChecks, LogOut, Moon, Package, PanelLeftClose, PanelLeftOpen, Plus, ScrollText, Search, Settings2, ShieldCheck, Sun, Target, Users, UserSquare2, type LucideIcon } from "lucide-react";
+import { Briefcase, Building2, CheckSquare, ClipboardList, Contact, Home, KeyRound, ListChecks, LogOut, Moon, Package, PanelLeftClose, PanelLeftOpen, Plus, ScrollText, Search, Settings2, ShieldCheck, SlidersHorizontal, Sun, Target, Users, UserSquare2, type LucideIcon } from "lucide-react";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,7 @@ function navFor(role: string, pendingApprovals: number): { main: Item[]; admin: 
         { href: "/admin/approval-rules", label: "Approval rules", icon: ShieldCheck },
         { href: "/admin/targets", label: "Targets", icon: Target },
         { href: "/admin/audit", label: "Audit log", icon: ScrollText },
+        { href: "/admin/settings", label: "Settings", icon: SlidersHorizontal },
       ]
     : [];
   return { main, admin };

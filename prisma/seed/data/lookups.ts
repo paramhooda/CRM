@@ -91,6 +91,7 @@ export const DOCUMENT_KINDS: { name: string; restrictedToSales: boolean; require
   { name: "Solution document", restrictedToSales: false, requiredAtWon: false },
   { name: "Supplier quote", restrictedToSales: false, requiredAtWon: false },
   { name: "Proposal", restrictedToSales: true, requiredAtWon: false },
+  { name: "Quotation", restrictedToSales: true, requiredAtWon: false },
   { name: "Customer PO", restrictedToSales: true, requiredAtWon: true },
   { name: "Other", restrictedToSales: false, requiredAtWon: false },
 ];

@@ -33,6 +33,9 @@ All tables have UUID primary keys, timestamps in UTC, money as decimal(16,2) in 
 | [`presales_requests`](#presalesrequests) | Sales asking presales to build the BOQ for a deal. |
 | [`pricing_requests`](#pricingrequests) | Sales or presales asking purchase to price the lines of a deal. |
 | [`deal_documents`](#dealdocuments) | A file attached to a deal. The content is stored in the database. |
+| [`quotes`](#quotes) | A quotation generated from the deal's lines and stored as a PDF document on the deal (kind Quotation). |
+| [`deal_emails`](#dealemails) | An email sent to the customer from the deal page, with deal documents attached. Kept as the record of what went out. |
+| [`settings`](#settings) | Admin-set configuration, one row per key: company (quote header), mail (SMTP), alerts (thresholds, all off by default) and ai (assistant key and model). Secrets are stored here and never returned by the API. |
 | [`approval_rules`](#approvalrules) | An admin-defined rule saying when a deal's prices need approval, and by whom. Every condition set must hold. |
 | [`approval_rule_steps`](#approvalrulesteps) | One approver in a rule's chain, in order. |
 | [`deal_approvals`](#dealapprovals) | A request to approve a deal's prices, with its resolved chain of steps. |
@@ -591,8 +594,65 @@ A file attached to a deal. The content is stored in the database.
 | `deal (relation)` | → Deal | yes |  |  |
 | `kind (relation)` | → DocumentKind | yes |  |  |
 | `uploadedBy (relation)` | → User | yes |  |  |
+| `quote (relation)` | → Quote | no |  |  |
 
 Indexes: (dealId)
+
+## quotes
+
+A quotation generated from the deal's lines and stored as a PDF document on the deal (kind Quotation).
+
+| Column | Type | Required | Meaning | Notes |
+|---|---|---|---|---|
+| `id` | text (Uuid) | yes |  | primary key, default dbgenerated("gen_random_uuid()" |
+| `deal_id` | text (Uuid) | yes |  |  |
+| `quote_no` | text | yes | Quote number per fiscal year (QT-FY27-0001), unique. | unique |
+| `revision` | integer | yes | Revision of the quote on this deal, 1-based; a new quote supersedes the earlier ones. |  |
+| `valid_until` | timestamp (UTC) (Date) | yes | Last day the quote is valid. |  |
+| `notes` | text | no | Notes printed on the quote (scope, exclusions, delivery). |  |
+| `subtotal` | decimal (Decimal(16, 2)) | yes | Sum of the line amounts, INR, exclusive of GST. |  |
+| `document_id` | text (Uuid) | yes | The PDF, stored as a deal document. | unique |
+| `created_by_id` | text (Uuid) | yes |  |  |
+| `created_at` | timestamp (UTC) (Timestamptz(6)) | yes |  | default now() |
+| `deal (relation)` | → Deal | yes |  |  |
+| `document (relation)` | → DealDocument | yes |  |  |
+| `createdBy (relation)` | → User | yes |  |  |
+
+Indexes: (dealId)
+
+## deal_emails
+
+An email sent to the customer from the deal page, with deal documents attached. Kept as the record of what went out.
+
+| Column | Type | Required | Meaning | Notes |
+|---|---|---|---|---|
+| `id` | text (Uuid) | yes |  | primary key, default dbgenerated("gen_random_uuid()" |
+| `deal_id` | text (Uuid) | yes |  |  |
+| `sent_by_id` | text (Uuid) | yes |  |  |
+| `to` | text[] | no | Recipient addresses. |  |
+| `cc` | text[] | no | Copied addresses. |  |
+| `subject` | text | yes |  |  |
+| `body` | text | yes |  |  |
+| `document_ids` | text (Uuid)[] | no | The deal documents that were attached. |  |
+| `status` | text | yes | SENT, or FAILED with the server's message in `error`. |  |
+| `error` | text | no |  |  |
+| `sent_at` | timestamp (UTC) (Timestamptz(6)) | yes |  | default now() |
+| `deal (relation)` | → Deal | yes |  |  |
+| `sentBy (relation)` | → User | yes |  |  |
+
+Indexes: (dealId)
+
+## settings
+
+Admin-set configuration, one row per key: company (quote header), mail (SMTP), alerts (thresholds, all off by default) and ai (assistant key and model). Secrets are stored here and never returned by the API.
+
+| Column | Type | Required | Meaning | Notes |
+|---|---|---|---|---|
+| `key` | text | yes | company, mail, alerts or ai. | primary key |
+| `value` | json | yes | The value, as JSON matching the key's schema in src/contracts/settings.ts. |  |
+| `updated_at` | timestamp (UTC) (Timestamptz(6)) | yes |  | set on every change |
+| `updated_by_id` | text (Uuid) | no |  |  |
+| `updatedBy (relation)` | → User | no |  |  |
 
 ## approval_rules
 

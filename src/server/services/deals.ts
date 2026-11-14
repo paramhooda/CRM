@@ -85,7 +85,7 @@ export function todayDate(now = new Date()): Date {
 
 const isOpenRequest = (r: { status: string }) => (OPEN_REQUEST_PRESALES as readonly string[]).includes(r.status);
 
-export function dealFacts(deal: DealDetailRecord, approval: ApprovalState): DealFacts {
+export function dealFacts(deal: DealDetailRecord, approval: ApprovalState, approvalRules: string[] = []): DealFacts {
   const thirdParty = deal.lines.filter((l) => !l.oem.isOwnIp);
   return {
     stage: deal.stage,
@@ -104,6 +104,7 @@ export function dealFacts(deal: DealDetailRecord, approval: ApprovalState): Deal
     openPresalesRequest: deal.presalesRequests.some(isOpenRequest),
     openPricingRequest: deal.pricingRequests.some(isOpenRequest),
     approvalState: approval,
+    approvalRules,
     hasPrimaryContact: !!deal.primaryContactId,
     closeDatePast: deal.expectedCloseDate < todayDate(),
     hasPoDocument: deal.documents.some((d) => d.kind.requiredAtWon),
@@ -232,7 +233,8 @@ const whitelistFor = (ctx: Awaited<ReturnType<typeof editContext>>, ownIp: boole
 export async function dealView(actor: Actor, deal: DealDetailRecord) {
   const rules = await activeRules();
   const approval = approvalStateFor(deal, rules);
-  const facts = dealFacts(deal, approval);
+  const matched = rulesMatchFor(deal, rules);
+  const facts = dealFacts(deal, approval, matched.map((m) => m.rule.name));
   const ctx = await editContext(actor, deal);
   const moves = allowedMoves(facts, { canEdit: ctx.canEdit, isManager: ctx.isManager });
   const whitelist = (ownIp: boolean) => [...whitelistFor(ctx, ownIp)];
@@ -254,7 +256,8 @@ export async function dealView(actor: Actor, deal: DealDetailRecord) {
     documents: deal.documents.filter((d) => salesSide || !d.kind.restrictedToSales),
     approvals: deal.approvals.map((a) => ({ ...a, dealValue: a.dealValue.toString(), gmPct: a.gmPct?.toString() ?? null })),
     approvalState: approval,
-    approvalReasons: rulesMatchFor(deal, rules).flatMap((m) => m.reasons),
+    approvalReasons: matched.flatMap((m) => m.reasons.map((r) => `${m.rule.name}: ${r}`)),
+    approvalRules: matched.map((m) => m.rule.name),
     moves: salesSide ? moves : [],
     canEdit: ctx.canEdit && isOpen(deal.stage) && !deal.deletedAt,
     canEditLines: whitelist(false).length > 0 || whitelist(true).length > 0,

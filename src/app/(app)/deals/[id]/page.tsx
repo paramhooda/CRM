@@ -125,7 +125,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             {d.description && <div className="rounded-xl border border-border bg-card p-4 text-sm"><div className="mb-1 text-xs text-muted-foreground">Description</div><p className="whitespace-pre-line">{d.description}</p></div>}
           </div>
           <div className="flex flex-col gap-4">
-            {sales && (!closed || d.approvalState === "APPROVED" || d.approvalState === "PENDING") && <ApprovalCard dealId={d.id} stage={d.stage} state={d.approvalState} reasons={d.approvalReasons} approvals={approvals} canEdit={d.canEdit} />}
+            {sales && (!closed || d.approvalState === "APPROVED" || d.approvalState === "PENDING") && <ApprovalCard dealId={d.id} stage={d.stage} state={d.approvalState} reasons={d.approvalReasons} rules={d.approvalRules} approvals={approvals} canEdit={d.canEdit} />}
             <RequestCards dealId={d.id} canEdit={d.canEdit} presales={d.presalesRequests} pricing={d.pricingRequests} presalesPeople={presalesPeople} purchasePeople={purchasePeople} ability={d.requestAbility} facts={d.facts} />
           </div>
         </TabsContent>

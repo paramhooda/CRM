@@ -16,9 +16,11 @@ describe("home metrics", () => {
   it("a rep's numbers add up to their open deals; charts split by stage and BU; support roles are refused", async () => {
     const list = expectOk(await rep.get<{ rows: { stage: string; dealValue: string }[]; total: number }>("/deals?open=true&pageSize=200"));
     const home = expectOk(await rep.get<Home>("/metrics/home"));
+    const holds = expectOk(await rep.get<{ total: number }>("/deals?stage=HOLD&pageSize=1")).total;
+    expect(home.kpis.openPipeline.count).toBe(list.total - holds);
+    // the value check needs every row; a long-lived database can hold more open deals than one page
     const pipelineRows = list.rows.filter((r) => r.stage !== "HOLD");
-    expect(home.kpis.openPipeline.count).toBe(pipelineRows.length);
-    expect(home.kpis.openPipeline.value).toBe(Math.round(pipelineRows.reduce((a, r) => a + Number(r.dealValue), 0)));
+    if (list.rows.length === list.total) expect(home.kpis.openPipeline.value).toBe(Math.round(pipelineRows.reduce((a, r) => a + Number(r.dealValue), 0)));
     expect(home.charts.byStage.map((s) => s.key)).toEqual(["QUALIFIED", "BOQ", "PROPOSAL_SUBMITTED", "NEGOTIATION", "HOLD"]);
     expect(home.charts.byStage.reduce((a, s) => a + s.count, 0)).toBe(list.total);
     expect(home.charts.byOwner).toEqual([]); // a rep sees no split by person
@@ -46,6 +48,9 @@ describe("home metrics", () => {
 
 describe("pipeline review", () => {
   it("shows a rep's deals with changes since the window and flags; the head reviews the team; marking a review moves the baseline", async () => {
+    // Review flags are off until the admin switches them on
+    const admin = await as("admin");
+    expectOk(await admin.put("/admin/settings/alerts", { commitWithoutProposal: true, closeDatePassed: true }));
     const accountId = expectOk(await rep.post<{ id: string }>("/accounts", { name: uniq("Review Co") })).id;
     const d = expectOk(await rep.post<{ id: string; version: number }>("/deals", { name: uniq("Reviewed deal"), accountId, expectedCloseDate: isoDate(-3), forecastCategory: "COMMIT", lines: [{ productId: laptopId, quantity: 3, unitSalesPrice: "70000" }] }));
     expectOk(await rep.patch(`/deals/${d.id}`, { version: d.version, expectedCloseDate: isoDate(20) }));
@@ -57,6 +62,9 @@ describe("pipeline review", () => {
     expect(row.flags).toContain("SLIPPED");
     expect(row.flags).toContain("COMMIT_WITHOUT_PROPOSAL");
     expect(r.people[0]!.summary.lagging.join(" ")).toMatch(/Pushed the close date/);
+    expectOk(await admin.put("/admin/settings/alerts", { commitWithoutProposal: false, closeDatePassed: false }));
+    const off = expectOk(await rep.get<Review>("/reviews/pipeline?scope=rep&since=7d")).deals.find((x) => x.id === d.id)!;
+    expect(off.flags).toEqual(["SLIPPED"]);
     // a rep can't look at someone else; the head can review the whole team and one person
     const other = expectOk(await rep.get<{ rows: { id: string; email: string }[] }>("/users")).rows.find((u) => u.email === "naresh.kumar@progression.com")!.id;
     expectError(await rep.get(`/reviews/pipeline?scope=rep&scope_user_id=${other}`), 404);

@@ -26,7 +26,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: Pr
       <div className="min-w-0 flex-1">
         <Link href={`/deals/${a.deal.id}`} className="font-medium hover:text-link">{a.deal.name}</Link>
         <div className="text-xs text-muted-foreground"><RecordCode>{a.deal.code}</RecordCode> · {a.deal.account.name} · {a.deal.owner.fullName} · asked by {a.requestedBy.fullName} on {fmtDate(a.requestedAt)}</div>
-        <ul className="mt-1 text-xs text-muted-foreground">{a.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+        <ul className="mt-1 text-xs text-muted-foreground">{a.reasons.map((r) => <li key={r}>{r} <span className="text-foreground-subtle">(at the time of the request)</span></li>)}</ul>
       </div>
       <div className="text-right text-sm"><Money value={a.dealValue} className="font-medium" /><div className="text-xs text-muted-foreground">GM <Pct value={a.gmPct} /></div></div>
       <StatusPill status={a.status} dot />

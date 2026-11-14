@@ -113,4 +113,27 @@ describe("targets", () => {
     expect(expectOk(await rep.get<{ rows: { quarter: number; targetValue: string }[] }>("/targets?fiscal_year=2027")).rows.find((r) => r.quarter === 1)?.targetValue).toBe("9999999");
     expectError(await (await as("presales")).get("/targets"), 403);
   });
+
+  it("settings are admin-only, secrets never come back, and alerts switch the review flags on", async () => {
+    const admin = await as("admin");
+    const head = await as("salesHead");
+    expectError(await head.get("/admin/settings/alerts"), 403);
+    expectError(await admin.get("/admin/settings/nonsense"), 404);
+    const alerts = expectOk(await admin.get<Record<string, unknown>>("/admin/settings/alerts"));
+    expect(alerts).toMatchObject({ gmAmberBelowPct: null, quietDays: null, stuck: false, closeDatePassed: false });
+    expectError(await admin.put("/admin/settings/alerts", { gmAmberBelowPct: 150 }), 400);
+    expect(expectOk(await admin.put<Record<string, unknown>>("/admin/settings/alerts", { gmAmberBelowPct: 12.5, quietDays: 30, closeDatePassed: true })).gmAmberBelowPct).toBe(12.5);
+    // mail: the password is stored but never returned; no host means mail is off
+    const mail = expectOk(await admin.put<Record<string, unknown>>("/admin/settings/mail", { host: "", port: 587, user: "x", password: "secret" }));
+    expect(mail.passwordSet).toBe(true);
+    expect(mail).not.toHaveProperty("password");
+    expectError(await admin.post("/admin/settings/mail/test"), 409, "MAIL_OFF");
+    expectError(await admin.post("/admin/settings/ai/test"), 404, "AI_OFF");
+    const company = expectOk(await admin.put<Record<string, unknown>>("/admin/settings/company", { name: "Progression Infonet", gstin: "27AAACK4019X1Z2", city: "Pune" }));
+    expect(company).toMatchObject({ name: "Progression Infonet", city: "Pune" });
+    expectError(await admin.put("/admin/settings/company", { name: "X", gstin: "bad" }), 400);
+    // back to the defaults so the rest of the suite sees alerts off
+    expectOk(await admin.put("/admin/settings/alerts", { gmAmberBelowPct: null, quietDays: null, closeDatePassed: false }));
+    expectOk(await admin.put("/admin/settings/mail", { host: "", user: "", password: "" }));
+  });
 });

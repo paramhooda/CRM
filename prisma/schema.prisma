@@ -407,6 +407,9 @@ model User {
   approvalsRaised  DealApproval[]
   reviews          PipelineReview[]
   targets          SalesTarget[]
+  quotes           Quote[]           @relation("QuoteCreator")
+  emailsSent       DealEmail[]
+  settingsChanged  Setting[]
 
   @@index([role, isActive])
   @@index([managerId])
@@ -675,6 +678,8 @@ model Deal {
   pricingRequests     PricingRequest[]
   documents           DealDocument[]
   approvals           DealApproval[]
+  quotes              Quote[]
+  emails              DealEmail[]
   convertedFromLeads  Lead[]             @relation("LeadConvertedDeal")
 
   @@index([ownerId, stage])
@@ -863,9 +868,77 @@ model DealDocument {
   deal       Deal         @relation(fields: [dealId], references: [id], onDelete: Cascade)
   kind       DocumentKind @relation(fields: [documentKindId], references: [id])
   uploadedBy User         @relation(fields: [uploadedById], references: [id])
+  quote      Quote?
 
   @@index([dealId])
   @@map("deal_documents")
+}
+
+/// A quotation generated from the deal's lines and stored as a PDF document on the deal (kind Quotation).
+model Quote {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId       String   @map("deal_id") @db.Uuid
+  /// Quote number per fiscal year (QT-FY27-0001), unique.
+  quoteNo      String   @unique @map("quote_no")
+  /// Revision of the quote on this deal, 1-based; a new quote supersedes the earlier ones.
+  revision     Int
+  /// Last day the quote is valid.
+  validUntil   DateTime @map("valid_until") @db.Date
+  /// Notes printed on the quote (scope, exclusions, delivery).
+  notes        String?
+  /// Sum of the line amounts, INR, exclusive of GST.
+  subtotal     Decimal  @db.Decimal(16, 2)
+  /// The PDF, stored as a deal document.
+  documentId   String   @unique @map("document_id") @db.Uuid
+  createdById  String   @map("created_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  deal      Deal         @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  document  DealDocument @relation(fields: [documentId], references: [id])
+  createdBy User         @relation("QuoteCreator", fields: [createdById], references: [id])
+
+  @@index([dealId])
+  @@map("quotes")
+}
+
+/// An email sent to the customer from the deal page, with deal documents attached. Kept as the record of what went out.
+model DealEmail {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId      String   @map("deal_id") @db.Uuid
+  sentById    String   @map("sent_by_id") @db.Uuid
+  /// Recipient addresses.
+  to          String[]
+  /// Copied addresses.
+  cc          String[]
+  subject     String
+  body        String
+  /// The deal documents that were attached.
+  documentIds String[] @map("document_ids") @db.Uuid
+  /// SENT, or FAILED with the server's message in `error`.
+  status      String
+  error       String?
+  sentAt      DateTime @default(now()) @map("sent_at") @db.Timestamptz(6)
+
+  deal   Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  sentBy User @relation(fields: [sentById], references: [id])
+
+  @@index([dealId])
+  @@map("deal_emails")
+}
+
+/// Admin-set configuration, one row per key: company (quote header), mail (SMTP), alerts (thresholds, all off by
+/// default) and ai (assistant key and model). Secrets are stored here and never returned by the API.
+model Setting {
+  /// company, mail, alerts or ai.
+  key         String   @id
+  /// The value, as JSON matching the key's schema in src/contracts/settings.ts.
+  value       Json
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedById String?  @map("updated_by_id") @db.Uuid
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("settings")
 }
 
 // ───────────────────────── Approvals ─────────────────────────

@@ -105,8 +105,9 @@ function priceSteps(f: DealFacts): Draft[] {
   const ownIpUncosted = f.uncostedLines - f.uncostedThirdPartyLines;
   if (ownIpUncosted > 0) out.push({ key: "own-ip-costs", label: `Enter the cost on ${plural(ownIpUncosted, "the own-IP line", "N own-IP lines")}`, owner: "PRESALES", action: "ENTER_COSTS", hint: "Own-IP lines take the product's standard cost; presales or an admin sets it." });
   out.push({ key: "prices", label: f.unpricedLines > 0 ? `Set a sales price on ${plural(f.unpricedLines, "the remaining line", "N lines")}` : "Set the sales prices", owner: "SALES", action: "SET_PRICES", done: f.lineCount > 0 && f.unpricedLines === 0, hint: "Add the margin per line; the deal's GM updates as you go." });
+  const rules = f.approvalRules.length ? f.approvalRules.join(", ") : "an approval rule";
   if (f.approvalState === "NEEDED" || f.approvalState === "STALE" || f.approvalState === "REJECTED")
-    out.push({ key: "approval", label: f.approvalState === "REJECTED" ? "Change the prices and ask for approval again" : f.approvalState === "STALE" ? "Ask for approval again (the lines changed)" : "Ask for price approval", owner: "SALES", action: "ASK_APPROVAL", hint: "An approval rule applies to these prices." });
+    out.push({ key: "approval", label: f.approvalState === "REJECTED" ? "Change the prices and ask for approval again" : f.approvalState === "STALE" ? "Ask for approval again (the lines changed)" : `Ask for approval (${rules})`, owner: "SALES", action: "ASK_APPROVAL", hint: `${f.approvalRules.length ? "This rule applies" : "An approval rule applies"} to these prices: ${rules}.` });
   if (f.approvalState === "PENDING") out.push({ key: "approval", label: "Approve or reject the prices", owner: "APPROVER", action: "DECIDE_APPROVAL" });
   if (f.approvalState === "APPROVED") out.push({ key: "approval", label: "Prices approved", owner: "APPROVER", done: true });
   return out;

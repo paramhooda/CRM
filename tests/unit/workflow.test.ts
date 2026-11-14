@@ -6,7 +6,7 @@ const facts = (p: Partial<DealFacts> = {}): DealFacts => ({
   stage: "QUALIFIED", heldFromStage: null, lastOpenStage: null, needsPresales: true, deleted: false,
   lineCount: 0, unpricedLines: 0, uncostedLines: 0, thirdPartyLines: 0, uncostedThirdPartyLines: 0, presalesDocuments: 0,
   presalesRequest: null, pricingRequest: null, openPresalesRequest: false, openPricingRequest: false,
-  approvalState: "NONE_NEEDED", hasPrimaryContact: true, closeDatePast: false, hasPoDocument: false, ...p,
+  approvalState: "NONE_NEEDED", approvalRules: [], hasPrimaryContact: true, closeDatePast: false, hasPoDocument: false, ...p,
 });
 const viewer = (p: Partial<Viewer> = {}): Viewer => ({ role: "SALES", canEdit: true, isManager: false, isAssignedPresales: false, isAssignedPurchase: false, isApprover: false, ...p });
 const rep = viewer();

@@ -1,23 +1,31 @@
 import "server-only";
 import { AppError } from "./errors";
 import type { Prompt } from "@/domain/ai-prompts";
+import { getSetting } from "./services/settings";
 
-/** The assistant is on only when the server has an OpenAI key; nothing in the UI shows otherwise. */
-export const aiEnabled = () => !!process.env.OPENAI_API_KEY;
-const MODEL = () => process.env.AI_MODEL || "gpt-4o-mini";
+/** The key and model: Admin → Settings → Assistant first, then the environment. */
+export async function aiConfig(): Promise<{ apiKey: string; model: string } | null> {
+  const s = await getSetting("ai");
+  const apiKey = s.apiKey || process.env.OPENAI_API_KEY || "";
+  return apiKey ? { apiKey, model: s.model || process.env.AI_MODEL || "gpt-4o-mini" } : null;
+}
+
+/** The assistant is on only when a key is set; nothing in the UI shows otherwise. */
+export const aiEnabled = async () => !!(await aiConfig());
 const TIMEOUT_MS = 20_000;
 
 /** One chat completion against OpenAI. Deal text goes to OpenAI; the owner opted in by setting the key. */
 export async function complete(p: Prompt): Promise<string> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new AppError(404, "AI_OFF", "The assistant is not set up on this server.");
+  const cfg = await aiConfig();
+  if (!cfg) throw new AppError(404, "AI_OFF", "The assistant is not set up. An administrator adds an OpenAI key under Settings.");
+  const key = cfg.apiKey;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: MODEL(), temperature: 0.4, max_tokens: p.maxTokens, messages: [{ role: "system", content: p.system }, { role: "user", content: p.user }] }),
+      body: JSON.stringify({ model: cfg.model, temperature: 0.4, max_tokens: p.maxTokens, messages: [{ role: "system", content: p.system }, { role: "user", content: p.user }] }),
       signal: ctrl.signal,
     });
     if (!res.ok) {
@@ -36,4 +44,10 @@ export async function complete(p: Prompt): Promise<string> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Proves the key and model: a one-word answer. */
+export async function testAssistant() {
+  const text = await complete({ system: "Answer in one word.", user: "Say OK.", maxTokens: 5 });
+  return { ok: true, text };
 }

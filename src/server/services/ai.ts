@@ -27,7 +27,7 @@ export async function draft(actor: Actor, dealId: string, kind: AiDraftKind) {
   if (kind === "brief" && isSupportRole(actor.role)) throw new Forbidden("The brief carries prices and margin; it is for sales roles.");
   if (kind === "scope" && !(await canEditDeal(actor, deal))) throw new Forbidden("Only the deal owner or a manager drafts the scope.");
   if (kind === "boq_summary" && !viewer.isAssignedPresales && !viewer.canEdit && actor.role !== "ADMIN") throw new Forbidden("Only the assigned presales engineer drafts the BOQ summary.");
-  if (!aiEnabled()) return complete({ system: "", user: "", maxTokens: 0 }); // throws AI_OFF
+  if (!(await aiEnabled())) return complete({ system: "", user: "", maxTokens: 0 }); // throws AI_OFF
   throttle(actor.id);
 
   const view = await dealView(actor, deal);

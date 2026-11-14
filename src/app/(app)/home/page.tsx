@@ -6,6 +6,7 @@ import { BadgeCheck, CalendarClock, CalendarDays, CheckSquare, Footprints, Hourg
 import { requireActor } from "@/server/auth/actor";
 import { homeMetrics, type HomeWindow } from "@/server/services/metrics";
 import { salesPeopleFor } from "@/server/services/people";
+import { getSetting } from "@/server/services/settings";
 import { dealListQuery } from "@/contracts/deals";
 import { PageHero, HeroControl } from "@/components/crm/hero";
 import { LineTabs } from "@/components/crm/line-tabs";
@@ -48,7 +49,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const win = windowSchema.safeParse(q.days);
   const window: HomeWindow = win.success ? win.data : "30";
   const tab = q.tab === "attention" || q.tab === "pipeline" ? q.tab : "overview";
-  const [m, owners] = await Promise.all([homeMetrics(actor, filters, window), salesPeopleFor(actor)]);
+  const [m, owners, alerts] = await Promise.all([homeMetrics(actor, filters, window), salesPeopleFor(actor), getSetting("alerts")]);
   const now = new Date();
   const dealsHref = (patch: Record<string, string | null>) => `/deals${queryString(q, { open: "true", days: null, tab: null, ...patch })}`;
   const here = (patch: Record<string, string | null>) => `/home${queryString(q, patch)}`;
@@ -98,7 +99,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
             <StatTile label={`Commit · ${m.period.quarter}`} value={inr(m.kpis.commitThisQuarter.value)} icon={Target} iconTone="green" tone={m.kpis.commitThisQuarter.target && m.kpis.commitThisQuarter.value >= m.kpis.commitThisQuarter.target ? "green" : "default"} series={m.kpis.commitThisQuarter.series} note={m.kpis.commitThisQuarter.target ? `of ${inr(m.kpis.commitThisQuarter.target)} target` : `${m.kpis.commitThisQuarter.count} deals`} href={dealsHref({ forecast: "COMMIT", period: "this-q" })} />
             <StatTile label={`Won · ${m.period.fy}`} value={inr(m.kpis.wonFytd.value)} icon={Trophy} iconTone="blue" series={m.kpis.wonFytd.series} delta={{ pct: m.kpis.wonFytd.delta }} note={m.kpis.wonFytd.target ? `${Math.round((m.kpis.wonFytd.value / m.kpis.wonFytd.target) * 100)}% of ${inr(m.kpis.wonFytd.target)}` : `${m.kpis.wonFytd.count} deals`} href={`/deals${queryString(q, { stage: "CLOSED_WON", period: "this-fy", days: null, tab: null })}`} />
             <StatTile label="Past close date" value={m.kpis.pastClose.count} tone={m.kpis.pastClose.count ? "red" : "default"} icon={TriangleAlert} iconTone="red" series={m.kpis.pastClose.series} note={m.kpis.pastClose.count ? `${inr(m.kpis.pastClose.value)} to re-date or close` : "every open deal is in date"} href={dealsHref({})} />
-            <StatTile label="Avg expected GM" value={m.kpis.avgGm.pct === null ? "—" : `${m.kpis.avgGm.pct}%`} tone={m.kpis.avgGm.pct !== null && m.kpis.avgGm.pct < 12 ? "amber" : "default"} icon={Percent} iconTone="amber" delta={m.kpis.avgGm.delta === null ? null : { pct: m.kpis.avgGm.delta }} note={`${m.kpis.avgGm.count} costed deals · win rate ${m.kpis.winRate.pct === null ? "—" : `${m.kpis.winRate.pct}%`}`} />
+            <StatTile label="Avg expected GM" value={m.kpis.avgGm.pct === null ? "—" : `${m.kpis.avgGm.pct}%`} tone={m.kpis.avgGm.pct !== null && alerts.gmAmberBelowPct !== null && m.kpis.avgGm.pct < alerts.gmAmberBelowPct ? "amber" : "default"} icon={Percent} iconTone="amber" delta={m.kpis.avgGm.delta === null ? null : { pct: m.kpis.avgGm.delta }} note={`${m.kpis.avgGm.count} costed deals · win rate ${m.kpis.winRate.pct === null ? "—" : `${m.kpis.winRate.pct}%`}`} />
           </section>
         </>
       )}
@@ -249,7 +250,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
                 metrics={[
                   { label: "Open deals", value: b.open },
                   { label: "Line value", value: inr(b.value) },
-                  { label: "Expected GM", value: b.gmPct === null ? "—" : `${b.gmPct}%`, tone: b.gmPct !== null && b.gmPct < 12 ? "amber" : "default" },
+                  { label: "Expected GM", value: b.gmPct === null ? "—" : `${b.gmPct}%`, tone: b.gmPct !== null && alerts.gmAmberBelowPct !== null && b.gmPct < alerts.gmAmberBelowPct ? "amber" : "default" },
                   { label: "Past close date", value: b.pastClose, tone: b.pastClose ? "red" : "default" },
                   { label: "No next step", value: b.noNextStep, tone: b.noNextStep ? "amber" : "default" },
                 ]}

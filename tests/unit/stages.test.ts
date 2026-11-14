@@ -17,7 +17,7 @@ const facts = (p: Partial<DealFacts> = {}): DealFacts => ({
   pricingRequest: null,
   openPresalesRequest: false,
   openPricingRequest: false,
-  approvalState: "NONE_NEEDED",
+  approvalState: "NONE_NEEDED", approvalRules: [],
   hasPrimaryContact: true,
   closeDatePast: false,
   hasPoDocument: false,
