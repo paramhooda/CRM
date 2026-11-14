@@ -25,7 +25,7 @@ export const OPEN_REQUEST_PRICING = ["REQUESTED", "IN_PROGRESS"] as const;
 export const lineSelect = {
   id: true, lineNo: true, productId: true, description: true, businessUnitId: true, subBusinessUnitId: true, oemId: true, quantity: true, unit: true, revenueModel: true, termMonths: true,
   unitSalesPrice: true, unitPurchaseCost: true, costSetById: true, costSetAt: true, salesMethodId: true, annualValue: true, lineValue: true, lineCost: true, expectedGmPct: true, updatedAt: true,
-  product: { select: { id: true, code: true, name: true } },
+  product: { select: { id: true, code: true, name: true, hsnSac: true } },
   businessUnit: { select: { id: true, name: true, colourToken: true } },
   subBusinessUnit: { select: { id: true, name: true } },
   oem: { select: { id: true, name: true, isOwnIp: true } },
@@ -43,7 +43,7 @@ export const dealListSelect = {
 } satisfies Prisma.DealSelect;
 
 export const dealDetailInclude = {
-  account: { select: { id: true, code: true, name: true, ownerId: true } },
+  account: { select: { id: true, code: true, name: true, ownerId: true, gstin: true, addressLine: true, city: true, state: true, pincode: true } },
   primaryContact: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, mobile: true, designation: true } },
   owner: { select: { id: true, fullName: true, managerId: true } },
   presalesOwner: { select: { id: true, fullName: true } },
@@ -56,6 +56,7 @@ export const dealDetailInclude = {
   pricingRequests: { orderBy: { requestedAt: "desc" }, include: { assignedTo: { select: { id: true, fullName: true } }, requestedBy: { select: { id: true, fullName: true } } } },
   documents: { where: { deletedAt: null }, orderBy: { uploadedAt: "desc" }, select: { id: true, fileName: true, contentType: true, sizeBytes: true, description: true, uploadedAt: true, kind: { select: { id: true, name: true, restrictedToSales: true, requiredAtWon: true } }, uploadedBy: { select: { id: true, fullName: true } } } },
   approvals: { orderBy: { requestedAt: "desc" }, take: 5, include: { steps: { orderBy: { stepNo: "asc" } }, requestedBy: { select: { id: true, fullName: true } } } },
+  quotes: { orderBy: { revision: "desc" }, select: { id: true, quoteNo: true, revision: true, validUntil: true, subtotal: true, documentId: true, createdAt: true, createdBy: { select: { id: true, fullName: true } } } },
 } satisfies Prisma.DealInclude;
 
 export type DealDetailRecord = Prisma.DealGetPayload<{ include: typeof dealDetailInclude }>;
@@ -255,6 +256,7 @@ export async function dealView(actor: Actor, deal: DealDetailRecord) {
     lines: deal.lines.map((l) => ({ ...lineOut(l), editable: whitelist(l.oem.isOwnIp) })),
     documents: deal.documents.filter((d) => salesSide || !d.kind.restrictedToSales),
     approvals: deal.approvals.map((a) => ({ ...a, dealValue: a.dealValue.toString(), gmPct: a.gmPct?.toString() ?? null })),
+    quotes: salesSide ? deal.quotes.map((q) => ({ ...q, subtotal: q.subtotal.toString(), validUntil: q.validUntil.toISOString().slice(0, 10) })) : [],
     approvalState: approval,
     approvalReasons: matched.flatMap((m) => m.reasons.map((r) => `${m.rule.name}: ${r}`)),
     approvalRules: matched.map((m) => m.rule.name),

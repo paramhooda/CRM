@@ -1,5 +1,5 @@
 import "server-only";
-import { db } from "../db";
+import { db, type Tx } from "../db";
 import type { Actor } from "../auth/actor";
 import { Conflict, Forbidden, NotFound, ValidationError } from "../errors";
 import { recordEvent } from "../audit";
@@ -42,12 +42,14 @@ export async function uploadDocument(actor: Actor, dealId: string, input: { docu
   if (input.file.size === 0) throw new ValidationError("The file is empty.", { file: "Empty file." });
   if (input.file.size > MAX_DOCUMENT_BYTES) throw new ValidationError("Files can be up to 20 MB.", { file: "Too large." });
   const content = Buffer.from(await input.file.arrayBuffer());
-  const row = await db.$transaction(async (tx) => {
-    const d = await tx.dealDocument.create({ data: { dealId, documentKindId: kind.id, fileName: name.slice(0, 200), contentType: input.file.type || "application/octet-stream", sizeBytes: content.byteLength, content, description: input.description, uploadedById: actor.id }, select });
-    await recordEvent(tx, { entityType: "document", entityId: d.id, dealId, action: "CREATE", userId: actor.id, requestId, newValue: `${kind.name}: ${d.fileName}` });
-    return d;
-  });
-  return row;
+  return db.$transaction((tx) => storeDocument(tx, { dealId, kindId: kind.id, kindName: kind.name, fileName: name, contentType: input.file.type || "application/octet-stream", content, description: input.description, actorId: actor.id, requestId }));
+}
+
+/** Writes a document row and its audit row. Uploads and generated files (quotes) both end here; checks happen before. */
+export async function storeDocument(tx: Tx, input: { dealId: string; kindId: string; kindName: string; fileName: string; contentType: string; content: Buffer; description: string | null; actorId: string; requestId: string }) {
+  const d = await tx.dealDocument.create({ data: { dealId: input.dealId, documentKindId: input.kindId, fileName: input.fileName.slice(0, 200), contentType: input.contentType, sizeBytes: input.content.byteLength, content: new Uint8Array(input.content), description: input.description, uploadedById: input.actorId }, select });
+  await recordEvent(tx, { entityType: "document", entityId: d.id, dealId: input.dealId, action: "CREATE", userId: input.actorId, requestId: input.requestId, newValue: `${input.kindName}: ${d.fileName}` });
+  return d;
 }
 
 export async function downloadDocument(actor: Actor, id: string) {
