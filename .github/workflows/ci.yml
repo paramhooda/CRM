@@ -8,7 +8,7 @@ on:
 jobs:
   test:
     name: Lint, typecheck, unit, API and browser tests from an empty database
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright's pinned browser has no build for newer Ubuntu images
     timeout-minutes: 40
     services:
       postgres:
@@ -26,7 +26,6 @@ jobs:
     env:
       DATABASE_URL: postgresql://crm:crm@localhost:5432/crm
       TEST_DATABASE_URL: postgresql://crm:crm@localhost:5432/crm_test
-      SESSION_SECRET: ci-only-secret-ci-only-secret-ci-only-secret
       CI: "true"
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +49,7 @@ jobs:
 
   docker:
     name: Docker image builds
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

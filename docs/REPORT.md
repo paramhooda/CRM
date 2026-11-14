@@ -131,9 +131,9 @@ business unit in tags and charts, codes and money in Geist Mono, 36px controls, 
 ## 5. How to run locally
 
 ```
-cp .env.example .env            # set DATABASE_URL and a long random SESSION_SECRET
+cp .env.example .env            # works as is for a local run
 docker compose up -d db         # Postgres 16 on :5432
-npm install
+npm install                     # also generates the Prisma client
 npm run db:migrate              # applies prisma/migrations
 npm run db:seed                 # reference + demo data (every demo user: Progression@123)
 npm run dev                     # http://localhost:3000
@@ -142,6 +142,5 @@ npm run dev                     # http://localhost:3000
 Sign in as `vivek.malhotra@progression.com` (Sales Head), `rakesh.pawar@progression.com` (Sales),
 `rakesh.yadav@progression.com` (Presales), `meera.iyer@progression.com` (Purchase) or `admin@progression.com`.
 
-Whole stack in Docker: put `SESSION_SECRET` (and optionally `SEED_DEMO_DATA=true`) in `.env`, then
-`docker compose up --build`. Tests: `npm test`, `npm run test:api`, `npm run test:e2e` against a running seeded server,
+Whole stack in Docker: `docker compose up --build` (set `SEED_DEMO_DATA=true` in `.env` for the demo data). Tests: `npm test`, `npm run test:api`, `npm run test:e2e` against a running seeded server,
 or `npm run test:all` for the full proof.

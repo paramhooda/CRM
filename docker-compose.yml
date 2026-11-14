@@ -25,7 +25,6 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://crm:${POSTGRES_PASSWORD:-crm}@db:5432/crm
-      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env (any long random string)}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TZ: UTC

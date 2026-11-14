@@ -14,7 +14,6 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:-$(node -e 'const u=new URL(process.env.D
 PORT="${TEST_PORT:-3100}"
 BASE="http://localhost:${PORT}"
 export DATABASE_URL="$TEST_DATABASE_URL"
-export SESSION_SECRET="${SESSION_SECRET:-test-only-secret-test-only-secret-test-only}"
 # NODE_ENV is left to next (build and start set production themselves); the reset script refuses to run in production
 
 step() { printf '\n\033[1;34m▶ %s\033[0m\n' "$*"; }

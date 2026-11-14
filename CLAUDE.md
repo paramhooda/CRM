@@ -34,9 +34,9 @@ rule that lives in `domain/`. All browser writes go through `/api/v1` via `src/c
 ## Run
 
 ```
-cp .env.example .env          # set DATABASE_URL and SESSION_SECRET
+cp .env.example .env          # works as is for a local run
 docker compose up -d db       # Postgres 16
-npm install
+npm install                   # also generates the Prisma client (postinstall)
 npm run db:migrate            # prisma migrate dev
 npm run db:seed               # reference data + demo data (password for everyone: Progression@123)
 npm run dev                   # http://localhost:3000
