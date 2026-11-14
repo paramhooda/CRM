@@ -129,10 +129,10 @@ Everything below was run by `scripts/test-all.sh` from an empty database: recrea
 |---|---|
 | Recreate test database, `prisma migrate deploy`, seed | pass |
 | Lint, typecheck | pass |
-| Unit tests (stages, workflow checklist and request rules, lines, approvals, AI prompts, scope and permissions, review, formatting, design tokens) | pass, 61 tests |
+| Unit tests (stages, workflow checklist and request rules, lines, approvals, quotation, AI prompts, scope and permissions, review flags and alert config, formatting, design tokens) | pass, 66 tests |
 | Production build (`next build`) | pass |
-| API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV; the flow rules: document before hand-over, lines before pricing, frozen lines, costs before proposal, approval before won, nothing on hold, AI off) | pass, 47 tests |
-| Browser tests, every core flow per role | pass, 33 tests |
+| API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV; the flow rules: document before hand-over, lines before pricing, frozen lines, costs before proposal, approval before won, nothing on hold; Submit BOQ hands to purchase; Needs you per role; owner back, reopen and delete; settings admin-only with secrets never returned; alerts switching review flags; quotes 409 until final and a real PDF download; email off, refused and recorded, manual advance) | pass, 51 tests |
+| Browser tests, every core flow per role | pass, 35 tests |
 | Screenshots of every main screen per role | pass, 7 runs, 41 images |
 
 Browser flows, by requirement:
