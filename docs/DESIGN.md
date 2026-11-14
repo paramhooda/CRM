@@ -81,9 +81,14 @@ real state (target met, overdue).
 - Tables: `--background` header row with 12px muted labels, 1px row dividers, no zebra striping, right-aligned
   numbers in mono.
 - Tags: 24px tall, 6px radius, tinted background and matching darker text; the text always says what it is.
-- Shell: a 300px white sidebar (wordmark, "Filter navigator" box, uppercase captions, collapsible groups with
-  sub-item trees, the active item as a white bordered card) beside a 76px top bar (search with ⌘K, New deal, the
-  approvals badge, avatar with name); content on white cards on the grey page.
+- Shell: a 300px white sidebar with the wordmark and one line per module (Home, Deals, Accounts, Contacts, Leads,
+  Approvals with a red count, Pipeline review, Targets; an uppercase "Admin" caption above the admin modules; My
+  work, Deals and Accounts for presales and purchase), the active item as a white bordered card, and a "Minimise"
+  button at the foot. Minimised, it is a 64px icon rail with the brand mark, tooltips on hover, a red dot on
+  Approvals, and an "Expand" icon; the edge of the sidebar also toggles it and the choice is kept in a cookie.
+  Creating things happens on each module's page (New deal on Deals, and so on), never from the navigation. Beside it
+  a 76px top bar (search with ⌘K, New deal, the approvals badge, avatar with name); content on white cards on the
+  grey page.
 - Page header: `PageHero` (date or breadcrumb eyebrow, 30px title, grey description, actions; optional controls row
   with `Segmented` and selects under a divider). `SectionLabel` captions sections, with a right-hand note.
 - Tiles: `StatTile` (label, tinted icon square, 32px value coloured only for status, `Sparkline`, `DeltaPill`, note).

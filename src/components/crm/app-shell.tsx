@@ -1,10 +1,10 @@
 "use client";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { Briefcase, Building2, CheckSquare, ChevronDown, ChevronRight, ClipboardList, Contact, Filter, Home, KeyRound, ListChecks, LogOut, Moon, Package, Plus, ScrollText, Search, Settings2, ShieldCheck, Sun, Target, Users, UserSquare2, type LucideIcon } from "lucide-react";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Briefcase, Building2, CheckSquare, ClipboardList, Contact, Home, KeyRound, ListChecks, LogOut, Moon, Package, PanelLeftClose, PanelLeftOpen, Plus, ScrollText, Search, Settings2, ShieldCheck, Sun, Target, Users, UserSquare2, type LucideIcon } from "lucide-react";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,50 +16,34 @@ import { ROLE_LABEL } from "@/contracts/users";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Leaf = { href: string; label: string };
-type Item = { href: string; label: string; icon: LucideIcon; children?: Leaf[] };
-type Group = { label: string; items: Item[] };
+type Item = { href: string; label: string; icon: LucideIcon; badge?: number };
 
-function navFor(role: string, actorId: string): Group[] {
+/** One line per module. Creating things happens on each module's own page ("New deal" on Deals, and so on). */
+function navFor(role: string, pendingApprovals: number): { main: Item[]; admin: Item[] } {
   if (role === "PRESALES" || role === "PURCHASE") {
-    return [{ label: "Work", items: [{ href: "/my-work", label: "My work", icon: ListChecks }, { href: "/deals", label: "Deals", icon: Briefcase }, { href: "/accounts", label: "Accounts", icon: Building2 }] }];
+    return { main: [{ href: "/my-work", label: "My work", icon: ListChecks }, { href: "/deals", label: "Deals", icon: Briefcase }, { href: "/accounts", label: "Accounts", icon: Building2 }], admin: [] };
   }
-  const deals: Leaf[] = [{ href: "/deals", label: "All open" }];
-  if (role !== "SALES") deals.push({ href: `/deals?owner=${actorId}`, label: "Assigned to me" });
-  deals.push({ href: "/deals?view=kanban", label: "Board" }, { href: "/deals?stage=CLOSED_WON", label: "Closed-won" }, { href: "/deals/new", label: "New deal" });
-  const groups: Group[] = [
-    {
-      label: "Sales",
-      items: [
-        { href: "/home", label: "Home", icon: Home },
-        { href: "/deals", label: "Deals", icon: Briefcase, children: deals },
-        { href: "/accounts", label: "Accounts", icon: Building2, children: [{ href: "/accounts", label: "All accounts" }, { href: "/accounts/new", label: "New account" }] },
-        { href: "/contacts", label: "Contacts", icon: Contact },
-        { href: "/leads", label: "Leads", icon: UserSquare2, children: [{ href: "/leads", label: "All leads" }, { href: "/leads?status=NEW", label: "New" }, { href: "/leads/new", label: "New lead" }] },
-      ],
-    },
-    {
-      label: "Manage",
-      items: [
-        { href: "/approvals", label: "Approvals", icon: CheckSquare },
-        { href: "/reviews", label: "Pipeline review", icon: ClipboardList, children: [{ href: "/reviews", label: "Current review" }, { href: "/reviews/history", label: "Past reviews" }] },
-      ],
-    },
+  const main: Item[] = [
+    { href: "/home", label: "Home", icon: Home },
+    { href: "/deals", label: "Deals", icon: Briefcase },
+    { href: "/accounts", label: "Accounts", icon: Building2 },
+    { href: "/contacts", label: "Contacts", icon: Contact },
+    { href: "/leads", label: "Leads", icon: UserSquare2 },
+    { href: "/approvals", label: "Approvals", icon: CheckSquare, badge: pendingApprovals },
+    { href: "/reviews", label: "Pipeline review", icon: ClipboardList },
   ];
-  if (role === "SALES_HEAD") groups[1]!.items.push({ href: "/admin/targets", label: "Targets", icon: Target });
-  if (role === "ADMIN")
-    groups.push({
-      label: "Admin",
-      items: [
+  if (role === "SALES_HEAD") main.push({ href: "/admin/targets", label: "Targets", icon: Target });
+  const admin: Item[] = role === "ADMIN"
+    ? [
         { href: "/admin/users", label: "Users", icon: Users },
         { href: "/admin/lookups", label: "Master data", icon: Settings2 },
         { href: "/admin/products", label: "Products", icon: Package },
         { href: "/admin/approval-rules", label: "Approval rules", icon: ShieldCheck },
         { href: "/admin/targets", label: "Targets", icon: Target },
         { href: "/admin/audit", label: "Audit log", icon: ScrollText },
-      ],
-    });
-  return groups;
+      ]
+    : [];
+  return { main, admin };
 }
 
 /** Lists that take `?q=`: the top-bar search goes to the one the person is on, else to deals. */
@@ -105,72 +89,49 @@ function TopSearch() {
   );
 }
 
-/** Which leaf of an item the current URL matches: the most specific href whose path and query parameters are all present. */
-function matchLeaf(leaves: Leaf[], pathname: string, params: URLSearchParams): string | null {
-  let best: { href: string; score: number } | null = null;
-  for (const l of leaves) {
-    const [path, qs] = l.href.split("?");
-    if (pathname !== path) continue;
-    const want = new URLSearchParams(qs ?? "");
-    let ok = true;
-    for (const [k, v] of want) if (params.get(k) !== v) ok = false;
-    if (!ok) continue;
-    const score = [...want.keys()].length;
-    if (!best || score > best.score) best = { href: l.href, score };
-  }
-  return best?.href ?? null;
-}
-
 const cardActive = "data-active:bg-card data-active:text-foreground data-active:font-medium data-active:shadow-card data-active:ring-1 data-active:ring-border";
 
-function NavItem({ item, pathname, params, filter }: { item: Item; pathname: string; params: URLSearchParams; filter: string }) {
-  const inSection = pathname === item.href || pathname.startsWith(item.href + "/") || (item.children?.some((c) => pathname === c.href.split("?")[0]) ?? false);
-  const activeLeaf = item.children ? matchLeaf(item.children, pathname, params) ?? (inSection ? item.children[0]!.href : null) : null;
-  const [open, setOpen] = useState(true);
-  const q = filter.trim().toLowerCase();
-  const children = item.children?.filter((c) => !q || c.label.toLowerCase().includes(q)) ?? [];
-  if (q && !item.label.toLowerCase().includes(q) && children.length === 0) return null;
-  const show = open || !!q;
+function NavItem({ item, pathname }: { item: Item; pathname: string }) {
+  const active = pathname === item.href || pathname.startsWith(item.href + "/");
+  const badge = item.badge ?? 0;
   return (
     <SidebarMenuItem>
-      {item.children ? (
-        <SidebarMenuButton isActive={inSection} tooltip={item.label} onClick={() => setOpen((o) => !o)} className={cn("h-10 rounded-lg px-3 text-[15px]", cardActive)} aria-expanded={show}>
-          <item.icon />
-          <span className="flex-1">{item.label}</span>
-          {show ? <ChevronDown className="text-muted-foreground" /> : <ChevronRight className="text-muted-foreground" />}
-        </SidebarMenuButton>
-      ) : (
-        <SidebarMenuButton asChild isActive={inSection} tooltip={item.label} className={cn("h-10 rounded-lg px-3 text-[15px]", cardActive)}>
-          <Link href={item.href}>
+      <SidebarMenuButton asChild isActive={active} tooltip={badge ? `${item.label} (${badge})` : item.label} className={cn("h-10 rounded-lg px-3 text-[15px] group-data-[collapsible=icon]:size-10! group-data-[collapsible=icon]:justify-center", cardActive)}>
+        <Link href={item.href}>
+          <span className="relative inline-flex shrink-0">
             <item.icon />
-            <span className="flex-1">{item.label}</span>
-            <ChevronRight className="text-muted-foreground" />
-          </Link>
-        </SidebarMenuButton>
-      )}
-      {item.children && show && (
-        <SidebarMenuSub className="mx-5 mt-1 gap-0.5 border-border px-3">
-          {children.map((c) => (
-            <SidebarMenuSubItem key={c.href}>
-              <SidebarMenuSubButton asChild isActive={activeLeaf === c.href} className={cn("h-9 rounded-lg px-3 text-[15px] text-foreground-secondary hover:bg-sidebar-hover hover:text-foreground", cardActive)}>
-                <Link href={c.href}><span>{c.label}</span></Link>
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
-          ))}
-        </SidebarMenuSub>
-      )}
+            {badge > 0 && <span className="absolute -right-1 -top-1 hidden size-2 rounded-full bg-destructive group-data-[collapsible=icon]:block" aria-hidden />}
+          </span>
+          <span className="flex-1 truncate">{item.label}</span>
+        </Link>
+      </SidebarMenuButton>
+      {badge > 0 && <SidebarMenuBadge className="right-3 bg-destructive text-destructive-foreground peer-data-active/menu-button:text-destructive-foreground peer-hover/menu-button:text-destructive-foreground">{badge}</SidebarMenuBadge>}
     </SidebarMenuItem>
+  );
+}
+
+/** The sidebar's own minimise control: a labelled button when open, an icon with a tooltip when collapsed. */
+function MinimiseButton() {
+  const { state, toggleSidebar } = useSidebar();
+  const collapsed = state === "collapsed";
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton onClick={toggleSidebar} tooltip="Expand" aria-label={collapsed ? "Expand" : "Minimise"} className="h-10 rounded-lg px-3 text-[15px] text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:size-10! group-data-[collapsible=icon]:justify-center">
+          {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+          <span>Minimise</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }
 
 export function AppShell({ children, sidebarOpen, pendingApprovals = 0 }: { children: ReactNode; sidebarOpen: boolean; pendingApprovals?: number }) {
   const actor = useActor();
   const pathname = usePathname();
-  const params = useSearchParams();
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
-  const [filter, setFilter] = useState("");
-  const groups = useMemo(() => navFor(actor.role, actor.id), [actor.role, actor.id]);
+  const nav = useMemo(() => navFor(actor.role, pendingApprovals), [actor.role, pendingApprovals]);
   const support = actor.role === "PRESALES" || actor.role === "PURCHASE";
   const home = support ? "/my-work" : "/home";
 
@@ -192,28 +153,35 @@ export function AppShell({ children, sidebarOpen, pendingApprovals = 0 }: { chil
   return (
     <SidebarProvider defaultOpen={sidebarOpen}>
       <Sidebar collapsible="icon">
-        <SidebarHeader className="gap-4 px-5 pt-5 pb-2">
+        <SidebarHeader className="px-5 pt-5 pb-3 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-0">
           <Link href={home} className="flex items-center overflow-hidden" aria-label="Progression CRM home">
             <Logo height={28} className="group-data-[collapsible=icon]:hidden" />
             <Logo variant="mark" height={24} className="hidden group-data-[collapsible=icon]:block" />
           </Link>
-          <div className="relative group-data-[collapsible=icon]:hidden">
-            <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter navigator" aria-label="Filter navigator" className="h-10 rounded-xl bg-background pl-9" />
-          </div>
         </SidebarHeader>
-        <SidebarContent className="px-3">
-          {groups.map((g) => (
-            <SidebarGroup key={g.label} className="py-1">
-              <SidebarGroupLabel className="h-8 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{g.label}</SidebarGroupLabel>
+        <SidebarContent className="px-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
+          <SidebarGroup className="py-1">
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5" aria-label="Modules">
+                {nav.main.map((it) => <NavItem key={it.href} item={it} pathname={pathname} />)}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          {nav.admin.length > 0 && (
+            <SidebarGroup className="py-1">
+              <SidebarGroupLabel className="h-8 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Admin</SidebarGroupLabel>
               <SidebarGroupContent>
-                <SidebarMenu className="gap-0.5">
-                  {g.items.map((it) => <NavItem key={it.href} item={it} pathname={pathname} params={params} filter={filter} />)}
+                <SidebarMenu className="gap-0.5" aria-label="Admin">
+                  {nav.admin.map((it) => <NavItem key={it.href} item={it} pathname={pathname} />)}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-          ))}
+          )}
         </SidebarContent>
+        <SidebarFooter className="px-3 pb-4 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
+          <MinimiseButton />
+        </SidebarFooter>
+        <SidebarRail />
       </Sidebar>
       <SidebarInset className="min-w-0">
         <header className="sticky top-0 z-30 flex h-[76px] shrink-0 items-center gap-3 border-b border-border bg-card px-4 sm:px-6">

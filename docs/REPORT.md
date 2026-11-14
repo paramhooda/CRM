@@ -71,8 +71,10 @@ Taken with the owner during the build:
 - **Flow rules** (third round, with the owner): the proposal document stays optional (quotes are often produced
   outside the upload flow), the customer's requirement is mandatory for the hand-over to presales, every line must
   be costed before a proposal, and the assistant uses an OpenAI key the owner supplies.
-- **Design system** (`docs/DESIGN.md`): matched to the owner's reference application. A white tree sidebar with a
-  navigator filter, a 76px top bar with search, New deal, an approvals badge and the avatar; a hero card with a
+- **Design system** (`docs/DESIGN.md`): matched to the owner's reference application. A white sidebar with one
+  line per module that minimises to an icon rail (the owner asked for "simple module-wise" navigation, with New
+  deal as a button inside Deals rather than a second entry), a 76px top bar with search, New deal, an approvals
+  badge and the avatar; a hero card with a
   period segmented control and a scope select at the top of every page; uppercase section captions; trend tiles
   with tinted icon squares, sparklines and delta pills; flow bars, donuts and a weekday × hour heatmap; a stage
   performance table; one metric row per business unit and an accounts strip; dotted status pills and underline tabs.

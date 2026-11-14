@@ -41,3 +41,28 @@ test("support roles cannot open the sales home or funnel", async ({ page }) => {
   const r = await page.request.get("/api/v1/metrics/home");
   expect(r.status()).toBe(403);
 });
+
+test("the sidebar is one line per module, minimises from its own button, and remembers it", async ({ page }) => {
+  await login(page, "salesHead");
+  const nav = page.locator("[data-sidebar='sidebar']");
+  for (const label of ["Home", "Deals", "Accounts", "Contacts", "Leads", "Approvals", "Pipeline review", "Targets"]) await expect(nav.getByRole("link", { name: new RegExp(`^${label}`) })).toBeVisible();
+  // Creating things lives on each module's page, not in the navigation
+  await expect(nav.getByRole("link", { name: /New deal|All open|Board|Closed-won/ })).toHaveCount(0);
+  await expect(nav.getByText("Admin", { exact: true })).toHaveCount(0);
+  await expect(nav.getByPlaceholder("Filter navigator")).toHaveCount(0);
+  await nav.getByRole("button", { name: "Minimise" }).click();
+  await expect(page.locator("[data-slot='sidebar']").first()).toHaveAttribute("data-state", "collapsed");
+  const railWidth = async () => (await page.locator("[data-slot='sidebar-container']").boundingBox())!.width;
+  await expect.poll(railWidth).toBeLessThan(80); // the icon rail
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator("[data-slot='sidebar']").first()).toHaveAttribute("data-state", "collapsed");
+  await nav.getByRole("button", { name: "Expand" }).click();
+  await expect(page.locator("[data-slot='sidebar']").first()).toHaveAttribute("data-state", "expanded");
+  await expect.poll(railWidth).toBeGreaterThan(250);
+  // The admin gets an Admin section; a rep does not
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await login(page, "admin");
+  await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Audit log" })).toBeVisible();
+});
