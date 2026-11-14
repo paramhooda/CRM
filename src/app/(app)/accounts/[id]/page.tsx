@@ -10,7 +10,8 @@ import { StagePill, ForecastPill, NeutralPill } from "@/components/crm/pills";
 import { Money } from "@/components/crm/money";
 import { EmptyState } from "@/components/crm/states";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { TabBar, Tab, TabCount } from "@/components/crm/tabs";
 import { AccountActions } from "./account-actions";
 import { ContactsPanel } from "./contacts-panel";
 import { fmtDate } from "@/lib/format";
@@ -49,7 +50,7 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
         }
       />
       {(a.website || a.phone || a.addressLine || a.notes) && (
-        <div className="mb-5 grid gap-3 rounded-xl border border-border bg-card p-4 text-sm shadow-card sm:grid-cols-3">
+        <div className="mb-6 grid gap-4 rounded-2xl border border-border bg-card p-5 text-sm shadow-card sm:grid-cols-3">
           {a.website && <div><div className="text-xs text-muted-foreground">Website</div><a href={a.website} target="_blank" rel="noreferrer" className="text-primary hover:underline">{a.website.replace(/^https?:\/\//, "")}</a></div>}
           {a.phone && <div><div className="text-xs text-muted-foreground">Phone</div>{a.phone}</div>}
           {a.addressLine && <div><div className="text-xs text-muted-foreground">Address</div>{[a.addressLine, a.city, a.state, a.pincode].filter(Boolean).join(", ")}</div>}
@@ -57,10 +58,10 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
         </div>
       )}
       <Tabs defaultValue={tab === "deals" ? "deals" : "contacts"}>
-        <TabsList>
-          <TabsTrigger value="contacts">Contacts <span className="ml-1 text-muted-foreground">{a.contacts.length}</span></TabsTrigger>
-          <TabsTrigger value="deals">Deals <span className="ml-1 text-muted-foreground">{a.deals.length}</span></TabsTrigger>
-        </TabsList>
+        <TabBar>
+          <Tab value="contacts">Contacts <TabCount>{a.contacts.length}</TabCount></Tab>
+          <Tab value="deals">Deals <TabCount>{a.deals.length}</TabCount></Tab>
+        </TabBar>
         <TabsContent value="contacts" className="mt-4">
           <ContactsPanel accountId={a.id} contacts={a.contacts} canEdit={a.canEdit} />
         </TabsContent>
@@ -68,14 +69,14 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
           {a.deals.length === 0 ? (
             <EmptyState title="No deals yet" description="Deals at this account will show here." action={a.canEdit && can(actor.role, "deals.create") ? <Button asChild size="sm"><Link href={`/deals/new?account=${a.id}`}>New deal</Link></Button> : undefined} />
           ) : (
-            <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+            <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-card">
               {a.deals.map((d) => (
                 <Link key={d.id} href={`/deals/${d.id}`} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50">
                   <RecordCode className="w-28 shrink-0">{d.code}</RecordCode>
                   <span className="min-w-0 flex-1 truncate font-medium">{d.name}</span>
                   <span className="text-xs text-muted-foreground">{d.owner.fullName}</span>
-                  <StagePill stage={d.stage as Stage} />
-                  {d.forecastCategory && <ForecastPill forecast={d.forecastCategory} />}
+                  <StagePill stage={d.stage as Stage} dot />
+                  {d.forecastCategory && <ForecastPill forecast={d.forecastCategory} dot />}
                   {d.dealValue !== null && <Money value={d.dealValue} className="w-24 text-right" />}
                   <span className="w-16 text-right text-xs text-muted-foreground">{fmtDate(d.expectedCloseDate)}</span>
                 </Link>

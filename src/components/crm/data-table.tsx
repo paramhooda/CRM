@@ -28,7 +28,7 @@ export function DataTable<T extends { id: string }>({ columns, rows, query, path
   const [sortField, sortDir] = sort.split(":");
   if (!rows.length) return <EmptyState {...empty} />;
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-card">
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>

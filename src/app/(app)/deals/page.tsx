@@ -34,7 +34,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
     <>
       <ViewToggle />
       {sales && <ExportButton entity="deals" />}
-      {can(actor.role, "deals.create") && <Button asChild size="sm"><Link href="/deals/new"><Plus /> New deal</Link></Button>}
+      {can(actor.role, "deals.create") && <Button asChild><Link href="/deals/new"><Plus /> New deal</Link></Button>}
     </>
   );
   if (kanban) {
@@ -51,12 +51,12 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   const columns: Column<DealListRow>[] = [
     { key: "name", header: "Deal", sort: "name", className: "min-w-52 max-w-72", cell: (r) => <span className="line-clamp-2">{r.name}<RecordCode className="block text-[11px] font-normal">{r.code}{r.deletedAt ? " · deleted" : ""}</RecordCode></span> },
     { key: "account", header: "Account", sort: "account", className: "max-w-48", cell: (r) => <span className="line-clamp-2">{r.account.name}</span>, hideBelow: "md" },
-    { key: "stage", header: "Stage", sort: "stage", cell: (r) => <span className="flex flex-col items-start gap-1"><StagePill stage={r.stage} /><span className="text-[11px] text-muted-foreground">{r.daysInStage}d in stage</span></span> },
+    { key: "stage", header: "Stage", sort: "stage", cell: (r) => <span className="flex flex-col items-start gap-1"><StagePill stage={r.stage} dot /><span className="text-[11px] text-muted-foreground">{r.daysInStage}d in stage</span></span> },
     { key: "bu", header: "BU", cell: (r) => <span className="flex flex-wrap gap-1">{r.businessUnits.map((b) => <BuTag key={b.id} name={b.name} colourToken={b.colourToken} />)}</span>, hideBelow: "lg" },
     { key: "oem", header: "OEM", cell: (r) => r.primaryOem?.name ?? "—", hideBelow: "lg" },
     ...(sales
       ? ([
-          { key: "forecast", header: "Forecast", cell: (r) => (r.forecastCategory ? <ForecastPill forecast={r.forecastCategory} /> : "—"), hideBelow: "md" },
+          { key: "forecast", header: "Forecast", cell: (r) => (r.forecastCategory ? <ForecastPill forecast={r.forecastCategory} dot /> : "—"), hideBelow: "md" },
           { key: "value", header: "Value", sort: "dealValue", align: "right", cell: (r) => <Money value={r.dealValue} /> },
           { key: "gm", header: "GM", sort: "expectedGmPct", align: "right", cell: (r) => <Pct value={r.expectedGmPct} />, hideBelow: "sm" },
         ] as Column<DealListRow>[])

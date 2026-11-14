@@ -8,7 +8,8 @@ import { PageHeader } from "@/components/crm/page-header";
 import { StatusPill } from "@/components/crm/pills";
 import { Money, Pct } from "@/components/crm/money";
 import { EmptyState } from "@/components/crm/states";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { TabBar, Tab, TabCount } from "@/components/crm/tabs";
 import { DecideButtons } from "./decide-buttons";
 import { fmtDate } from "@/lib/format";
 import { RecordCode } from "@/components/crm/code";
@@ -28,7 +29,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: Pr
         <ul className="mt-1 text-xs text-muted-foreground">{a.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
       </div>
       <div className="text-right text-sm"><Money value={a.dealValue} className="font-medium" /><div className="text-xs text-muted-foreground">GM <Pct value={a.gmPct} /></div></div>
-      <StatusPill status={a.status} />
+      <StatusPill status={a.status} dot />
       {mine && <DecideButtons id={a.id} />}
     </li>
   );
@@ -36,15 +37,15 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: Pr
     <>
       <PageHeader title="Approvals" description="Price approvals waiting on you, and the ones you have decided." />
       <Tabs defaultValue={tab === "decided" ? "decided" : "pending"}>
-        <TabsList>
-          <TabsTrigger value="pending">Waiting on me <span className="ml-1 text-muted-foreground">{pending.rows.length}</span></TabsTrigger>
-          <TabsTrigger value="decided">Decided <span className="ml-1 text-muted-foreground">{decided.rows.length}</span></TabsTrigger>
-        </TabsList>
+        <TabBar>
+          <Tab value="pending">Waiting on me <TabCount>{pending.rows.length}</TabCount></Tab>
+          <Tab value="decided">Decided <TabCount>{decided.rows.length}</TabCount></Tab>
+        </TabBar>
         <TabsContent value="pending" className="mt-4">
-          {pending.rows.length === 0 ? <EmptyState title="Nothing waiting on you" description="Approvals land here when a deal's prices match a rule that names you." /> : <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">{pending.rows.map((a) => row(a, true))}</ul>}
+          {pending.rows.length === 0 ? <EmptyState title="Nothing waiting on you" description="Approvals land here when a deal's prices match a rule that names you." /> : <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-card">{pending.rows.map((a) => row(a, true))}</ul>}
         </TabsContent>
         <TabsContent value="decided" className="mt-4">
-          {decided.rows.length === 0 ? <EmptyState title="No decisions yet" /> : <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">{decided.rows.map((a) => row(a, false))}</ul>}
+          {decided.rows.length === 0 ? <EmptyState title="No decisions yet" /> : <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-card">{decided.rows.map((a) => row(a, false))}</ul>}
         </TabsContent>
       </Tabs>
     </>

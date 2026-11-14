@@ -10,7 +10,10 @@ import { isSupportRole, isManagerRole } from "@/domain/scope";
 import { PageHeader } from "@/components/crm/page-header";
 import { StagePill, ForecastPill, NeutralPill } from "@/components/crm/pills";
 import { Money, Pct } from "@/components/crm/money";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { TabBar, Tab, TabCount } from "@/components/crm/tabs";
+import { StatTile } from "@/components/crm/stat-tile";
+import { CalendarDays, IndianRupee, Layers, Percent } from "lucide-react";
 import { StagePath } from "./stage-path";
 import { StageActions } from "./stage-actions";
 import { DealMenu } from "./deal-menu";
@@ -80,7 +83,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         title={<span className="flex items-center gap-3"><RecordCode className="text-sm">{d.code}</RecordCode>{d.name}</span>}
         crumbs={[{ href: "/deals", label: "Deals" }]}
         description={<span className="flex flex-wrap items-center gap-x-3 gap-y-1"><Link href={`/accounts/${d.account.id}`} className="hover:text-foreground">{d.account.name}</Link><span>Owner: {d.owner.fullName}</span>{d.presalesOwner && <span>Presales: {d.presalesOwner.fullName}</span>}</span>}
-        meta={<><StagePill stage={d.stage} /><span className="text-xs text-muted-foreground">{d.daysInStage}d in stage</span>{sales && d.forecastCategory && <ForecastPill forecast={d.forecastCategory} />}{d.deletedAt && <NeutralPill className="bg-destructive/10 text-destructive">Deleted {fmtDate(d.deletedAt)}</NeutralPill>}</>}
+        meta={<><StagePill stage={d.stage} dot /><span className="text-sm text-muted-foreground">{d.daysInStage}d in stage</span>{sales && d.forecastCategory && <ForecastPill forecast={d.forecastCategory} dot />}{d.deletedAt && <NeutralPill className="bg-destructive/10 text-destructive">Deleted {fmtDate(d.deletedAt)}</NeutralPill>}</>}
         actions={
           <>
             {sales && <StageActions dealId={d.id} version={d.version} moves={d.moves} presalesPeople={presalesPeople} hasPoDocument={d.facts.hasPoDocument} />}
@@ -88,24 +91,20 @@ export default async function DealPage({ params, searchParams }: { params: Promi
           </>
         }
       />
-      <section className="mb-5 grid gap-3 sm:grid-cols-3" aria-label="Key facts">
-        {facts.map((f) => (
-          <div key={f.label} className="rounded-xl border border-border bg-card px-4 py-3 shadow-card">
-            <div className="text-xs font-medium text-muted-foreground">{f.label}</div>
-            <div className={cn("mt-1 text-xl font-semibold tracking-tight", "warn" in f && f.warn && "text-destructive")}>{f.value}</div>
-            {f.sub && <div className="mt-0.5 text-xs text-muted-foreground">{f.sub}</div>}
-          </div>
+      <section className="mb-6 grid gap-4 sm:grid-cols-3" aria-label="Key facts">
+        {facts.map((f, i) => (
+          <StatTile key={f.label} label={f.label} value={f.value} note={f.sub} icon={[sales ? IndianRupee : Layers, sales ? Percent : IndianRupee, CalendarDays][i]} iconTone={"warn" in f && f.warn ? "red" : (["blue", "green", "amber"] as const)[i]} tone={"warn" in f && f.warn ? "red" : "default"} />
         ))}
       </section>
       {sales && <StagePath stage={d.stage} needsPresales={d.needsPresales} heldFromStage={d.heldFromStage} lastOpenStage={d.lastOpenStage} />}
 
       <Tabs defaultValue={["lines", "documents", "history"].includes(tab ?? "") ? tab! : "overview"} className="mt-6">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="lines">Lines <span className="ml-1 text-muted-foreground">{d.lines.length}</span></TabsTrigger>
-          <TabsTrigger value="documents">Documents <span className="ml-1 text-muted-foreground">{d.documents.length}</span></TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-        </TabsList>
+        <TabBar>
+          <Tab value="overview">Overview</Tab>
+          <Tab value="lines">Lines <TabCount>{d.lines.length}</TabCount></Tab>
+          <Tab value="documents">Documents <TabCount>{d.documents.length}</TabCount></Tab>
+          <Tab value="history">History</Tab>
+        </TabBar>
 
         <TabsContent value="overview" className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <div className="flex flex-col gap-4">

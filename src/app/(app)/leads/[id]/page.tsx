@@ -55,11 +55,11 @@ export default async function LeadPage({ params, searchParams }: { params: Promi
         title={l.companyName}
         crumbs={[{ href: "/leads", label: "Leads" }]}
         description={<RecordCode>{l.code}</RecordCode>}
-        meta={<><StatusPill status={l.status} />{l.disqualifyReason && <span className="text-xs text-muted-foreground">Reason: {l.disqualifyReason}</span>}{l.convertedDealId && <Link href={`/deals/${l.convertedDealId}`} className="text-xs text-primary hover:underline">Open the deal →</Link>}</>}
+        meta={<><StatusPill status={l.status} dot />{l.disqualifyReason && <span className="text-xs text-muted-foreground">Reason: {l.disqualifyReason}</span>}{l.convertedDealId && <Link href={`/deals/${l.convertedDealId}`} className="text-sm font-medium text-link hover:underline">Open the deal →</Link>}</>}
         actions={<LeadActions id={l.id} status={l.status} canEdit={l.canEdit} companyName={l.companyName} contactName={l.contactName} contactEmail={l.contactEmail} contactPhone={l.contactPhone} designation={l.designation} notes={l.notes} canDelete={can(actor.role, "leads.delete") && !l.deletedAt} canRestore={can(actor.role, "records.restore") && !!l.deletedAt} />}
       />
       <div className="grid max-w-3xl gap-4 sm:grid-cols-2">
-        <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm shadow-card sm:col-span-2 sm:grid-cols-[140px_1fr_140px_1fr]">
+        <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 rounded-2xl border border-border bg-card p-5 text-sm shadow-card sm:col-span-2 sm:grid-cols-[140px_1fr_140px_1fr]">
           {rows.map(([k, v]) => (
             <div key={k} className="contents">
               <dt className="text-xs text-muted-foreground">{k}</dt>

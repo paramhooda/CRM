@@ -31,7 +31,7 @@ export function Kanban({ rows, sales }: { rows: DealListRow[]; sales: boolean })
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">{r.account.name}</div>
                     <div className="mt-2 flex flex-wrap items-center gap-1">
                       {r.businessUnits.slice(0, 2).map((b) => <BuTag key={b.id} name={b.name} colourToken={b.colourToken} />)}
-                      {sales && r.forecastCategory && <ForecastPill forecast={r.forecastCategory} />}
+                      {sales && r.forecastCategory && <ForecastPill forecast={r.forecastCategory} dot />}
                     </div>
                     <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                       <span>{r.owner.fullName.split(" ")[0]} · {fmtDate(r.expectedCloseDate)}</span>
