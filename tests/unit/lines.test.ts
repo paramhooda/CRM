@@ -61,7 +61,7 @@ describe("line rules", () => {
     expect(lineValidationErrors({ revenueModel: "ONE_TIME", termMonths: null, salesMethodId: null, quantity: 1, unitSalesPrice: -1, unitPurchaseCost: null }, false)[0]).toMatch(/negative/);
   });
   it("who may change which fields", () => {
-    const base = { canEditDeal: false, isAssignedPresales: false, isAssignedPurchase: false, dealOpen: true, lineOwnIp: false } as const;
+    const base = { canEditDeal: false, isAssignedPresales: false, isAssignedPurchase: false, dealOpen: true, lineOwnIp: false, openPresalesRequest: false, openPricingRequest: false } as const;
     expect([...lineFieldWhitelist({ ...base, role: "ADMIN" })]).toEqual(["spec", "price", "cost", "delete"]);
     expect([...lineFieldWhitelist({ ...base, role: "SALES", canEditDeal: true })]).toEqual(["spec", "price", "delete"]);
     expect([...lineFieldWhitelist({ ...base, role: "SALES" })]).toEqual([]);
@@ -70,5 +70,15 @@ describe("line rules", () => {
     expect([...lineFieldWhitelist({ ...base, role: "PURCHASE", isAssignedPurchase: true })]).toEqual(["cost"]);
     expect([...lineFieldWhitelist({ ...base, role: "PURCHASE" })]).toEqual([]);
     expect([...lineFieldWhitelist({ ...base, role: "ADMIN", dealOpen: false })]).toEqual([]);
+  });
+  it("while presales builds the BOQ the lines are theirs; while purchase prices them, what is sold is frozen", () => {
+    const base = { canEditDeal: true, isAssignedPresales: true, isAssignedPurchase: true, dealOpen: true, lineOwnIp: false, openPresalesRequest: false, openPricingRequest: false } as const;
+    expect([...lineFieldWhitelist({ ...base, role: "SALES", openPresalesRequest: true })]).toEqual([]);
+    expect([...lineFieldWhitelist({ ...base, role: "SALES", openPricingRequest: true })]).toEqual(["price"]);
+    expect([...lineFieldWhitelist({ ...base, role: "SALES_HEAD", openPresalesRequest: true })]).toEqual([]);
+    expect([...lineFieldWhitelist({ ...base, role: "PRESALES", openPricingRequest: true })]).toEqual([]);
+    expect([...lineFieldWhitelist({ ...base, role: "PRESALES", openPricingRequest: true, lineOwnIp: true })]).toEqual(["cost"]);
+    expect([...lineFieldWhitelist({ ...base, role: "PURCHASE", openPricingRequest: true })]).toEqual(["cost"]);
+    expect([...lineFieldWhitelist({ ...base, role: "ADMIN", openPresalesRequest: true, openPricingRequest: true })]).toEqual(["spec", "price", "cost", "delete"]);
   });
 });

@@ -33,14 +33,27 @@ export type StageAction = "ADVANCE" | "SKIP_BOQ" | "HOLD" | "RESUME" | "BACK" | 
 export type ApprovalState = "NONE_NEEDED" | "NEEDED" | "PENDING" | "APPROVED" | "REJECTED" | "STALE";
 
 /** What the rules need to know about a deal to decide its moves. */
+export type RequestStatus = "REQUESTED" | "IN_PROGRESS" | "SUBMITTED" | "COMPLETED" | "CANCELLED";
+
 export type DealFacts = {
   stage: Stage;
   heldFromStage: Stage | null;
   lastOpenStage: Stage | null;
   needsPresales: boolean;
+  deleted: boolean;
   lineCount: number;
   /** Lines without a sales price */
   unpricedLines: number;
+  /** Lines without a purchase cost (own-IP lines usually carry the standard cost) */
+  uncostedLines: number;
+  /** Lines whose OEM is not own IP: the ones purchase prices */
+  thirdPartyLines: number;
+  uncostedThirdPartyLines: number;
+  /** Documents presales may see (kinds not restricted to sales): the customer's requirement travels with the hand-over */
+  presalesDocuments: number;
+  /** Status of the latest request of each kind, or null when none was ever raised */
+  presalesRequest: RequestStatus | null;
+  pricingRequest: RequestStatus | null;
   openPresalesRequest: boolean;
   openPricingRequest: boolean;
   approvalState: ApprovalState;
@@ -68,17 +81,26 @@ export type Move = {
   needsPresalesRequest?: boolean;
 };
 
-/** Everything that must be true before a proposal can go out. Empty when the deal is ready. */
-export function proposalBlockers(f: DealFacts): string[] {
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many.replace("N", String(n)));
+
+/** The prices themselves: every line priced and costed (so the margin is known), and any approval given. */
+export function priceBlockers(f: DealFacts): string[] {
   const out: string[] = [];
   if (f.lineCount === 0) out.push("Add at least one line.");
-  if (f.unpricedLines > 0) out.push(`Set a sales price on ${f.unpricedLines === 1 ? "the remaining line" : `${f.unpricedLines} lines`}.`);
-  if (f.openPresalesRequest) out.push("Presales has not submitted the BOQ yet.");
-  if (f.openPricingRequest) out.push("Purchase has not completed pricing yet.");
+  if (f.uncostedLines > 0) out.push(`Enter the purchase cost on ${plural(f.uncostedLines, "the remaining line", "N lines")} (ask purchase for prices) so the margin is known.`);
+  if (f.unpricedLines > 0) out.push(`Set a sales price on ${plural(f.unpricedLines, "the remaining line", "N lines")}.`);
   if (f.approvalState === "NEEDED" || f.approvalState === "STALE") out.push("These prices need approval first.");
   if (f.approvalState === "PENDING") out.push("Waiting for approval.");
   if (f.approvalState === "REJECTED") out.push("Approval was rejected; change the prices and ask again.");
   return out;
+}
+
+/** Everything that must be true before a proposal can go out. Empty when the deal is ready. */
+export function proposalBlockers(f: DealFacts): string[] {
+  const out: string[] = [];
+  if (f.openPresalesRequest) out.push("Presales has not submitted the BOQ yet.");
+  if (f.openPricingRequest) out.push("Purchase has not completed pricing yet.");
+  return [...out, ...priceBlockers(f)];
 }
 
 function qualifiedBlockers(f: DealFacts): string[] {
@@ -88,9 +110,16 @@ function qualifiedBlockers(f: DealFacts): string[] {
   return out;
 }
 
-function wonBlockers(f: DealFacts): string[] {
+/** Handing a deal to presales: the customer's requirement must travel with it. */
+export function handoverBlockers(f: DealFacts): string[] {
+  return f.presalesDocuments === 0 ? ["Attach the customer's requirement (RFP, SoW or similar) under Documents first."] : [];
+}
+
+/** Closing as won: the prices are final and approved, nothing is open, and the PO is on file. */
+export function wonBlockers(f: DealFacts): string[] {
   const out: string[] = [];
   if (f.openPresalesRequest || f.openPricingRequest) out.push("Close the open presales or pricing request first.");
+  out.push(...priceBlockers(f));
   if (!f.hasPoDocument) out.push("Attach the customer's PO document.");
   return out;
 }
@@ -100,6 +129,7 @@ const disabled = (m: Move, blockers: string[]): Move => (blockers.length ? { ...
 /** Every move that applies to the deal in its current stage, enabled or not, with the reason when not. */
 export function allowedMoves(f: DealFacts, actor: MoveActor): Move[] {
   const moves: Move[] = [];
+  if (f.deleted) return moves;
   const path = pathFor(f.needsPresales);
   const noEdit = !actor.canEdit ? ["You can't change this deal."] : [];
 
@@ -110,8 +140,11 @@ export function allowedMoves(f: DealFacts, actor: MoveActor): Move[] {
     let extra: Partial<Move> = {};
     if (f.stage === "QUALIFIED") {
       gates = qualifiedBlockers(f);
-      if (next === "BOQ") extra = { needsPresalesRequest: true };
-      else gates = [...gates, ...proposalBlockers(f)];
+      if (next === "BOQ") {
+        gates = [...gates, ...handoverBlockers(f)];
+        // A presales request raised earlier is reused rather than doubled
+        extra = { needsPresalesRequest: !f.openPresalesRequest };
+      } else gates = [...gates, ...proposalBlockers(f)];
     } else if (next === "PROPOSAL_SUBMITTED") gates = proposalBlockers(f);
     else if (next === "CLOSED_WON") {
       gates = wonBlockers(f);

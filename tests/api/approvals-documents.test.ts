@@ -39,7 +39,9 @@ describe("documents", () => {
     expectError(await presales.get(`/documents/${rfp.id}/download`), 404);
     // bring presales in and let them attach a solution document, but not a proposal
     const presalesId = expectOk(await rep.get<{ rows: { id: string; email: string }[] }>("/users")).rows.find((u) => u.email === "rakesh.yadav@progression.com")!.id;
-    expectOk(await rep.post(`/deals/${d.id}/presales-requests`, { assignedToId: presalesId, dueDate: isoDate(5), scope: "Spec the laptops" }));
+    d = expectOk(await rep.patch<Deal>(`/deals/${d.id}`, { version: d.version, needsPresales: true }));
+    d = expectOk(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: presalesId, presalesDueDate: isoDate(5), presalesScope: "Spec the laptops" }));
+    expect(d.stage).toBe("BOQ");
     expectOk(await upload(presales, d.id, "Solution document", "Solution.docx", "PK..", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
     expectError(await upload(presales, d.id, "Proposal", "Proposal.pdf"), 403);
     const dl = await fetch(`${BASE}/api/v1/documents/${rfp.id}/download`, { headers: { cookie: presales.cookie } });
@@ -59,8 +61,7 @@ describe("documents", () => {
     const reqs = expectOk(await rep.get<{ rows: { id: string }[] }>(`/presales-requests?deal_id=${d.id}`)).rows;
     expectOk(await rep.patch(`/presales-requests/${reqs[0]!.id}`, { action: "CANCEL" }));
     d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
-    d = expectOk(await rep.patch<Deal>(`/deals/${d.id}`, { version: d.version, needsPresales: false })); // laptops after all
-    d = expectOk(await stage(rep, d, { action: "ADVANCE" }));
+    d = expectOk(await stage(rep, d, { action: "SKIP_BOQ" })); // laptops after all
     expect(d.stage).toBe("PROPOSAL_SUBMITTED");
     expect(d.moves.find((m) => m.action === "WON")).toMatchObject({ enabled: false, reason: expect.stringMatching(/PO document/) });
     expectError(await stage(rep, d, { action: "WON", poNumber: "PO/2026/001" }), 409);
@@ -115,6 +116,30 @@ describe("approvals", () => {
     const rejected = expectOk(await head.post<Approval>(`/approvals/${r2.approval.id}/decide`, { decision: "REJECTED", note: "Too thin" }));
     expect(rejected.status).toBe("REJECTED");
     expect(expectOk(await rep.get<Deal>(`/deals/${d.id}`)).approvalState).toBe("REJECTED");
+  });
+
+  it("a discount in Negotiation lapses the approval; Won waits for a new one, which can be asked for in any open stage", async () => {
+    let d = expectOk(await rep.post<Deal>("/deals", { name: uniq("Late discount"), accountId, primaryContactId: contactId, expectedCloseDate: isoDate(30), lines: [{ productId: laptopId, quantity: 10, unitSalesPrice: "80000", unitPurchaseCost: "60000" }] }));
+    expect(d.approvalState).toBe("NONE_NEEDED");
+    d = expectOk(await stage(rep, d, { action: "ADVANCE" }));
+    d = expectOk(await stage(rep, d, { action: "ADVANCE" }));
+    expect(d.stage).toBe("NEGOTIATION");
+    expectOk(await upload(rep, d.id, "Customer PO", "PO.pdf"));
+    d = expectOk(await rep.patch<Deal>(`/deals/${d.id}/lines`, { version: d.version, upserts: [{ id: d.lines[0]!.id, unitSalesPrice: "62000" }] }));
+    expect(d.approvalState).toBe("NEEDED");
+    expect(d.moves.find((m) => m.action === "ADVANCE")).toMatchObject({ toStage: "CLOSED_WON", enabled: false, reason: expect.stringMatching(/approval/) });
+    expectError(await stage(rep, d, { action: "ADVANCE", poNumber: "PO-9" }), 409, "NOT_ALLOWED");
+    const r = expectOk(await rep.post<{ approval: Approval }>(`/deals/${d.id}/approvals`));
+    expectOk(await head.post(`/approvals/${r.approval.id}/decide`, { decision: "APPROVED" }));
+    expectOk(await head.post(`/approvals/${r.approval.id}/decide`, { decision: "APPROVED" }));
+    d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
+    expect(d.approvalState).toBe("APPROVED");
+    d = expectOk(await stage(rep, d, { action: "ADVANCE", poNumber: "PO-9" }));
+    expect(d.stage).toBe("CLOSED_WON");
+    // and a GM rule can't be dodged by leaving the cost empty: approval needs costed lines
+    const uncosted = expectOk(await rep.post<Deal>("/deals", { name: uniq("No cost"), accountId, primaryContactId: contactId, expectedCloseDate: isoDate(30), lines: [{ productId: laptopId, quantity: 1, unitSalesPrice: "61000" }] }));
+    expect(uncosted.moves.find((m) => m.action === "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/purchase cost/) });
+    expectError(await rep.post(`/deals/${uncosted.id}/approvals`), 409, "UNCOSTED");
   });
 
   it("the top Sales Head's own deal: no manager, so an admin stands in; the Sales Head step skips the requester; no rule → not needed", async () => {

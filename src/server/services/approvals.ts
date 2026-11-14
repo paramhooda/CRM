@@ -8,6 +8,7 @@ import { assertCanEditDeal, assertPermission, dealWhere, usersLite } from "../au
 import type { ApprovalRuleInput } from "@/contracts/approvals";
 import { activeRules, getDeal, loadDeal, rulesMatchFor } from "./deals";
 import { resolveSteps } from "@/domain/approvals";
+import { isOpen } from "@/domain/stages";
 
 // ── Rules (admin) ──
 
@@ -91,7 +92,9 @@ export async function listDealApprovals(actor: Actor, dealId: string) {
 export async function requestApproval(actor: Actor, dealId: string, requestId: string) {
   const deal = await loadDeal(actor, dealId);
   await assertCanEditDeal(actor, deal);
-  if (deal.stage !== "QUALIFIED" && deal.stage !== "BOQ") throw new Conflict("Approval is asked for before the proposal goes out.", "WRONG_STAGE");
+  if (!isOpen(deal.stage)) throw new Conflict(deal.stage === "HOLD" ? "Resume the deal before asking for approval." : "This deal is closed.", "WRONG_STAGE");
+  if (deal.lines.length === 0) throw new Conflict("Add the lines first.", "NO_LINES");
+  if (deal.lines.some((l) => l.unitPurchaseCost === null)) throw new Conflict("Enter the purchase cost on every line first, so the margin is known.", "UNCOSTED");
   if (deal.lines.some((l) => l.unitSalesPrice === null)) throw new Conflict("Set a sales price on every line first.", "UNPRICED");
   const rules = await activeRules();
   const matched = rulesMatchFor(deal, rules);

@@ -12,6 +12,7 @@ import { toDate } from "@/contracts/common";
 import type { CreateDealInput, DealListQuery, LineInput, LinesPatchInput, PatchDealInput } from "@/contracts/deals";
 import { defaultNeedsPresales, deriveLine, lineFieldWhitelist, lineValidationErrors, rollupDeal, type LineField } from "@/domain/lines";
 import { allowedMoves, isOpen, STAGE_META, type ApprovalState, type DealFacts, type Stage } from "@/domain/stages";
+import { canUploadDocument, nextActions, requestBlockers, type People, type Viewer } from "@/domain/workflow";
 import { approvalState as computeApprovalState, matchRules, priceFingerprint } from "@/domain/approvals";
 import { dateOnly, istDate, parsePeriodKey } from "@/domain/fiscal";
 import { orderBy } from "./accounts";
@@ -82,21 +83,52 @@ export function todayDate(now = new Date()): Date {
   return dateOnly(year, month, day);
 }
 
+const isOpenRequest = (r: { status: string }) => (OPEN_REQUEST_PRESALES as readonly string[]).includes(r.status);
+
 export function dealFacts(deal: DealDetailRecord, approval: ApprovalState): DealFacts {
+  const thirdParty = deal.lines.filter((l) => !l.oem.isOwnIp);
   return {
     stage: deal.stage,
     heldFromStage: deal.heldFromStage,
     lastOpenStage: deal.lastOpenStage,
     needsPresales: deal.needsPresales,
+    deleted: !!deal.deletedAt,
     lineCount: deal.lines.length,
     unpricedLines: deal.lines.filter((l) => l.unitSalesPrice === null).length,
-    openPresalesRequest: deal.presalesRequests.some((r) => (OPEN_REQUEST_PRESALES as readonly string[]).includes(r.status)),
-    openPricingRequest: deal.pricingRequests.some((r) => (OPEN_REQUEST_PRICING as readonly string[]).includes(r.status)),
+    uncostedLines: deal.lines.filter((l) => l.unitPurchaseCost === null).length,
+    thirdPartyLines: thirdParty.length,
+    uncostedThirdPartyLines: thirdParty.filter((l) => l.unitPurchaseCost === null).length,
+    presalesDocuments: deal.documents.filter((d) => !d.kind.restrictedToSales).length,
+    presalesRequest: deal.presalesRequests[0]?.status ?? null,
+    pricingRequest: deal.pricingRequests[0]?.status ?? null,
+    openPresalesRequest: deal.presalesRequests.some(isOpenRequest),
+    openPricingRequest: deal.pricingRequests.some(isOpenRequest),
     approvalState: approval,
     hasPrimaryContact: !!deal.primaryContactId,
     closeDatePast: deal.expectedCloseDate < todayDate(),
     hasPoDocument: deal.documents.some((d) => d.kind.requiredAtWon),
   };
+}
+
+/** Who the actor is to this deal, for the workflow rules. Assignment means the open request of that kind. */
+export async function viewerFor(actor: Actor, deal: DealDetailRecord): Promise<Viewer> {
+  const latest = deal.approvals[0];
+  const step = latest?.status === "PENDING" ? latest.steps.find((s) => s.stepNo === latest.currentStep) : undefined;
+  return {
+    role: actor.role,
+    canEdit: await canEditDeal(actor, deal),
+    isManager: isManager(actor),
+    isAssignedPresales: actor.role === "PRESALES" && deal.presalesRequests.some((r) => r.assignedToId === actor.id && isOpenRequest(r)),
+    isAssignedPurchase: actor.role === "PURCHASE" && deal.pricingRequests.some((r) => r.assignedToId === actor.id && isOpenRequest(r)),
+    isApprover: !!step && step.approverUserIds.includes(actor.id) && latest!.requestedById !== actor.id,
+  };
+}
+
+function peopleFor(deal: DealDetailRecord): People {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const presales = deal.presalesRequests.find(isOpenRequest);
+  const pricing = deal.pricingRequests.find(isOpenRequest);
+  return { owner: deal.owner.fullName, presales: presales?.assignedTo.fullName ?? deal.presalesOwner?.fullName ?? null, purchase: pricing?.assignedTo.fullName ?? null, presalesDue: presales ? iso(presales.dueDate) : null, pricingDue: pricing ? iso(pricing.dueDate) : null };
 }
 
 // ───────────── List ─────────────
@@ -188,20 +220,26 @@ function lineOut(l: DealDetailRecord["lines"][number]) {
   };
 }
 
+/** The line-editing context: who the actor is plus which requests are open (they freeze parts of the lines). */
 async function editContext(actor: Actor, deal: DealDetailRecord) {
-  const canEdit = await canEditDeal(actor, deal);
-  const isAssignedPresales = actor.role === "PRESALES" && (deal.presalesOwnerId === actor.id || deal.presalesRequests.some((r) => r.assignedToId === actor.id && (OPEN_REQUEST_PRESALES as readonly string[]).includes(r.status)));
-  const isAssignedPurchase = actor.role === "PURCHASE" && deal.pricingRequests.some((r) => r.assignedToId === actor.id && (OPEN_REQUEST_PRICING as readonly string[]).includes(r.status));
-  return { canEdit, isAssignedPresales, isAssignedPurchase, dealOpen: isOpen(deal.stage) };
+  const v = await viewerFor(actor, deal);
+  return { ...v, dealOpen: isOpen(deal.stage) && !deal.deletedAt, openPresalesRequest: deal.presalesRequests.some(isOpenRequest), openPricingRequest: deal.pricingRequests.some(isOpenRequest) };
 }
+
+const whitelistFor = (ctx: Awaited<ReturnType<typeof editContext>>, ownIp: boolean) =>
+  lineFieldWhitelist({ role: ctx.role, canEditDeal: ctx.canEdit, isAssignedPresales: ctx.isAssignedPresales, isAssignedPurchase: ctx.isAssignedPurchase, dealOpen: ctx.dealOpen, lineOwnIp: ownIp, openPresalesRequest: ctx.openPresalesRequest, openPricingRequest: ctx.openPricingRequest });
 
 export async function dealView(actor: Actor, deal: DealDetailRecord) {
   const rules = await activeRules();
   const approval = approvalStateFor(deal, rules);
   const facts = dealFacts(deal, approval);
   const ctx = await editContext(actor, deal);
-  const moves = allowedMoves(facts, { canEdit: ctx.canEdit, isManager: isManager(actor) });
-  const whitelist = (ownIp: boolean) => [...lineFieldWhitelist({ role: actor.role, canEditDeal: ctx.canEdit, isAssignedPresales: ctx.isAssignedPresales, isAssignedPurchase: ctx.isAssignedPurchase, dealOpen: ctx.dealOpen, lineOwnIp: ownIp })];
+  const moves = allowedMoves(facts, { canEdit: ctx.canEdit, isManager: ctx.isManager });
+  const whitelist = (ownIp: boolean) => [...whitelistFor(ctx, ownIp)];
+  const ability = (kind: "presales" | "pricing") => {
+    const reasons = requestBlockers(kind, facts, ctx);
+    return { enabled: reasons.length === 0, reason: reasons[0] ?? null };
+  };
   const salesSide = actor.role !== "PRESALES" && actor.role !== "PURCHASE";
   const view = {
     ...deal,
@@ -218,9 +256,12 @@ export async function dealView(actor: Actor, deal: DealDetailRecord) {
     approvalState: approval,
     approvalReasons: rulesMatchFor(deal, rules).flatMap((m) => m.reasons),
     moves: salesSide ? moves : [],
-    canEdit: ctx.canEdit && isOpen(deal.stage),
+    canEdit: ctx.canEdit && isOpen(deal.stage) && !deal.deletedAt,
     canEditLines: whitelist(false).length > 0 || whitelist(true).length > 0,
     lineEditable: { thirdParty: whitelist(false), ownIp: whitelist(true) },
+    canUpload: canUploadDocument(ctx, deal.stage, !!deal.deletedAt),
+    requestAbility: { presales: ability("presales"), pricing: ability("pricing") },
+    next: nextActions(facts, ctx, peopleFor(deal)),
     facts,
   };
   return shapeDeal(actor, view);
@@ -412,10 +453,11 @@ export async function saveLines(actor: Actor, id: string, input: LinesPatchInput
   const ctx = await editContext(actor, deal);
   if (!ctx.dealOpen) throw new Conflict(deal.stage === "HOLD" ? "The deal is on hold. Resume it to change the lines." : "This deal is closed.", "CLOSED");
   const refs = await lineRefs();
-  const allowed = (ownIp: boolean) => lineFieldWhitelist({ role: actor.role, canEditDeal: ctx.canEdit, isAssignedPresales: ctx.isAssignedPresales, isAssignedPurchase: ctx.isAssignedPurchase, dealOpen: true, lineOwnIp: ownIp });
+  const allowed = (ownIp: boolean) => whitelistFor(ctx, ownIp);
   const existing = new Map(deal.lines.map((l) => [l.id, l]));
+  const frozen = ctx.openPresalesRequest && !ctx.isAssignedPresales && actor.role !== "ADMIN" ? " Presales is working on the BOQ." : ctx.openPricingRequest && actor.role !== "ADMIN" ? " Purchase is pricing the lines; cancel the request to change what is sold." : "";
   const need = (set: Set<LineField>, f: LineField, what: string) => {
-    if (!set.has(f)) throw new Forbidden(`You can't ${what} on this deal.`);
+    if (!set.has(f)) throw new Forbidden(`You can't ${what} on this deal.${f === "cost" ? "" : frozen}`);
   };
 
   await db.$transaction(async (tx) => {

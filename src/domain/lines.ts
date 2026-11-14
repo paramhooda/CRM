@@ -98,10 +98,15 @@ export type LineEditContext = {
   role: "ADMIN" | "SALES_HEAD" | "SALES" | "PRESALES" | "PURCHASE";
   /** The actor owns the deal, or is a manager with the owner in scope */
   canEditDeal: boolean;
+  /** Assignee of the open presales request */
   isAssignedPresales: boolean;
+  /** Assignee of the open pricing request */
   isAssignedPurchase: boolean;
   dealOpen: boolean;
   lineOwnIp: boolean;
+  /** While presales builds the BOQ the lines are theirs; while purchase prices them nobody changes what is sold. */
+  openPresalesRequest: boolean;
+  openPricingRequest: boolean;
 };
 
 /** Which groups of line fields the actor may change. */
@@ -109,11 +114,13 @@ export function lineFieldWhitelist(c: LineEditContext): Set<LineField> {
   const out = new Set<LineField>();
   if (!c.dealOpen) return out;
   if (c.role === "ADMIN") return new Set(["spec", "price", "cost", "delete"]);
-  if ((c.role === "SALES" || c.role === "SALES_HEAD") && c.canEditDeal) {
-    out.add("spec"); out.add("price"); out.add("delete");
+  if ((c.role === "SALES" || c.role === "SALES_HEAD") && c.canEditDeal && !c.openPresalesRequest) {
+    if (!c.openPricingRequest) out.add("spec");
+    out.add("price");
+    if (!c.openPricingRequest) out.add("delete");
   }
   if (c.role === "PRESALES" && c.isAssignedPresales) {
-    out.add("spec"); out.add("delete");
+    if (!c.openPricingRequest) { out.add("spec"); out.add("delete"); }
     if (c.lineOwnIp) out.add("cost");
   }
   if (c.role === "PURCHASE" && c.isAssignedPurchase) out.add("cost");

@@ -4,8 +4,9 @@ import type { Actor } from "../auth/actor";
 import { Conflict, Forbidden, NotFound, ValidationError } from "../errors";
 import { recordEvent } from "../audit";
 import { canEditDeal, dealWhere, isManager } from "../authz/scope";
-import { loadDeal, OPEN_REQUEST_PRESALES, OPEN_REQUEST_PRICING } from "./deals";
+import { loadDeal, viewerFor } from "./deals";
 import { isOpen } from "@/domain/stages";
+import { canUploadDocument } from "@/domain/workflow";
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 const ALLOWED_EXT = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "png", "jpg", "jpeg", "zip", "msg", "eml", "txt", "csv"]);
@@ -18,13 +19,9 @@ const select = {
 
 const salesSide = (actor: Actor) => actor.role !== "PRESALES" && actor.role !== "PURCHASE";
 
-/** May the actor add files to the deal? Owner and managers always while open; assigned presales/purchase while open. */
+/** May the actor add files to the deal? Anyone working it while it is live; admins always (`domain/workflow`). */
 async function mayUpload(actor: Actor, deal: Awaited<ReturnType<typeof loadDeal>>) {
-  if (!isOpen(deal.stage) && deal.stage !== "HOLD" && actor.role !== "ADMIN" && !(deal.stage === "PROPOSAL_SUBMITTED" || deal.stage === "NEGOTIATION")) return false;
-  if (await canEditDeal(actor, deal)) return true;
-  if (actor.role === "PRESALES") return deal.presalesOwnerId === actor.id || deal.presalesRequests.some((r) => r.assignedToId === actor.id && (OPEN_REQUEST_PRESALES as readonly string[]).includes(r.status));
-  if (actor.role === "PURCHASE") return deal.pricingRequests.some((r) => r.assignedToId === actor.id && (OPEN_REQUEST_PRICING as readonly string[]).includes(r.status));
-  return false;
+  return canUploadDocument(await viewerFor(actor, deal), deal.stage, !!deal.deletedAt);
 }
 
 export async function listDocuments(actor: Actor, dealId: string) {

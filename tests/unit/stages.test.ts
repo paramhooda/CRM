@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { allowedMoves, applyMove, findMove, pathFor, proposalBlockers, type DealFacts } from "@/domain/stages";
+import { allowedMoves, applyMove, findMove, handoverBlockers, pathFor, proposalBlockers, wonBlockers, type DealFacts } from "@/domain/stages";
 
 const facts = (p: Partial<DealFacts> = {}): DealFacts => ({
   stage: "QUALIFIED",
   heldFromStage: null,
   lastOpenStage: null,
   needsPresales: true,
+  deleted: false,
   lineCount: 2,
   unpricedLines: 0,
+  uncostedLines: 0,
+  thirdPartyLines: 2,
+  uncostedThirdPartyLines: 0,
+  presalesDocuments: 1,
+  presalesRequest: null,
+  pricingRequest: null,
   openPresalesRequest: false,
   openPricingRequest: false,
   approvalState: "NONE_NEEDED",
@@ -94,6 +101,35 @@ describe("stage path", () => {
     expect(findMove(facts({ stage: "QUALIFIED" }), manager, "BACK")).toBeUndefined();
     expect(findMove(facts({ stage: "CLOSED_LOST", lastOpenStage: "NEGOTIATION" }), owner, "REOPEN")!.enabled).toBe(false);
     expect(findMove(facts({ stage: "CLOSED_LOST", lastOpenStage: "NEGOTIATION" }), manager, "REOPEN")!.toStage).toBe("NEGOTIATION");
+  });
+
+  it("handing over to presales needs the customer's requirement on file, and reuses an open presales request", () => {
+    expect(handoverBlockers(facts({ presalesDocuments: 0 }))[0]).toMatch(/requirement/);
+    expect(findMove(facts({ presalesDocuments: 0 }), owner, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/Documents/) });
+    expect(findMove(facts({ openPresalesRequest: true, presalesRequest: "REQUESTED" }), owner, "ADVANCE")).toMatchObject({ enabled: true, needsPresalesRequest: false });
+    // a resale deal never needs a document to advance
+    expect(findMove(facts({ needsPresales: false, presalesDocuments: 0 }), owner, "ADVANCE")!.enabled).toBe(true);
+  });
+
+  it("the proposal needs every line costed, so a GM rule can't be skipped by leaving costs empty", () => {
+    expect(findMove(facts({ stage: "BOQ", uncostedLines: 1, uncostedThirdPartyLines: 1 }), owner, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/purchase cost/) });
+    expect(proposalBlockers(facts({ needsPresales: false, uncostedLines: 2, uncostedThirdPartyLines: 2, unpricedLines: 1 }))).toEqual([
+      "Enter the purchase cost on 2 lines (ask purchase for prices) so the margin is known.",
+      "Set a sales price on the remaining line.",
+    ]);
+  });
+
+  it("Won needs final, approved prices as well as the PO: a price change in Negotiation lapses the approval", () => {
+    const ready = facts({ stage: "NEGOTIATION", hasPoDocument: true });
+    expect(findMove(ready, owner, "ADVANCE")!.enabled).toBe(true);
+    expect(findMove({ ...ready, approvalState: "STALE" }, owner, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/approval/) });
+    expect(findMove({ ...ready, unpricedLines: 1 }, owner, "ADVANCE")!.reason).toMatch(/sales price/);
+    expect(findMove({ ...ready, uncostedLines: 1, uncostedThirdPartyLines: 1 }, owner, "ADVANCE")!.reason).toMatch(/purchase cost/);
+    expect(wonBlockers(facts({ stage: "NEGOTIATION", lineCount: 0 }))).toContain("Add at least one line.");
+  });
+
+  it("a deleted deal has no moves at all", () => {
+    expect(allowedMoves(facts({ deleted: true }), manager)).toEqual([]);
   });
 
   it("someone who can't edit the deal gets no enabled moves", () => {

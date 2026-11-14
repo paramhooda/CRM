@@ -92,3 +92,12 @@ export function expectError(r: ApiResponse, status: number, code?: string) {
 export const uniq = (prefix: string) => `${prefix} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 /** A yyyy-mm-dd some days from now, on the business day in India (the app counts "today" in IST). */
 export const isoDate = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000 + 330 * 60_000).toISOString().slice(0, 10);
+
+/** Attaches a small file of the named kind to a deal, as that client. */
+export async function uploadDoc(c: Client, dealId: string, kindName: string, fileName = "file.pdf", content = "%PDF-1.4 test", mime = "application/pdf") {
+  const kinds = expectOk(await c.get<{ documentKinds: { id: string; name: string }[] }>("/lookups")).documentKinds;
+  const form = new FormData();
+  form.set("documentKindId", kinds.find((k) => k.name === kindName)!.id);
+  form.set("file", new File([content], fileName, { type: mime }));
+  return c.post<{ id: string; kind: { name: string } }>(`/deals/${dealId}/documents`, undefined, { raw: form });
+}

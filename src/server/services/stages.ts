@@ -67,7 +67,9 @@ export async function moveStage(actor: Actor, dealId: string, input: StageMoveIn
     if (!input.presalesDueDate) throw new ValidationError("Set a due date for the BOQ.", { presalesDueDate: "Required." });
     const due = toDate(input.presalesDueDate);
     if (due < todayDate()) throw new ValidationError("The due date can't be in the past.", { presalesDueDate: "Can't be in the past." });
-    presales = { assigneeId, assigneeName: u.fullName, dueDate: due, scope: input.presalesScope ?? deal.description ?? `BOQ for ${deal.name}` };
+    const scope = input.presalesScope?.trim() ?? "";
+    if (scope.length < 3) throw new ValidationError("Say what presales should size and specify.", { presalesScope: "Required." });
+    presales = { assigneeId, assigneeName: u.fullName, dueDate: due, scope };
   }
 
   const applied = applyMove(facts, move);

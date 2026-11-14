@@ -7,7 +7,9 @@ import { recordEvent } from "../audit";
 import { canEditDeal, dealWhere, isManager } from "../authz/scope";
 import { toDate } from "@/contracts/common";
 import type { RequestActionInput } from "@/contracts/stages";
-import { loadDeal, todayDate } from "./deals";
+import { activeRules, approvalStateFor, dealFacts, loadDeal, todayDate, viewerFor } from "./deals";
+import { requestBlockers } from "@/domain/workflow";
+import { isOpen } from "@/domain/stages";
 
 const include = {
   assignedTo: { select: { id: true, fullName: true } },
@@ -47,12 +49,16 @@ function checkDue(iso: string) {
 
 export async function createRequest(actor: Actor, kind: Kind, dealId: string, input: { assignedToId: string; dueDate: string; scope?: string; notes?: string | null }, requestId: string) {
   const deal = await loadDeal(actor, dealId);
-  const assignedPresales = actor.role === "PRESALES" && deal.presalesRequests.some((r) => r.assignedToId === actor.id && (OPEN as readonly string[]).includes(r.status));
-  const mayRaise = (await canEditDeal(actor, deal)) || (kind === "pricing" && assignedPresales);
-  if (!mayRaise) throw new Forbidden(kind === "presales" ? "Only the deal owner or a manager can ask presales." : "Only the deal owner, their manager or the assigned presales engineer can ask purchase.");
-  if (deal.stage !== "QUALIFIED" && deal.stage !== "BOQ") throw new Conflict(`A ${kind} request can be raised while the deal is in Qualified or BOQ, not ${deal.stage.toLowerCase().replace("_", " ")}.`, "WRONG_STAGE");
-  const open = (kind === "presales" ? deal.presalesRequests : deal.pricingRequests).find((r) => (OPEN as readonly string[]).includes(r.status));
-  if (open) throw new Conflict(`There is already an open ${kind} request on this deal.`, "ALREADY_OPEN");
+  const viewer = await viewerFor(actor, deal);
+  const rules = await activeRules();
+  const facts = dealFacts(deal, approvalStateFor(deal, rules));
+  const blockers = requestBlockers(kind, facts, viewer);
+  if (blockers.length) {
+    const why = blockers[0]!;
+    if (/^Only /.test(why)) throw new Forbidden(why);
+    const code = /already an open/.test(why) ? "ALREADY_OPEN" : /Add the lines/.test(why) ? "NO_LINES" : /own IP/.test(why) ? "NO_THIRD_PARTY_LINES" : /requirement/.test(why) ? "NO_DOCUMENT" : /working on the BOQ/.test(why) ? "BOQ_IN_PROGRESS" : "WRONG_STAGE";
+    throw new Conflict(why, code);
+  }
   await assigneeOfRole(input.assignedToId, kind === "presales" ? "PRESALES" : "PURCHASE", "assignedToId");
   const dueDate = checkDue(input.dueDate);
   const row = await db.$transaction(async (tx) => {
@@ -77,6 +83,9 @@ export async function actOnRequest(actor: Actor, kind: Kind, id: string, input: 
   const now = new Date();
   const data: Record<string, unknown> = {};
   let note = "";
+  const working = input.action === "START" || input.action === "SUBMIT" || input.action === "COMPLETE";
+  if (working && deal.stage === "HOLD") throw new Conflict("The deal is on hold; sales resumes it before work continues.", "ON_HOLD");
+  if (working && !isOpen(deal.stage)) throw new Conflict("This deal is closed.", "CLOSED");
 
   switch (input.action) {
     case "START":

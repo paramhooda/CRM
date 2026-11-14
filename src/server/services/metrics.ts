@@ -209,11 +209,19 @@ export async function myWork(actor: Actor, forUserId?: string) {
   if (!user) return { user: null, open: [], done: [] };
   const today = todayDate();
   const kind = user.role === "PURCHASE" ? "pricing" : "presales";
-  const include = { deal: { select: { id: true, code: true, name: true, stage: true, account: { select: { name: true } }, owner: { select: { fullName: true } }, _count: { select: { lines: true } } } }, requestedBy: { select: { fullName: true } } } as const;
+  const include = { deal: { select: { id: true, code: true, name: true, stage: true, account: { select: { name: true } }, owner: { select: { fullName: true } }, _count: { select: { lines: true } }, lines: { select: { unitPurchaseCost: true, oem: { select: { isOwnIp: true } } } } } }, requestedBy: { select: { fullName: true } } } as const;
+  /** One line of plain guidance per request, so the queue says what is left to do. */
+  const todo = (r: { status: string; deal: { stage: string; lines: { unitPurchaseCost: unknown; oem: { isOwnIp: boolean } }[] } }) => {
+    if (r.deal.stage === "HOLD") return "Deal on hold";
+    if (r.status === "REQUESTED") return "Not started";
+    if (kind === "presales") return r.deal.lines.length === 0 ? "No lines yet: build the BOQ" : "Refine the lines, then submit the BOQ";
+    const n = r.deal.lines.filter((l) => !l.oem.isOwnIp && l.unitPurchaseCost === null).length;
+    return n === 0 ? "All lines costed: complete pricing" : `${n} line${n === 1 ? "" : "s"} to cost`;
+  };
   const rows = kind === "pricing"
     ? await db.pricingRequest.findMany({ where: { assignedToId: userId, deal: { deletedAt: null } }, include, orderBy: [{ dueDate: "asc" }], take: 200 })
     : await db.presalesRequest.findMany({ where: { assignedToId: userId, deal: { deletedAt: null } }, include, orderBy: [{ dueDate: "asc" }], take: 200 });
-  const out = rows.map((r) => ({ ...r, kind, overdue: (r.status === "REQUESTED" || r.status === "IN_PROGRESS") && r.dueDate < today, dueToday: r.dueDate.getTime() === today.getTime(), stageLabel: STAGE_META[r.deal.stage].label, dealOpen: isOpen(r.deal.stage) }));
+  const out = rows.map((r) => ({ ...r, kind, todo: todo(r), overdue: (r.status === "REQUESTED" || r.status === "IN_PROGRESS") && r.dueDate < today, dueToday: r.dueDate.getTime() === today.getTime(), stageLabel: STAGE_META[r.deal.stage].label, dealOpen: isOpen(r.deal.stage) }));
   const open = out.filter((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS").sort((a, b) => Number(b.overdue) - Number(a.overdue) || a.dueDate.getTime() - b.dueDate.getTime());
   const done = out.filter((r) => !(r.status === "REQUESTED" || r.status === "IN_PROGRESS")).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()).slice(0, 25);
   return { user, kind, open, done, counts: { open: open.length, overdue: open.filter((r) => r.overdue).length, notStarted: open.filter((r) => r.status === "REQUESTED").length } };

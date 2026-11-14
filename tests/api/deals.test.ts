@@ -7,6 +7,7 @@ type Line = { id: string; lineNo: number; description: string; quantity: string;
 type Deal = {
   id: string; code: string; name: string; stage: string; version: number; dealValue: string; annualRecurringValue: string; expectedGmPct: string | null; totalCost: string | null; needsPresales: boolean;
   primaryBusinessUnit: { name: string } | null; primaryOem: { name: string } | null; lines: Line[]; moves: { action: string; enabled: boolean; reason?: string; toStage: string }[]; canEdit: boolean; owner: { id: string }; forecastCategory?: string;
+  next: { headline: string; steps: { action?: string; done: boolean }[] };
 };
 
 let L: Lookups;
@@ -56,7 +57,9 @@ describe("deals", () => {
     expect(d.lines[0]!.expectedGmPct).toBe("20");
     expect(d.lines[0]!.editable).toEqual(["spec", "price", "delete"]);
     const adv = d.moves.find((m) => m.action === "ADVANCE")!;
-    expect(adv).toMatchObject({ toStage: "BOQ", enabled: true });
+    expect(adv).toMatchObject({ toStage: "BOQ", enabled: false, reason: expect.stringMatching(/requirement/) }); // the hand-over needs the customer's document
+    expect(d.next.headline).toMatch(/^Your next step: attach the customer's requirement/);
+    expect(d.next.steps.map((s) => [s.action, s.done])).toEqual([["SET_CONTACT", true], ["ATTACH_DOCUMENT", false], ["ADVANCE", false]]);
   });
 
   it("validation: name, contact at the account, Sub BU inside the BU, ARR term", async () => {
