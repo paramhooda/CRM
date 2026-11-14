@@ -37,7 +37,8 @@ describe("permissions", () => {
     expect(can("ADMIN", "users.manage")).toBe(true);
     expect(can("SALES_HEAD", "users.manage")).toBe(false);
     expect(can("SALES_HEAD", "deals.back")).toBe(true);
-    expect(can("SALES", "deals.back")).toBe(false);
+    expect(can("SALES", "deals.back")).toBe(true); // the owner has every move on their own deal; scope keeps it to their own
+    expect(can("PRESALES", "deals.back")).toBe(false);
     expect(can("PRESALES", "requests.presales.work")).toBe(true);
     expect(can("PURCHASE", "requests.presales.work")).toBe(false);
     expect(can("PRESALES", "home.view")).toBe(false);

@@ -19,12 +19,12 @@ import { cn } from "@/lib/utils";
 type Item = { href: string; label: string; icon: LucideIcon; badge?: number };
 
 /** One line per module. Creating things happens on each module's own page ("New deal" on Deals, and so on). */
-function navFor(role: string, pendingApprovals: number): { main: Item[]; admin: Item[] } {
+function navFor(role: string, pendingApprovals: number, needsYou: number): { main: Item[]; admin: Item[] } {
   if (role === "PRESALES" || role === "PURCHASE") {
-    return { main: [{ href: "/my-work", label: "My work", icon: ListChecks }, { href: "/deals", label: "Deals", icon: Briefcase }, { href: "/accounts", label: "Accounts", icon: Building2 }], admin: [] };
+    return { main: [{ href: "/my-work", label: "My work", icon: ListChecks, badge: needsYou }, { href: "/deals", label: "Deals", icon: Briefcase }, { href: "/accounts", label: "Accounts", icon: Building2 }], admin: [] };
   }
   const main: Item[] = [
-    { href: "/home", label: "Home", icon: Home },
+    { href: "/home", label: "Home", icon: Home, badge: needsYou },
     { href: "/deals", label: "Deals", icon: Briefcase },
     { href: "/accounts", label: "Accounts", icon: Building2 },
     { href: "/contacts", label: "Contacts", icon: Contact },
@@ -127,12 +127,12 @@ function MinimiseButton() {
   );
 }
 
-export function AppShell({ children, sidebarOpen, pendingApprovals = 0 }: { children: ReactNode; sidebarOpen: boolean; pendingApprovals?: number }) {
+export function AppShell({ children, sidebarOpen, pendingApprovals = 0, needsYou = 0 }: { children: ReactNode; sidebarOpen: boolean; pendingApprovals?: number; needsYou?: number }) {
   const actor = useActor();
   const pathname = usePathname();
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
-  const nav = useMemo(() => navFor(actor.role, pendingApprovals), [actor.role, pendingApprovals]);
+  const nav = useMemo(() => navFor(actor.role, pendingApprovals, needsYou), [actor.role, pendingApprovals, needsYou]);
   const support = actor.role === "PRESALES" || actor.role === "PURCHASE";
   const home = support ? "/my-work" : "/home";
 

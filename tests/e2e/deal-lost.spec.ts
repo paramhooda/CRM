@@ -35,7 +35,7 @@ test("a deal goes on hold, resumes, and closes as lost with a reason", async ({ 
   await expect(page.locator("section[aria-label='Changes']").getByText("Loss reason").first()).toBeVisible();
 });
 
-test("a deal is dropped with a reason and only a manager can reopen it", async ({ browser }) => {
+test("a deal is dropped with a reason; the owner reopens it, another rep never sees it", async ({ browser }) => {
   const rep = await signedIn(browser, "rep");
   const deal = await createDeal(rep.page);
   await go(rep.page, `/deals/${deal.id}`);
@@ -44,18 +44,15 @@ test("a deal is dropped with a reason and only a manager can reopen it", async (
   await pickSelect(rep.page, "Reason", /Customer dropped|No decision/);
   await rep.page.getByRole("dialog").getByRole("button", { name: "Drop" }).click();
   await expect(rep.page.getByText("Dropped", { exact: true }).first()).toBeVisible();
-  await rep.page.getByRole("button", { name: "More", exact: true }).click();
-  await expect(rep.page.getByRole("menuitem", { name: /Reopen/ })).toHaveAttribute("aria-disabled", "true");
-  await expect(rep.page.getByText("Only a manager can reopen a closed deal.")).toBeVisible();
-  await rep.page.keyboard.press("Escape");
-  await rep.context.close();
+  const other = await signedIn(browser, "rep2");
+  await go(other.page, `/deals/${deal.id}`);
+  await expect(other.page.getByText("Nothing here")).toBeVisible();
+  await other.context.close();
 
-  const head = await signedIn(browser, "salesHead");
-  await go(head.page, `/deals/${deal.id}`);
-  await head.page.getByRole("button", { name: "More", exact: true }).click();
-  await head.page.getByRole("menuitem", { name: /Reopen in Qualified/ }).click();
-  await head.page.fill("#mv-reason", "Customer came back with budget");
-  await head.page.getByRole("dialog").getByRole("button", { name: /Reopen in Qualified/ }).click();
-  await expect(head.page.getByText("Qualified", { exact: true }).first()).toBeVisible();
-  await head.context.close();
+  await rep.page.getByRole("button", { name: "More", exact: true }).click();
+  await rep.page.getByRole("menuitem", { name: /Reopen in Qualified/ }).click();
+  await rep.page.fill("#mv-reason", "Customer came back with budget");
+  await rep.page.getByRole("dialog").getByRole("button", { name: /Reopen in Qualified/ }).click();
+  await expect(rep.page.getByText("Qualified", { exact: true }).first()).toBeVisible();
+  await rep.context.close();
 });

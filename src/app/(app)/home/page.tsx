@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { BadgeCheck, CalendarClock, CalendarDays, CheckSquare, Footprints, Hourglass, Inbox, Percent, Target, Trophy, TriangleAlert } from "lucide-react";
 import { requireActor } from "@/server/auth/actor";
-import { homeMetrics, type HomeWindow } from "@/server/services/metrics";
+import { homeMetrics, myActions, type HomeWindow } from "@/server/services/metrics";
 import { salesPeopleFor } from "@/server/services/people";
 import { getSetting } from "@/server/services/settings";
 import { dealListQuery } from "@/contracts/deals";
@@ -49,7 +49,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const win = windowSchema.safeParse(q.days);
   const window: HomeWindow = win.success ? win.data : "30";
   const tab = q.tab === "attention" || q.tab === "pipeline" ? q.tab : "overview";
-  const [m, owners, alerts] = await Promise.all([homeMetrics(actor, filters, window), salesPeopleFor(actor), getSetting("alerts")]);
+  const [m, owners, alerts, actions] = await Promise.all([homeMetrics(actor, filters, window), salesPeopleFor(actor), getSetting("alerts"), myActions(actor)]);
   const now = new Date();
   const dealsHref = (patch: Record<string, string | null>) => `/deals${queryString(q, { open: "true", days: null, tab: null, ...patch })}`;
   const here = (patch: Record<string, string | null>) => `/home${queryString(q, patch)}`;
@@ -90,6 +90,34 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         ]}
       />
       <p className="mb-6 text-sm text-muted-foreground">Showing <span className="font-medium text-foreground">{filters.owner ? owners.find((o) => o.id === filters.owner)?.fullName ?? "one person" : manager ? "whole team" : "your deals"} · {WINDOW_LABEL[window]} ({windowNote})</span></p>
+
+      {(showOverview || showAttention) && (
+        <section className="mb-8" aria-label="Needs you">
+          <SectionLabel note={actions.count ? `${actions.count} deal${actions.count === 1 ? "" : "s"} waiting on you${manager && actions.team ? ` · ${actions.team} waiting on your team` : ""}` : manager && actions.team ? `Nothing on you · ${actions.team} waiting on your team` : "Nothing waiting on you"}>Needs you</SectionLabel>
+          {actions.rows.length === 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-card">
+              <span>Every deal of yours is with someone else or up to date.</span>
+              {manager && actions.team > 0 && <ArrowLink href={dealsHref({})}>See the team&apos;s deals</ArrowLink>}
+            </div>
+          ) : (
+            <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-card" data-slot="needs-you">
+              {actions.rows.map((a) => (
+                <div key={a.id} className={cn("flex flex-wrap items-center gap-3 px-5 py-3", a.overdue && "bg-destructive/5")}>
+                  <div className="min-w-0 flex-1">
+                    <Link href={`/deals/${a.id}`} className="font-medium hover:text-link">{a.name}</Link>
+                    <div className="text-xs text-muted-foreground"><RecordCode>{a.code}</RecordCode> · {a.account}{manager && a.owner !== actor.fullName ? ` · ${a.owner}` : ""}</div>
+                    <div className="mt-0.5 text-sm" data-slot="needs-you-step">{a.step}</div>
+                  </div>
+                  <StagePill stage={a.stage} dot />
+                  {a.due && <span className={cn("w-32 text-right text-xs", a.overdue ? "font-medium text-destructive" : "text-muted-foreground")}>{a.overdue ? "Was due" : "Due"} {fmtDate(a.due)}</span>}
+                  <Link href={`/deals/${a.id}`} className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary-hover">Open</Link>
+                </div>
+              ))}
+              {actions.count > actions.rows.length && <div className="px-5 py-2 text-xs text-muted-foreground">And {actions.count - actions.rows.length} more.</div>}
+            </div>
+          )}
+        </section>
+      )}
 
       {(showOverview || showPipeline) && (
         <>

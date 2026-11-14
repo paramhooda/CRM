@@ -64,6 +64,7 @@ export type DealFacts = {
   hasPoDocument: boolean;
 };
 
+/** The deal owner has every move on their own deal; managers the same for their team. `isManager` is kept for callers. */
 export type MoveActor = { canEdit: boolean; isManager: boolean };
 
 export type Move = {
@@ -162,7 +163,7 @@ export function allowedMoves(f: DealFacts, actor: MoveActor): Move[] {
     moves.push(disabled({ action: "HOLD", toStage: "HOLD", label: "Put on hold", primary: false, enabled: true, needsReason: true }, noEdit));
     if (idx > 0) {
       const prev = path[idx - 1]!;
-      moves.push(disabled({ action: "BACK", toStage: prev, label: `Move back to ${STAGE_META[prev].label}`, primary: false, enabled: true, needsReason: true }, actor.isManager ? noEdit : ["Only a manager can move a deal back."]));
+      moves.push(disabled({ action: "BACK", toStage: prev, label: `Move back to ${STAGE_META[prev].label}`, primary: false, enabled: true, needsReason: true }, noEdit));
     }
   }
   if (f.stage === "HOLD") {
@@ -175,7 +176,7 @@ export function allowedMoves(f: DealFacts, actor: MoveActor): Move[] {
   }
   if (isClosed(f.stage)) {
     const back = f.lastOpenStage && isOpen(f.lastOpenStage) ? f.lastOpenStage : "QUALIFIED";
-    moves.push(disabled({ action: "REOPEN", toStage: back, label: `Reopen in ${STAGE_META[back].label}`, primary: false, enabled: true, needsReason: true }, actor.isManager ? noEdit : ["Only a manager can reopen a closed deal."]));
+    moves.push(disabled({ action: "REOPEN", toStage: back, label: `Reopen in ${STAGE_META[back].label}`, primary: false, enabled: true, needsReason: true }, noEdit));
   }
   return moves;
 }

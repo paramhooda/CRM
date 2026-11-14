@@ -3,7 +3,8 @@ import type { Prisma } from "@/generated/prisma/client";
 import { db } from "../db";
 import type { Actor } from "../auth/actor";
 import { accountWhere, assertPermission, dealWhere, leadWhere, visibleOwnerIds } from "../authz/scope";
-import { dealListWhere, todayDate } from "./deals";
+import { activeRules, approvalStateFor, dealDetailInclude, dealFacts, dealListWhere, peopleFor, rulesMatchFor, todayDate, viewerFor } from "./deals";
+import { nextActions } from "@/domain/workflow";
 import type { DealListQuery } from "@/contracts/deals";
 import { fiscalQuarterOf, fiscalYearOf, fiscalYearRange, quarterRange, fyLabel } from "@/domain/fiscal";
 import { OPEN_STAGES, STAGE_META, isOpen, type Stage } from "@/domain/stages";
@@ -225,4 +226,35 @@ export async function myWork(actor: Actor, forUserId?: string) {
   const open = out.filter((r) => r.status === "REQUESTED" || r.status === "IN_PROGRESS").sort((a, b) => Number(b.overdue) - Number(a.overdue) || a.dueDate.getTime() - b.dueDate.getTime());
   const done = out.filter((r) => !(r.status === "REQUESTED" || r.status === "IN_PROGRESS")).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()).slice(0, 25);
   return { user, kind, open, done, counts: { open: open.length, overdue: open.filter((r) => r.overdue).length, notStarted: open.filter((r) => r.status === "REQUESTED").length } };
+}
+
+export type MyAction = { id: string; code: string; name: string; account: string; stage: Stage; owner: string; step: string; action: string | null; headline: string; due: string | null; overdue: boolean };
+
+/**
+ * What needs the signed-in person right now: every live deal in their scope whose current step is theirs
+ * (their own deals, the requests assigned to them, the approvals waiting on them), overdue first. For a manager,
+ * steps that belong to a team member count separately as "waiting on your team".
+ */
+export async function myActions(actor: Actor): Promise<{ rows: MyAction[]; count: number; team: number }> {
+  const deals = await db.deal.findMany({ where: { AND: [await dealWhere(actor), { stage: { in: openStages } }] }, include: dealDetailInclude, orderBy: { updatedAt: "desc" }, take: 400 });
+  const rules = await activeRules();
+  const today = todayDate();
+  const rows: MyAction[] = [];
+  let team = 0;
+  for (const deal of deals) {
+    const matched = rulesMatchFor(deal, rules);
+    const facts = dealFacts(deal, approvalStateFor(deal, rules), matched.map((m) => m.rule.name));
+    const viewer = await viewerFor(actor, deal);
+    const people = peopleFor(deal);
+    const next = nextActions(facts, viewer, people);
+    const cur = next.steps.find((s) => s.current);
+    if (!cur) continue;
+    const someoneElsesDeal = cur.owner === "SALES" && deal.ownerId !== actor.id;
+    if (someoneElsesDeal && cur.mine) team++;
+    if (!cur.mine || someoneElsesDeal) continue;
+    const due = cur.owner === "PRESALES" ? people.presalesDue : cur.owner === "PURCHASE" ? people.pricingDue : cur.owner === "SALES" ? (deal.nextStepDate ?? deal.expectedCloseDate).toISOString().slice(0, 10) : null;
+    rows.push({ id: deal.id, code: deal.code, name: deal.name, account: deal.account.name, stage: deal.stage, owner: deal.owner.fullName, step: cur.label, action: cur.action ?? null, headline: next.headline, due, overdue: !!due && new Date(due) < today });
+  }
+  rows.sort((a, b) => Number(b.overdue) - Number(a.overdue) || (a.due ?? "9999").localeCompare(b.due ?? "9999"));
+  return { rows: rows.slice(0, 50), count: rows.length, team };
 }

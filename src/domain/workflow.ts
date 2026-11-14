@@ -52,7 +52,7 @@ export function canUploadDocument(v: Viewer, stage: Stage, deleted: boolean): bo
 
 export type StepAction =
   | "SET_CONTACT" | "FIX_CLOSE_DATE" | "ATTACH_DOCUMENT" | "ADD_LINES" | "ADVANCE" | "ASK_PRESALES" | "ASK_PRICING"
-  | "START_REQUEST" | "SUBMIT_BOQ" | "ENTER_COSTS" | "COMPLETE_PRICING" | "SET_PRICES" | "ASK_APPROVAL" | "DECIDE_APPROVAL"
+  | "SUBMIT_BOQ" | "ENTER_COSTS" | "COMPLETE_PRICING" | "SET_PRICES" | "ASK_APPROVAL" | "DECIDE_APPROVAL"
   | "ATTACH_PO" | "CLOSE_WON" | "RESUME" | "REOPEN";
 
 export type Step = {
@@ -97,10 +97,8 @@ function priceSteps(f: DealFacts): Draft[] {
   const out: Draft[] = [];
   if (f.thirdPartyLines > 0) {
     const n = f.uncostedThirdPartyLines;
-    if (f.openPricingRequest) {
-      if (f.pricingRequest === "REQUESTED") out.push({ key: "start-pricing", label: "Start pricing", owner: "PURCHASE", action: "START_REQUEST", hint: "Purchase has been asked for prices." });
-      out.push({ key: "costs", label: n > 0 ? `Enter the purchase cost on ${plural(n, "the remaining line", "N lines")} and complete pricing` : "Complete pricing", owner: "PURCHASE", action: n > 0 ? "ENTER_COSTS" : "COMPLETE_PRICING" });
-    } else out.push({ key: "ask-pricing", label: "Ask purchase for prices", owner: "SALES", action: "ASK_PRICING", done: n === 0, hint: "Purchase enters the purchase cost on every third-party line." });
+    if (f.openPricingRequest) out.push({ key: "costs", label: n > 0 ? `Enter the purchase cost on ${plural(n, "the remaining line", "N lines")} and complete pricing` : "Complete pricing", owner: "PURCHASE", action: n > 0 ? "ENTER_COSTS" : "COMPLETE_PRICING", hint: f.pricingRequest === "REQUESTED" ? "Purchase has been asked for prices and has not opened the deal yet." : undefined });
+    else out.push({ key: "ask-pricing", label: "Ask purchase for prices", owner: "SALES", action: "ASK_PRICING", done: n === 0, hint: "Purchase enters the purchase cost on every third-party line." });
   }
   const ownIpUncosted = f.uncostedLines - f.uncostedThirdPartyLines;
   if (ownIpUncosted > 0) out.push({ key: "own-ip-costs", label: `Enter the cost on ${plural(ownIpUncosted, "the own-IP line", "N own-IP lines")}`, owner: "PRESALES", action: "ENTER_COSTS", hint: "Own-IP lines take the product's standard cost; presales or an admin sets it." });
@@ -138,9 +136,8 @@ function stageSteps(f: DealFacts): { steps: Draft[]; done?: string; detail?: str
     case "BOQ": {
       const steps: Draft[] = [];
       if (f.openPresalesRequest) {
-        if (f.presalesRequest === "REQUESTED") steps.push({ key: "start-boq", label: "Start the BOQ", owner: "PRESALES", action: "START_REQUEST" });
-        steps.push({ key: "lines", label: f.lineCount === 0 ? "Build the BOQ: add the lines" : "Refine the BOQ lines", owner: "PRESALES", action: "ADD_LINES", done: f.lineCount > 0, hint: "Products, quantities, terms; costs on own-IP lines. Ask purchase for prices if you want them before you submit." });
-        steps.push({ key: "submit-boq", label: "Submit the BOQ", owner: "PRESALES", action: "SUBMIT_BOQ", hint: f.lineCount === 0 ? "Needs at least one line." : "Hands the deal back to sales with a short summary." });
+        steps.push({ key: "lines", label: f.lineCount === 0 ? "Build the BOQ: add the lines" : "Refine the BOQ lines", owner: "PRESALES", action: "ADD_LINES", done: f.lineCount > 0, hint: f.presalesRequest === "REQUESTED" ? "Presales has been asked and has not opened the deal yet." : "Products, quantities, terms; costs on own-IP lines." });
+        steps.push({ key: "submit-boq", label: "Submit the BOQ", owner: "PRESALES", action: "SUBMIT_BOQ", hint: f.lineCount === 0 ? "Needs at least one line." : f.uncostedThirdPartyLines > 0 ? "Hands the deal to purchase for prices, with a short summary for sales." : "Hands the deal back to sales with a short summary." });
       } else if (f.presalesRequest === "SUBMITTED") steps.push({ key: "boq", label: "BOQ submitted by presales", owner: "PRESALES", done: true });
       else steps.push({ key: "ask-presales", label: "Ask presales for the BOQ (or Skip BOQ if none is needed)", owner: "SALES", action: "ASK_PRESALES" });
       if (f.lineCount > 0 || !f.openPresalesRequest) steps.push(...priceSteps(f));

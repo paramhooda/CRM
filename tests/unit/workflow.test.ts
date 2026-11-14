@@ -71,8 +71,8 @@ describe("what's next", () => {
     expect(current(f, rep)).toMatchObject({ action: "ADD_LINES" });
     expect(current({ ...f, lineCount: 2, thirdPartyLines: 2, uncostedLines: 2, uncostedThirdPartyLines: 2, unpricedLines: 2 }, rep)).toMatchObject({ action: "ASK_PRICING" });
     const asked = { ...f, lineCount: 2, thirdPartyLines: 2, uncostedLines: 2, uncostedThirdPartyLines: 2, unpricedLines: 2, openPricingRequest: true, pricingRequest: "REQUESTED" as const };
-    expect(nextActions(asked, rep, people)).toMatchObject({ headline: "Waiting on purchase (Meera Iyer): start pricing", waitingOn: { party: "PURCHASE", due: "2026-11-25" } });
-    expect(nextActions(asked, purchase, people).headline).toBe("Your next step: start pricing");
+    expect(nextActions(asked, rep, people)).toMatchObject({ headline: "Waiting on purchase (Meera Iyer): enter the purchase cost on 2 lines and complete pricing", waitingOn: { party: "PURCHASE", due: "2026-11-25" } });
+    expect(nextActions(asked, purchase, people).detail).toMatch(/not opened the deal yet/);
     expect(current({ ...asked, pricingRequest: "IN_PROGRESS" }, purchase)).toMatchObject({ action: "ENTER_COSTS", label: "Enter the purchase cost on 2 lines and complete pricing" });
     expect(current({ ...asked, pricingRequest: "IN_PROGRESS", uncostedLines: 0, uncostedThirdPartyLines: 0 }, purchase)).toMatchObject({ action: "COMPLETE_PRICING" });
     const costed = { ...f, lineCount: 2, thirdPartyLines: 2, unpricedLines: 2, pricingRequest: "COMPLETED" as const };
@@ -86,9 +86,11 @@ describe("what's next", () => {
 
   it("BOQ: presales starts, builds and submits; sales waits, then prices and advances", () => {
     const open = facts({ stage: "BOQ", presalesDocuments: 1, openPresalesRequest: true, presalesRequest: "REQUESTED" });
-    expect(nextActions(open, rep, people)).toMatchObject({ headline: "Waiting on presales (Rakesh Yadav): start the BOQ", waitingOn: { due: "2026-11-21" } });
-    expect(nextActions(open, presales, people).headline).toBe("Your next step: start the BOQ");
+    expect(nextActions(open, rep, people)).toMatchObject({ headline: "Waiting on presales (Rakesh Yadav): build the BOQ: add the lines", waitingOn: { due: "2026-11-21" } });
+    expect(nextActions(open, presales, people).headline).toBe("Your next step: build the BOQ: add the lines");
     expect(current({ ...open, presalesRequest: "IN_PROGRESS" }, presales)).toMatchObject({ action: "ADD_LINES", label: "Build the BOQ: add the lines" });
+    // submitting with uncosted third-party lines hands the deal to purchase
+    expect(current({ ...open, presalesRequest: "IN_PROGRESS", lineCount: 2, thirdPartyLines: 2, uncostedLines: 2, uncostedThirdPartyLines: 2, unpricedLines: 2 }, presales)).toMatchObject({ action: "SUBMIT_BOQ", hint: expect.stringMatching(/Hands the deal to purchase/) });
     expect(current({ ...open, presalesRequest: "IN_PROGRESS", lineCount: 3, thirdPartyLines: 2, uncostedLines: 2, uncostedThirdPartyLines: 2, unpricedLines: 3 }, presales)).toMatchObject({ action: "SUBMIT_BOQ" });
     const submitted = facts({ stage: "BOQ", presalesDocuments: 1, presalesRequest: "SUBMITTED", lineCount: 3, thirdPartyLines: 2, uncostedLines: 2, uncostedThirdPartyLines: 2, unpricedLines: 3 });
     expect(nextActions(submitted, rep, people).headline).toBe("Your next step: ask purchase for prices");
@@ -100,6 +102,7 @@ describe("what's next", () => {
     const boq = facts({ stage: "BOQ", presalesDocuments: 1, openPresalesRequest: true, presalesRequest: "IN_PROGRESS", lineCount: 2, thirdPartyLines: 2, uncostedLines: 2, uncostedThirdPartyLines: 2, unpricedLines: 2 });
     const n = nextActions(boq, presales, people);
     expect(n.steps.map((s) => [s.key, s.owner])).toEqual([["lines", "PRESALES"], ["submit-boq", "PRESALES"], ["sales", "SALES"]]);
+    expect(n.steps.find((s) => s.key === "submit-boq")!.hint).toMatch(/purchase/);
     expect(JSON.stringify(n)).not.toMatch(/sales price|margin|\bGM\b|approv/i);
     const pricing = { ...facts({ stage: "BOQ", presalesDocuments: 1, presalesRequest: "SUBMITTED", lineCount: 2, thirdPartyLines: 2, uncostedLines: 1, uncostedThirdPartyLines: 1, unpricedLines: 2, approvalState: "NEEDED" }), openPricingRequest: true, pricingRequest: "IN_PROGRESS" as const };
     const p = nextActions(pricing, purchase, people);

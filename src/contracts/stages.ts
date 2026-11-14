@@ -33,6 +33,10 @@ export const requestActionSchema = z.object({
   completionNotes: optionalText(2000),
   assignedToId: uuid.optional(),
   dueDate: isoDate.optional(),
+  /** SUBMIT only: the buyer who prices the BOQ, when third-party lines still need a cost */
+  pricingAssigneeId: uuid.nullable().optional(),
+  pricingDueDate: isoDate.nullable().optional(),
+  pricingNotes: optionalText(2000),
 });
 export type RequestActionInput = z.infer<typeof requestActionSchema>;
 

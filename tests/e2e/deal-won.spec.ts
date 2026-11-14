@@ -83,7 +83,7 @@ test("sales is told to attach the customer's requirement; Advance to BOQ takes t
   await expect(page.getByText("Moved to BOQ")).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByText("BOQ", { exact: true }).first()).toBeVisible();
-  await expect(headline(page)).toHaveText("Waiting on presales (Rakesh Yadav): start the BOQ");
+  await expect(headline(page)).toHaveText("Waiting on presales (Rakesh Yadav): submit the BOQ");
   await expect(page.getByRole("tab", { name: /Documents 1/ })).toBeVisible();
   // The next step on the path is gated until presales submits, and the lines are presales' now
   await expect(page.getByRole("button", { name: "Advance to Proposal Submitted" })).toBeDisabled();
@@ -92,18 +92,18 @@ test("sales is told to attach the customer's requirement; Advance to BOQ takes t
   await expect(page.getByRole("button", { name: "Add line" })).toHaveCount(0);
 });
 
-test("presales lands on the deal from My work, is told to start, costs the own-IP line and submits the BOQ, never seeing a price", async ({ browser }) => {
+test("presales lands on the deal from My work (opening it starts the request), costs the own-IP line and submits the BOQ to purchase, never seeing a price", async ({ browser }) => {
   const { context, page } = await signedIn(browser, "presales");
   await go(page, "/my-work");
   const row = page.locator("section[aria-label='Open requests']").getByText(dealName).locator("xpath=ancestor::div[contains(@class,'flex-wrap')][1]");
   await expect(row.locator("[data-slot=todo]")).toHaveText("Not started");
   await row.getByRole("link", { name: "Open deal" }).click();
   await expect(page).toHaveURL(dealUrl);
-  await expect(headline(page)).toHaveText("Your next step: start the BOQ");
-  await expect(page.getByText("Expected GM")).toHaveCount(0);
-  await panel(page).getByRole("button", { name: "Start" }).click();
-  await expect(page.getByText("Started")).toBeVisible();
   await expect(headline(page)).toHaveText("Your next step: submit the BOQ");
+  await expect(page.getByText("Expected GM")).toHaveCount(0);
+  // opening the deal started the request: no Start button anywhere
+  await expect(page.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+  await expect(page.getByText("In progress", { exact: true })).toBeVisible();
   // Edit the own-IP line: presales may set its cost
   await page.getByRole("tab", { name: /Lines/ }).click();
   await expect(page.locator("table thead tr").first()).toContainText("Cost");
@@ -114,24 +114,25 @@ test("presales lands on the deal from My work, is told to start, costs the own-I
   await expect(page.getByText("Line saved")).toBeVisible();
   await panel(page).getByRole("button", { name: "Submit BOQ" }).click();
   await page.fill("#reason", "Sized with the customer: 2 servers, 12 months of compute");
-  await page.getByRole("dialog").getByRole("button", { name: "Submit BOQ" }).click();
-  await expect(page.getByText("BOQ submitted", { exact: true })).toBeVisible();
-  await expect(headline(page)).toHaveText(/Waiting on sales \(Rakesh Pawar\): sales to price the deal/);
+  // the Dell server line still needs a cost, so submitting names the buyer and asks purchase in the same step
+  await expect(page.getByRole("dialog").getByText(/third-party line still needs a purchase cost/)).toBeVisible();
+  await pickSelect(page, "Buyer", "Meera Iyer");
+  await page.getByRole("dialog").getByRole("button", { name: "Submit BOQ and ask purchase" }).click();
+  await expect(page.getByText("BOQ submitted and sent to purchase")).toBeVisible();
+  await expect(headline(page)).toHaveText(/Waiting on purchase \(Meera Iyer\)/);
   // Handed over: no more editing for presales
   await page.getByRole("tab", { name: /Lines/ }).click();
   await expect(page.getByRole("button", { name: "Edit line 1" })).toHaveCount(0);
   await context.close();
 });
 
-test("sales is told to ask purchase; purchase is told which lines to cost and can only complete once they are", async ({ browser }) => {
+test("sales sees purchase has the deal; purchase is told which lines to cost and can only complete once they are", async ({ browser }) => {
   const rep = await signedIn(browser, "rep");
+  await go(rep.page, "/home");
+  // nothing on the rep: the deal is with purchase
+  await expect(rep.page.locator("[data-slot=needs-you]").getByText(dealName)).toHaveCount(0);
   await go(rep.page, dealUrl);
-  await expect(headline(rep.page)).toHaveText("Your next step: ask purchase for prices");
-  await panel(rep.page).getByRole("button", { name: "Ask for prices" }).click();
-  await pickSelect(rep.page, "Buyer", "Meera Iyer");
-  await rep.page.getByRole("button", { name: "Raise request" }).click();
-  await expect(rep.page.getByText("Pricing request raised")).toBeVisible();
-  await expect(headline(rep.page)).toHaveText("Waiting on purchase (Meera Iyer): start pricing");
+  await expect(headline(rep.page)).toHaveText("Waiting on purchase (Meera Iyer): enter the purchase cost on the remaining line and complete pricing");
   // While purchase prices, sales can still price but not change what is sold
   await rep.page.getByRole("tab", { name: /Lines/ }).click();
   await expect(rep.page.getByRole("button", { name: "Add line" })).toHaveCount(0);
@@ -144,10 +145,8 @@ test("sales is told to ask purchase; purchase is told which lines to cost and ca
   const buyer = await signedIn(browser, "purchase");
   await go(buyer.page, "/my-work");
   await buyer.page.locator("section[aria-label='Open requests']").getByText(dealName).locator("xpath=ancestor::div[contains(@class,'flex-wrap')][1]").getByRole("link", { name: "Open deal" }).click();
-  await expect(headline(buyer.page)).toHaveText("Your next step: start pricing");
-  await panel(buyer.page).getByRole("button", { name: "Start" }).click();
-  await expect(buyer.page.getByText("Started")).toBeVisible();
   await expect(headline(buyer.page)).toHaveText("Your next step: enter the purchase cost on the remaining line and complete pricing");
+  await expect(buyer.page.getByText("In progress", { exact: true })).toBeVisible(); // opening it started the request
   // Complete is held back, with the reason, until the third-party line is costed
   await expect(buyer.page.getByRole("button", { name: "Complete pricing" }).first()).toBeDisabled();
   await expect(buyer.page.getByText("Enter the purchase cost on the remaining line first.").first()).toBeVisible();

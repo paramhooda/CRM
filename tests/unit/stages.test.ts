@@ -95,12 +95,13 @@ describe("stage path", () => {
     expect(lost).toMatchObject({ toStage: "CLOSED_LOST", lastOpenStage: "BOQ", closes: true });
   });
 
-  it("Back and Reopen are for managers only", () => {
-    expect(findMove(facts({ stage: "BOQ" }), owner, "BACK")!.enabled).toBe(false);
-    expect(findMove(facts({ stage: "BOQ" }), manager, "BACK")).toMatchObject({ enabled: true, toStage: "QUALIFIED", needsReason: true });
+  it("the deal owner moves their own deal back and reopens it, with a reason; a viewer cannot", () => {
+    expect(findMove(facts({ stage: "BOQ" }), owner, "BACK")).toMatchObject({ enabled: true, toStage: "QUALIFIED", needsReason: true });
+    expect(findMove(facts({ stage: "BOQ" }), manager, "BACK")).toMatchObject({ enabled: true, toStage: "QUALIFIED" });
+    expect(findMove(facts({ stage: "BOQ" }), viewer, "BACK")!.enabled).toBe(false);
     expect(findMove(facts({ stage: "QUALIFIED" }), manager, "BACK")).toBeUndefined();
-    expect(findMove(facts({ stage: "CLOSED_LOST", lastOpenStage: "NEGOTIATION" }), owner, "REOPEN")!.enabled).toBe(false);
-    expect(findMove(facts({ stage: "CLOSED_LOST", lastOpenStage: "NEGOTIATION" }), manager, "REOPEN")!.toStage).toBe("NEGOTIATION");
+    expect(findMove(facts({ stage: "CLOSED_LOST", lastOpenStage: "NEGOTIATION" }), owner, "REOPEN")).toMatchObject({ enabled: true, toStage: "NEGOTIATION", needsReason: true });
+    expect(findMove(facts({ stage: "CLOSED_LOST", lastOpenStage: "NEGOTIATION" }), viewer, "REOPEN")!.enabled).toBe(false);
   });
 
   it("handing over to presales needs the customer's requirement on file, and reuses an open presales request", () => {
@@ -124,7 +125,7 @@ describe("stage path", () => {
   it("Won needs final, approved prices as well as the PO: a price change in Negotiation lapses the approval", () => {
     const ready = facts({ stage: "NEGOTIATION", hasPoDocument: true });
     expect(findMove(ready, owner, "ADVANCE")!.enabled).toBe(true);
-    expect(findMove({ ...ready, approvalState: "STALE" }, owner, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/approval/) });
+    expect(findMove({ ...ready, approvalState: "STALE", approvalRules: ["Large deal: ₹1 Cr or more"] }, owner, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/approval first \(Large deal/) });
     expect(findMove({ ...ready, unpricedLines: 1 }, owner, "ADVANCE")!.reason).toMatch(/sales price/);
     expect(findMove({ ...ready, uncostedLines: 1, uncostedThirdPartyLines: 1 }, owner, "ADVANCE")!.reason).toMatch(/purchase cost/);
     expect(wonBlockers(facts({ stage: "NEGOTIATION", lineCount: 0 }))).toContain("Add at least one line.");

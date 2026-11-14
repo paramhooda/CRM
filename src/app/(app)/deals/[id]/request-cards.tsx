@@ -38,14 +38,14 @@ export function RequestCards({ dealId, canEdit, presales, pricing, presalesPeopl
   const [raise, setRaise] = useState<Kind | null>(null);
   return (
     <>
-      <RequestCard kind="presales" title="Presales (BOQ)" rows={presales} people={presalesPeople} ability={ability.presales} onRaise={() => setRaise("presales")} canEdit={canEdit} facts={facts} />
-      <RequestCard kind="pricing" title="Purchase pricing" rows={pricing} people={purchasePeople} ability={ability.pricing} onRaise={() => setRaise("pricing")} canEdit={canEdit} facts={facts} />
+      <RequestCard kind="presales" title="Presales (BOQ)" rows={presales} people={presalesPeople} purchasePeople={purchasePeople} lastBuyerId={pricing[0]?.assignedToId ?? null} ability={ability.presales} onRaise={() => setRaise("presales")} canEdit={canEdit} facts={facts} />
+      <RequestCard kind="pricing" title="Purchase pricing" rows={pricing} people={purchasePeople} purchasePeople={purchasePeople} lastBuyerId={null} ability={ability.pricing} onRaise={() => setRaise("pricing")} canEdit={canEdit} facts={facts} />
       {raise && <RaiseDialog kind={raise} dealId={dealId} people={raise === "presales" ? presalesPeople : purchasePeople} needsDocument={raise === "presales" && facts.presalesDocuments === 0} onClose={() => setRaise(null)} />}
     </>
   );
 }
 
-function RequestCard({ kind, title, rows, people, ability, onRaise, canEdit, facts }: { kind: Kind; title: string; rows: (Presales | Pricing)[]; people: Person[]; ability: Ability; onRaise: () => void; canEdit: boolean; facts: DealFacts }) {
+function RequestCard({ kind, title, rows, people, purchasePeople, lastBuyerId, ability, onRaise, canEdit, facts }: { kind: Kind; title: string; rows: (Presales | Pricing)[]; people: Person[]; purchasePeople: Person[]; lastBuyerId: string | null; ability: Ability; onRaise: () => void; canEdit: boolean; facts: DealFacts }) {
   const actor = useActor();
   const router = useRouter();
   const [dialog, setDialog] = useState<{ type: "finish" | "cancel" | "reassign"; row: Presales | Pricing } | null>(null);
@@ -90,8 +90,7 @@ function RequestCard({ kind, title, rows, people, ability, onRaise, canEdit, fac
                 {result && <div className="text-xs"><span className="text-muted-foreground">{kind === "presales" ? "Summary: " : "Notes: "}</span>{result}</div>}
                 {isOpen && (
                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    {mayWork && r.status === "REQUESTED" && <Button size="xs" onClick={() => act(r.id, { action: "START" }, "Started")}>Start</Button>}
-                    {mayWork && <Button size="xs" variant={r.status === "IN_PROGRESS" ? "default" : "outline"} disabled={!!blocker} title={blocker ?? undefined} onClick={() => setDialog({ type: "finish", row: r })}>{finishLabel}</Button>}
+                    {mayWork && <Button size="xs" disabled={!!blocker} title={blocker ?? undefined} onClick={() => setDialog({ type: "finish", row: r })}>{finishLabel}</Button>}
                     {mayWork && blocker && <span className="text-xs text-muted-foreground">{blocker}</span>}
                     {mayManage && <Button size="xs" variant="outline" onClick={() => setDialog({ type: "reassign", row: r })}>Reassign</Button>}
                     {mayManage && <Button size="xs" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setDialog({ type: "cancel", row: r })}>Cancel</Button>}
@@ -103,47 +102,61 @@ function RequestCard({ kind, title, rows, people, ability, onRaise, canEdit, fac
         </ul>
       )}
       {showReason && shown.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{ability.reason}</p>}
-      {dialog?.type === "finish" && <FinishRequestDialog kind={kind} dealId={dialog.row.dealId} requestId={dialog.row.id} onClose={() => setDialog(null)} />}
+      {dialog?.type === "finish" && <FinishRequestDialog kind={kind} dealId={dialog.row.dealId} requestId={dialog.row.id} facts={facts} purchasePeople={purchasePeople} lastBuyerId={lastBuyerId} onClose={() => setDialog(null)} />}
       {dialog?.type === "cancel" && <ConfirmDialog open onOpenChange={(o) => !o && setDialog(null)} title="Cancel this request?" description="It stays in the history as cancelled." destructive confirmLabel="Cancel request" onConfirm={() => act(dialog.row.id, { action: "CANCEL" }, "Request cancelled")} />}
       {dialog?.type === "reassign" && <ReassignRequestDialog kind={kind} row={dialog.row} people={people} onClose={() => setDialog(null)} onDone={() => router.refresh()} />}
     </section>
   );
 }
 
-/** Submit BOQ (summary) or Complete pricing (notes). The textarea keeps the id `reason` the browser tests know. */
-export function FinishRequestDialog({ kind, dealId, requestId, onClose }: { kind: Kind; dealId: string; requestId: string; onClose: () => void }) {
+/**
+ * Submit BOQ (summary) or Complete pricing (notes). Submitting a BOQ that still has uncosted third-party lines
+ * names the buyer, so purchase has something due the moment presales is done. The textarea keeps the id `reason`.
+ */
+export function FinishRequestDialog({ kind, dealId, requestId, facts, purchasePeople, lastBuyerId, onClose }: { kind: Kind; dealId: string; requestId: string; facts: Pick<DealFacts, "uncostedThirdPartyLines" | "openPricingRequest">; purchasePeople: Person[]; lastBuyerId: string | null; onClose: () => void }) {
   const router = useRouter();
-  const [text, setText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const needsBuyer = kind === "presales" && facts.uncostedThirdPartyLines > 0 && !facts.openPricingRequest;
+  const [defaultDue] = useState(() => isoDay(new Date(Date.now() + 3 * 86_400_000)));
+  const f = useForm({ text: "", pricingAssigneeId: (lastBuyerId && purchasePeople.some((p) => p.id === lastBuyerId) ? lastBuyerId : purchasePeople[0]?.id ?? null) as string | null, pricingDueDate: defaultDue, pricingNotes: "" });
   const finishLabel = kind === "presales" ? "Submit BOQ" : "Complete pricing";
-  const submit = async () => {
-    if (kind === "presales" && text.trim().length < 3) return setError("Add a short summary of the BOQ.");
-    setPending(true);
-    try {
-      await api.patch(`/${kind}-requests/${requestId}`, { action: kind === "presales" ? "SUBMIT" : "COMPLETE", ...(kind === "presales" ? { summary: text } : { completionNotes: text || null }) });
-      toast.success(kind === "presales" ? "BOQ submitted" : "Pricing completed");
+  const submit = () =>
+    f.submit(async (v) => {
+      const errs: Record<string, string> = {};
+      if (kind === "presales" && v.text.trim().length < 3) errs.text = "Add a short summary of the BOQ.";
+      if (needsBuyer && !v.pricingAssigneeId) errs.pricingAssigneeId = "Pick the buyer.";
+      if (needsBuyer && !v.pricingDueDate) errs.pricingDueDate = "Set a due date.";
+      if (Object.keys(errs).length) return f.setErrors(errs);
+      await api.patch(`/${kind}-requests/${requestId}`, {
+        action: kind === "presales" ? "SUBMIT" : "COMPLETE",
+        ...(kind === "presales" ? { summary: v.text } : { completionNotes: v.text || null }),
+        ...(needsBuyer ? { pricingAssigneeId: v.pricingAssigneeId, pricingDueDate: v.pricingDueDate, pricingNotes: v.pricingNotes || null } : {}),
+      });
+      toast.success(kind === "presales" ? (needsBuyer ? "BOQ submitted and sent to purchase" : "BOQ submitted") : "Pricing completed");
       onClose();
       router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
-    } finally {
-      setPending(false);
-    }
-  };
+    });
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{finishLabel}</DialogTitle>
-          <DialogDescription>{kind === "presales" ? "Hands the BOQ back to sales. The lines you refined stay on the deal." : "Confirms a purchase cost is set on every line that needs one."}</DialogDescription>
+          <DialogDescription>{kind === "presales" ? (needsBuyer ? "Hands the BOQ to purchase for prices, with your summary for sales. The lines you refined stay on the deal." : "Hands the BOQ back to sales. The lines you refined stay on the deal.") : "Confirms a purchase cost is set on every line that needs one. Sales takes it from here."}</DialogDescription>
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-          <Field label={kind === "presales" ? "BOQ summary" : "Completion notes"} htmlFor="reason" error={error ?? undefined} required={kind === "presales"}>
-            <Textarea id="reason" rows={4} value={text} onChange={(e) => { setText(e.target.value); setError(null); }} placeholder={kind === "presales" ? "What was specified, assumptions, open points…" : "Quotes received, validity, anything sales should know…"} aria-invalid={!!error} autoFocus />
+          <Field label={kind === "presales" ? "BOQ summary" : "Completion notes"} htmlFor="reason" error={f.errors.text ?? f.errors.summary} required={kind === "presales"}>
+            <Textarea id="reason" rows={4} value={f.values.text} onChange={(e) => f.set("text", e.target.value)} placeholder={kind === "presales" ? "What was specified, assumptions, open points…" : "Quotes received, validity, anything sales should know…"} aria-invalid={!!(f.errors.text ?? f.errors.summary)} autoFocus />
           </Field>
-          {kind === "presales" && <AiDraftButton dealId={dealId} kind="boq_summary" onDraft={setText} />}
-          <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" disabled={pending}>{finishLabel}</Button></DialogFooter>
+          {kind === "presales" && <AiDraftButton dealId={dealId} kind="boq_summary" onDraft={(t) => f.set("text", t)} />}
+          {needsBuyer && (
+            <div className="flex flex-col gap-4 rounded-lg border border-border bg-background p-3">
+              <p className="text-xs text-muted-foreground">{facts.uncostedThirdPartyLines} third-party line{facts.uncostedThirdPartyLines === 1 ? "" : "s"} still need{facts.uncostedThirdPartyLines === 1 ? "s" : ""} a purchase cost. Purchase is asked as you submit.</p>
+              <Field label="Buyer" htmlFor="fin-buyer" error={f.errors.pricingAssigneeId} required><OptionSelect id="fin-buyer" value={f.values.pricingAssigneeId} onChange={(v) => f.set("pricingAssigneeId", v)} options={purchasePeople.map((p) => ({ id: p.id, name: p.fullName }))} invalid={!!f.errors.pricingAssigneeId} /></Field>
+              <Field label="Prices due" htmlFor="fin-due" error={f.errors.pricingDueDate} required><Input id="fin-due" type="date" value={f.values.pricingDueDate} onChange={(e) => f.set("pricingDueDate", e.target.value)} /></Field>
+              <Field label="Note for purchase" htmlFor="fin-notes" error={f.errors.pricingNotes}><Input id="fin-notes" value={f.values.pricingNotes} onChange={(e) => f.set("pricingNotes", e.target.value)} placeholder="Optional" /></Field>
+            </div>
+          )}
+          <FormError message={f.formError && !Object.keys(f.errors).length ? f.formError : null} />
+          <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" disabled={f.pending}>{needsBuyer ? "Submit BOQ and ask purchase" : finishLabel}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

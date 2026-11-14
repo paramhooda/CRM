@@ -59,7 +59,7 @@ describe("stage moves", () => {
     expect(d.stage).toBe("BOQ");
     expect(d.presalesOwnerId).toBe(presalesId);
     expect(d.presalesRequests[0]).toMatchObject({ status: "REQUESTED", assignedToId: presalesId });
-    expect(d.next).toMatchObject({ headline: "Waiting on presales (Rakesh Yadav): start the BOQ", waitingOn: { party: "PRESALES", due: isoDate(7) } });
+    expect(d.next).toMatchObject({ headline: "Waiting on presales (Rakesh Yadav): submit the BOQ", waitingOn: { party: "PRESALES", due: isoDate(7) } });
     expectError(await stage(rep, d, { action: "ADVANCE" }), 409); // BOQ not submitted
     expectError(await rep.post(`/deals/${d.id}/presales-requests`, { assignedToId: presalesId, dueDate: isoDate(5), scope: "again" }), 409, "ALREADY_OPEN");
     // while presales builds the BOQ the lines are theirs: sales can't change them or ask purchase
@@ -74,7 +74,7 @@ describe("stage moves", () => {
     expect(req.deal?.code).toBeDefined();
     const pv = expectOk(await presales.get<Deal>(`/deals/${d.id}`));
     expect(pv).not.toHaveProperty("expectedGmPct");
-    expect(pv.next.headline).toBe("Your next step: start the BOQ");
+    expect(pv.next.headline).toBe("Your next step: submit the BOQ");
     expect(JSON.stringify(pv.next)).not.toMatch(/sales price|margin|\bGM\b|approv/i);
     expect(pv.requestAbility.pricing.enabled).toBe(true);
     expect(pv.canUpload).toBe(true);
@@ -98,7 +98,7 @@ describe("stage moves", () => {
     d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
     expect(d.presalesRequests[0]!.status).toBe("SUBMITTED");
     expect(move(d, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/Purchase/) });
-    expect(d.next.headline).toBe("Waiting on purchase (Meera Iyer): start pricing");
+    expect(d.next.headline).toMatch(/^Waiting on purchase \(Meera Iyer\): enter the purchase cost/);
     expect(d.lines[0]!.editable).toEqual(["price"]);
     // presales handed over: they still see the deal but no longer change it or ask purchase
     const after = expectOk(await presales.get<Deal>(`/deals/${d.id}`));
@@ -178,10 +178,11 @@ describe("stage moves", () => {
     expectError(await stage(rep, d, { action: "LOST", lossReasonId: dropOnly.id }), 400);
     d = expectOk(await stage(rep, d, { action: "LOST", lossReasonId: lostOk.id, lossNotes: "Went with the incumbent" }));
     expect(d).toMatchObject({ stage: "CLOSED_LOST", lossReason: { name: lostOk.name } });
-    expect(d.moves.map((m) => [m.action, m.enabled])).toEqual([["REOPEN", false]]);
-    expectError(await stage(rep, d, { action: "REOPEN", reason: "oops" }), 409);
+    expect(d.moves.map((m) => [m.action, m.enabled])).toEqual([["REOPEN", true]]); // the owner may reopen their own deal
+    expectError(await stage(rep, d, { action: "REOPEN" }), 400); // with a reason
     expectError(await rep.patch(`/deals/${d.id}`, { version: d.version, name: "Closed edit" }), 409, "CLOSED");
-    d = expectOk(await stage(head, d, { action: "REOPEN", reason: "Customer came back" }));
+    expectError(await (await as("rep2")).post(`/deals/${d.id}/stage`, { version: d.version, action: "REOPEN", reason: "x" }), 404);
+    d = expectOk(await stage(rep, d, { action: "REOPEN", reason: "Customer came back" }));
     expect(d).toMatchObject({ stage: "PROPOSAL_SUBMITTED", lossReason: null });
     // Dropped with a reason that applies to both
     const both = lossReasons.find((r) => r.appliesTo === "BOTH")!;
@@ -189,16 +190,18 @@ describe("stage moves", () => {
     expect(d.stage).toBe("DROPPED");
   });
 
-  it("Back is for managers, one step at a time, with a reason", async () => {
+  it("Back is for the owner and their managers, one step at a time, with a reason", async () => {
     let d = expectOk(await rep.post<Deal>("/deals", { name: uniq("Back deal"), accountId, primaryContactId: contactId, expectedCloseDate: isoDate(30), lines: [{ productId: laptop.id, quantity: 1, unitSalesPrice: "70000", unitPurchaseCost: "60000" }] }));
     d = expectOk(await stage(rep, d, { action: "ADVANCE" }));
     d = expectOk(await stage(rep, d, { action: "ADVANCE" }));
     expect(d.stage).toBe("NEGOTIATION");
-    expect(move(d, "BACK")).toMatchObject({ enabled: false, toStage: "PROPOSAL_SUBMITTED" });
-    expectError(await stage(rep, d, { action: "BACK", reason: "x" }), 409);
+    expect(move(d, "BACK")).toMatchObject({ enabled: true, toStage: "PROPOSAL_SUBMITTED" });
+    expectError(await stage(rep, d, { action: "BACK" }), 400);
+    d = expectOk(await stage(rep, d, { action: "BACK", reason: "Terms changed" }));
+    expect(d.stage).toBe("PROPOSAL_SUBMITTED");
     expectError(await stage(head, d, { action: "BACK" }), 400);
     d = expectOk(await stage(head, d, { action: "BACK", reason: "Proposal needs rework" }));
-    expect(d.stage).toBe("PROPOSAL_SUBMITTED");
+    expect(d.stage).toBe("QUALIFIED");
     expectError(await (await as("regionalHead")).post(`/deals/${d.id}/stage`, { version: d.version, action: "BACK", reason: "x" }), 404);
     expectError(await presales.post(`/deals/${d.id}/stage`, { version: d.version, action: "HOLD", reason: "x" }), 403);
   });
@@ -226,6 +229,32 @@ describe("stage moves", () => {
     expectOk(await purchase.patch(`/pricing-requests/${pr.id}`, { action: "START" }));
     const q = expectOk(await purchase.get<{ rows: Req[] }>("/pricing-requests?mine=true"));
     expect(q.rows.find((r) => r.id === pr.id)!.status).toBe("IN_PROGRESS");
+  });
+
+  it("submitting a BOQ with uncosted third-party lines hands the deal to purchase; opening the deal starts the request", async () => {
+    let d = expectOk(await rep.post<Deal>("/deals", { name: uniq("Handoff deal"), accountId, primaryContactId: contactId, expectedCloseDate: isoDate(30), lines: [{ productId: server.id, quantity: 1 }] }));
+    expectOk(await uploadDoc(rep, d.id, "Customer RFP"));
+    d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
+    d = expectOk(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: presalesId, presalesDueDate: isoDate(4), presalesScope: "Spec it" }));
+    const req = d.presalesRequests[0]!;
+    expect(req.status).toBe("REQUESTED");
+    // the panel starts the request when the assignee opens the deal
+    expectOk(await presales.patch(`/presales-requests/${req.id}`, { action: "START" }));
+    // the buyer is required when third-party lines still need a cost and nobody has been asked
+    expectError(await presales.patch(`/presales-requests/${req.id}`, { action: "SUBMIT", summary: "One host" }), 400);
+    expectError(await presales.patch(`/presales-requests/${req.id}`, { action: "SUBMIT", summary: "One host", pricingAssigneeId: presalesId, pricingDueDate: isoDate(3) }), 400);
+    expectOk(await presales.patch(`/presales-requests/${req.id}`, { action: "SUBMIT", summary: "One host", pricingAssigneeId: purchaseId, pricingDueDate: isoDate(3), pricingNotes: "Best price" }));
+    d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
+    expect(d.presalesRequests[0]!.status).toBe("SUBMITTED");
+    expect(d.pricingRequests[0]).toMatchObject({ status: "REQUESTED", assignedToId: purchaseId });
+    expect(d.next.headline).toMatch(/^Waiting on purchase \(Meera Iyer\)/);
+    // it shows up as the buyer's work, with the step and the due date, and in the owner's "waiting on team" view
+    const mine = expectOk(await purchase.get<{ rows: { id: string; step: string; due: string | null }[]; count: number }>("/metrics/my-actions"));
+    expect(mine.rows.find((r) => r.id === d.id)).toMatchObject({ step: expect.stringMatching(/purchase cost/), due: isoDate(3) });
+    const reps = expectOk(await rep.get<{ rows: { id: string }[] }>("/metrics/my-actions"));
+    expect(reps.rows.find((r) => r.id === d.id)).toBeUndefined(); // waiting on purchase, not on the rep
+    const heads = expectOk(await head.get<{ team: number }>("/metrics/my-actions"));
+    expect(heads.team).toBeGreaterThanOrEqual(0);
   });
 
   it("request lifecycle: cancel, reassign, re-request in BOQ, overdue flag, and the queues each role sees", async () => {

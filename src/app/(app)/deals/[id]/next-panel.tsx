@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ArrowRight, Check, Circle, CircleDot, Clock, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,16 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }:
   };
   const poKind = L.documentKinds.find((k) => k.requiredAtWon)?.id ?? null;
 
+  // Opening the deal is starting the work: the request assigned to the viewer flips to In progress on first view
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    const mine = [...deal.presalesRequests.map((r) => ({ r, kind: "presales" })), ...deal.pricingRequests.map((r) => ({ r, kind: "pricing" }))].find((x) => x.r.status === "REQUESTED" && x.r.assignedToId === actor.id);
+    if (!mine) return;
+    started.current = true;
+    api.patch(`/${mine.kind}-requests/${mine.r.id}`, { action: "START" }).then(() => router.refresh()).catch(() => undefined);
+  }, [deal.presalesRequests, deal.pricingRequests, actor.id, router]);
+
   /** The one button for the current step, when it is the viewer's. Disabled with the reason when the server says not yet. */
   const action = (step: Step) => {
     const lines = <Button asChild size="sm"><Link href={`/deals/${deal.id}?tab=lines`}>Open lines <ArrowRight /></Link></Button>;
@@ -78,12 +88,6 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }:
         const kind = step.action === "ASK_PRESALES" ? "presales" : "pricing";
         const a = deal.requestAbility[kind];
         return <Gated reason={a.enabled ? null : a.reason}><Button size="sm" disabled={!a.enabled} onClick={() => setDialog({ type: "raise", kind })}>{kind === "presales" ? "Ask presales" : "Ask for prices"}</Button></Gated>;
-      }
-      case "START_REQUEST": {
-        const r = openRequest(step.owner);
-        if (!r) return null;
-        const kind = step.owner === "PURCHASE" ? "pricing" : "presales";
-        return <Button size="sm" disabled={busy} onClick={() => run(() => api.patch(`/${kind}-requests/${r.id}`, { action: "START" }), "Started")}>Start</Button>;
       }
       case "SUBMIT_BOQ": case "COMPLETE_PRICING": {
         const kind = step.action === "SUBMIT_BOQ" ? "presales" : "pricing";
@@ -140,7 +144,7 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }:
 
       {dialog?.type === "move" && <MoveDialog key={dialog.move.action} dealId={deal.id} version={deal.version} move={dialog.move} presalesPeople={presalesPeople} hasPoDocument={deal.facts.hasPoDocument} onClose={() => setDialog(null)} />}
       {dialog?.type === "raise" && <RaiseDialog kind={dialog.kind} dealId={deal.id} people={dialog.kind === "presales" ? presalesPeople : purchasePeople} needsDocument={dialog.kind === "presales" && deal.facts.presalesDocuments === 0} onClose={() => setDialog(null)} />}
-      {dialog?.type === "finish" && <FinishRequestDialog kind={dialog.kind} dealId={deal.id} requestId={dialog.requestId} onClose={() => setDialog(null)} />}
+      {dialog?.type === "finish" && <FinishRequestDialog kind={dialog.kind} dealId={deal.id} requestId={dialog.requestId} facts={deal.facts} purchasePeople={purchasePeople} lastBuyerId={deal.pricingRequests[0]?.assignedToId ?? null} onClose={() => setDialog(null)} />}
       {dialog?.type === "upload" && <UploadDialog dealId={deal.id} sales={actor.role !== "PRESALES" && actor.role !== "PURCHASE"} kindId={dialog.kindId} title={dialog.title} onClose={() => setDialog(null)} />}
       {dialog?.type === "contact" && <SetContactDialog dealId={deal.id} version={deal.version} account={deal.account} current={deal.primaryContactId} onClose={() => setDialog(null)} />}
       {dialog?.type === "note" && <NoteDialog dealId={deal.id} version={deal.version} nextStep={deal.nextStep} nextStepDate={deal.nextStepDate} onClose={() => setDialog(null)} />}

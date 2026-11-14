@@ -125,7 +125,7 @@ export async function viewerFor(actor: Actor, deal: DealDetailRecord): Promise<V
   };
 }
 
-function peopleFor(deal: DealDetailRecord): People {
+export function peopleFor(deal: DealDetailRecord): People {
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   const presales = deal.presalesRequests.find(isOpenRequest);
   const pricing = deal.pricingRequests.find(isOpenRequest);

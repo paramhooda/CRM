@@ -1,6 +1,6 @@
 import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
-import { db } from "../db";
+import { db, type Tx } from "../db";
 import type { Actor } from "../auth/actor";
 import { Conflict, Forbidden, NotFound, ValidationError } from "../errors";
 import { recordEvent } from "../audit";
@@ -61,16 +61,18 @@ export async function createRequest(actor: Actor, kind: Kind, dealId: string, in
   }
   await assigneeOfRole(input.assignedToId, kind === "presales" ? "PRESALES" : "PURCHASE", "assignedToId");
   const dueDate = checkDue(input.dueDate);
-  const row = await db.$transaction(async (tx) => {
-    const r =
-      kind === "presales"
-        ? await tx.presalesRequest.create({ data: { dealId, requestedById: actor.id, assignedToId: input.assignedToId, dueDate, scope: input.scope ?? "" }, include })
-        : await tx.pricingRequest.create({ data: { dealId, requestedById: actor.id, assignedToId: input.assignedToId, dueDate, notes: input.notes ?? null }, include });
-    if (kind === "presales") await tx.deal.update({ where: { id: dealId }, data: { presalesOwnerId: input.assignedToId, needsPresales: true } });
-    await recordEvent(tx, { entityType: `${kind}_request`, entityId: r.id, dealId, action: "CREATE", userId: actor.id, requestId, newValue: `${kind === "presales" ? "BOQ" : "Pricing"} requested from ${r.assignedTo.fullName}, due ${input.dueDate}` });
-    return r;
-  });
-  return row;
+  return db.$transaction((tx) => createRequestInTx(tx, actor.id, kind, dealId, { ...input, dueDate }, requestId));
+}
+
+/** Writes the request row, its audit row and (presales) the deal's presales owner. Validation happens before. */
+export async function createRequestInTx(tx: Tx, actorId: string, kind: Kind, dealId: string, input: { assignedToId: string; dueDate: Date; scope?: string; notes?: string | null }, requestId: string) {
+  const r =
+    kind === "presales"
+      ? await tx.presalesRequest.create({ data: { dealId, requestedById: actorId, assignedToId: input.assignedToId, dueDate: input.dueDate, scope: input.scope ?? "" }, include })
+      : await tx.pricingRequest.create({ data: { dealId, requestedById: actorId, assignedToId: input.assignedToId, dueDate: input.dueDate, notes: input.notes ?? null }, include });
+  if (kind === "presales") await tx.deal.update({ where: { id: dealId }, data: { presalesOwnerId: input.assignedToId, needsPresales: true } });
+  await recordEvent(tx, { entityType: `${kind}_request`, entityId: r.id, dealId, action: "CREATE", userId: actorId, requestId, newValue: `${kind === "presales" ? "BOQ" : "Pricing"} requested from ${r.assignedTo.fullName}, due ${input.dueDate.toISOString().slice(0, 10)}` });
+  return r;
 }
 
 export async function actOnRequest(actor: Actor, kind: Kind, id: string, input: RequestActionInput, requestId: string) {
@@ -83,6 +85,7 @@ export async function actOnRequest(actor: Actor, kind: Kind, id: string, input: 
   const now = new Date();
   const data: Record<string, unknown> = {};
   let note = "";
+  let handToPurchase: { assignedToId: string; dueDate: Date; notes: string | null } | null = null;
   const working = input.action === "START" || input.action === "SUBMIT" || input.action === "COMPLETE";
   if (working && deal.stage === "HOLD") throw new Conflict("The deal is on hold; sales resumes it before work continues.", "ON_HOLD");
   if (working && !isOpen(deal.stage)) throw new Conflict("This deal is closed.", "CLOSED");
@@ -102,8 +105,17 @@ export async function actOnRequest(actor: Actor, kind: Kind, id: string, input: 
       if (kind === "presales") {
         if (!input.summary) throw new ValidationError("Add a short summary of the BOQ.", { summary: "Required." });
         if (deal.lines.length === 0) throw new Conflict("Add the lines before submitting the BOQ.", "NO_LINES");
+        // Submitting hands the BOQ to purchase when third-party lines still need a cost: the buyer is named here
+        const facts = dealFacts(deal, approvalStateFor(deal, await activeRules()));
+        const viewer = await viewerFor(actor, deal);
+        if (facts.uncostedThirdPartyLines > 0 && !facts.openPricingRequest && requestBlockers("pricing", facts, viewer).length === 0) {
+          if (!input.pricingAssigneeId) throw new ValidationError("Pick the buyer who prices this BOQ.", { pricingAssigneeId: "Required." });
+          await assigneeOfRole(input.pricingAssigneeId, "PURCHASE", "pricingAssigneeId");
+          if (!input.pricingDueDate) throw new ValidationError("Set a due date for pricing.", { pricingDueDate: "Required." });
+          handToPurchase = { assignedToId: input.pricingAssigneeId, dueDate: checkDue(input.pricingDueDate), notes: input.pricingNotes ?? null };
+        }
         Object.assign(data, { status: "SUBMITTED", submittedAt: now, summary: input.summary });
-        note = "BOQ submitted";
+        note = handToPurchase ? "BOQ submitted, pricing requested" : "BOQ submitted";
       } else {
         const missing = deal.lines.filter((l) => !l.oem.isOwnIp && l.unitPurchaseCost === null).map((l) => l.lineNo);
         if (missing.length) throw new Conflict(`Enter the purchase cost on line${missing.length > 1 ? "s" : ""} ${missing.join(", ")} first.`, "LINES_UNCOSTED");
@@ -135,6 +147,7 @@ export async function actOnRequest(actor: Actor, kind: Kind, id: string, input: 
     const u = kind === "presales" ? await tx.presalesRequest.update({ where: { id }, data, include }) : await tx.pricingRequest.update({ where: { id }, data, include });
     if (kind === "presales" && data.assignedToId) await tx.deal.update({ where: { id: r.dealId }, data: { presalesOwnerId: data.assignedToId as string } });
     await recordEvent(tx, { entityType: `${kind}_request`, entityId: id, dealId: r.dealId, action: "UPDATE", userId: actor.id, requestId, field: "status", oldValue: r.status, newValue: `${(data.status as string) ?? r.status} (${note})` });
+    if (handToPurchase) await createRequestInTx(tx, actor.id, "pricing", r.dealId, handToPurchase, requestId);
     return u;
   });
   return updated;

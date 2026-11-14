@@ -120,12 +120,12 @@ describe("deals", () => {
     expectError(await rep.get("/deals?stage=NOPE"), 400);
   });
 
-  it("delete needs a manager in scope; an admin restores; a rep can't change the owner but the head can", async () => {
+  it("the owner or a manager in scope deletes; an admin restores; a rep can't change the owner but the head can", async () => {
     const d = expectOk(await rep.post<Deal>("/deals", { name: uniq("Deletable deal"), accountId, expectedCloseDate: isoDate(20) }));
-    expectError(await rep.del(`/deals/${d.id}`), 403);
+    expectError(await (await as("rep2")).del(`/deals/${d.id}`), 404); // not theirs: not even visible
     expectError(await (await as("regionalHead")).del(`/deals/${d.id}`), 404);
     const head = await as("salesHead");
-    expectOk(await head.del(`/deals/${d.id}`));
+    expectOk(await rep.del(`/deals/${d.id}`)); // the owner's own deal
     expectError(await rep.get(`/deals/${d.id}`), 404);
     const admin = await as("admin");
     expectOk(await admin.post(`/deals/${d.id}/restore`));
