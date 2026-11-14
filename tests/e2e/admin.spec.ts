@@ -114,3 +114,43 @@ test("an admin creates a user who must change the temporary password at first si
   await expect(page).toHaveURL(/\/account/);
   await expect(page.getByText(/Choose a new password/)).toBeVisible();
 });
+
+test("an admin sets the company for quotes and switches alerts on; both start off and the page says what each does", async ({ browser }) => {
+  const admin = await signedIn(browser, "admin");
+  await go(admin.page, "/admin/settings");
+  const page = admin.page;
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  // email and the assistant are off until set up
+  await expect(page.getByText("Not set up yet: the Send proposal button offers download only.")).toBeVisible();
+  await expect(page.getByText("Off until a key is saved.")).toBeVisible();
+  // company block
+  await page.fill("#co-name", "Progression Infonet Pvt Ltd");
+  await page.fill("#co-city", "Pune");
+  await page.fill("#co-gstin", "not a gstin");
+  await page.getByRole("button", { name: "Save company" }).click();
+  await expect(page.getByText(/Not a valid GSTIN/)).toBeVisible();
+  await page.fill("#co-gstin", "27AAACK4019X1Z2");
+  await page.getByRole("button", { name: "Save company" }).click();
+  await expect(page.getByText("Saved")).toBeVisible();
+  // alerts: everything off, then one threshold on
+  const gm = page.locator("#al-gm");
+  await expect(gm).toHaveValue("");
+  await gm.fill("12");
+  await page.getByRole("switch", { name: "Flag deals past their close date" }).click();
+  await page.getByRole("button", { name: "Save alerts" }).click();
+  await expect(page.getByText("Saved").last()).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator("#al-gm")).toHaveValue("12");
+  await expect(page.getByRole("switch", { name: "Flag deals past their close date" })).toHaveAttribute("data-state", "checked");
+  // back to off, so the rest of the suite sees the defaults
+  await page.locator("#al-gm").fill("");
+  await page.getByRole("switch", { name: "Flag deals past their close date" }).click();
+  await page.getByRole("button", { name: "Save alerts" }).click();
+  await expect(page.getByText("Saved").last()).toBeVisible();
+  // only admins get here
+  await admin.context.close();
+  const head = await signedIn(browser, "salesHead");
+  await go(head.page, "/admin/settings");
+  await expect(head.page).not.toHaveURL(/admin\/settings/);
+  await head.context.close();
+});

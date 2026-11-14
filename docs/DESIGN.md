@@ -103,6 +103,14 @@ real state (target met, overdue).
   in small text) and one primary button for the current step on the right, with its reason in small muted text
   when it is disabled. Every dialog that completes a step asks for whatever is missing inside it (a document, the
   scope), rather than sending the person elsewhere.
+- Price grid (`components/crm/price-grid.tsx`): the lines as a table with one editable money column (36px inputs,
+  right-aligned, tabular figures), line totals and the margin recomputed as you type, one primary Save. Opened as a
+  dialog from the panel or the Lines tab; inline on the Lines tab for purchase.
+- Needs you (Home): a bordered list card first on the page, one row per deal (name, code · account, the step in
+  body text, stage pill, due date in muted or `--destructive`, a primary Open), overdue rows on a 5% red tint.
+- Send proposal: a two-part dialog, the quotation block on `--background` (number, validity, subtotal, Download,
+  Generate or New revision) above the email fields and an attachment checklist; a tinted amber note when the
+  server cannot send. Admin Settings: four cards with tinted icon squares, one Save each.
 - Charts: `--primary` for a single series; `--chart-1 … --chart-8` (`#2a78d6 #eb6834 #1baf7a #eda100 #e87ba4
   #008300 #4a3aa7 #e34948`) for categorical series in that order; `--chart-mag-1 … -5` (brand-300 → brand-800)
   light-to-dark for ordered magnitudes such as stage and forecast; status colours only for status.

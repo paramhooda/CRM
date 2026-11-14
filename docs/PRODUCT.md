@@ -64,16 +64,16 @@ might need to be skipped, but that skip should happen after reaching that stage.
 | Stage | Who works it | To advance (the gate) |
 |---|---|---|
 | **Qualified** | Sales | Every new deal starts here ("opportunity created means by default it is qualified"; there is no Identified stage because "there was no difference between identified and qualified"). Needs a primary contact and a close date that is not in the past. If the deal needs presales, advancing hands it over: the move asks for the presales engineer, a due date, the scope and, when none is on file yet, the customer's requirement document (RFP, SoW or similar), then creates the presales request and moves to BOQ. Otherwise it goes straight to Proposal Submitted. |
-| **BOQ** | Presales | "BOQ is a pre-sales role." Presales starts the request, refines the lines (sales cannot touch them meanwhile) and submits the BOQ, which needs at least one line. Skip BOQ is offered only here, for a deal that turns out not to need presales. |
-| **Proposal Submitted** | Sales | Reached only when every line has a sales price **and a purchase cost** (so the margin is known and a GM approval rule cannot be skipped by leaving costs empty), no presales or pricing request is open, and any approval the rules ask for has been given. "Upon pricing, sales will add margin and create & send quote." The proposal document is optional: quotes are often produced outside the CRM. |
+| **BOQ** | Presales | "BOQ is a pre-sales role." Opening the deal starts the request (there is no Start button); presales refines the lines (sales cannot touch them meanwhile) and submits the BOQ, which needs at least one line. When third-party lines still need a cost, submitting names the buyer and raises the pricing request in the same step, so purchase has something due at once. Skip BOQ is offered only here, for a deal that turns out not to need presales. |
+| **Proposal Submitted** | Sales | Reached only when every line has a sales price **and a purchase cost** (so the margin is known and a GM approval rule cannot be skipped by leaving costs empty), no presales or pricing request is open, and any approval the rules ask for has been given. "Upon pricing, sales will add margin and create & send quote." The proposal goes out from the deal page: **Send proposal** generates the quotation (a PDF from the lines, numbered QT-FY27-0001 and stored under Documents), emails it from the sales person's own address with any deal document ticked, and moves the deal here when it has gone. Quotes sent from elsewhere are downloaded and the proposal is **marked as sent**, which is the same move by hand. |
 | **Negotiation** | Sales | Advance from Proposal Submitted. |
-| **Closed-Won** | Sales | From Proposal Submitted or Negotiation, with the customer's PO number and the PO file attached, every line priced and costed, no open request, and the prices approved if a rule applies (a discount given in Negotiation lapses the earlier approval). |
+| **Closed-Won** | Sales | From Proposal Submitted or Negotiation, with the customer's PO number and the PO file attached, every line priced and costed, no open request, and the prices approved if a rule applies (a discount given in Negotiation lapses the earlier approval). In Proposal Submitted and Negotiation the customer can be emailed again, with a revised quote if needed, without a stage change. |
 | **Hold** | Sales | From any open stage, with a reason. Resume returns the deal to the stage it was held from. |
 | **Closed-Lost / Dropped** | Sales | From any open stage or Hold, with a reason from the loss-reason list. Dropped is not a loss (it does not count against win rate). |
 
 Also:
-- **Back** one stage (managers only, with a reason). **Reopen** a closed deal (managers only) returns it to its last
-  open stage.
+- **Back** one stage and **Reopen** a closed deal (to its last open stage), with a reason: the deal owner has every
+  move on their own deal, managers the same on their team's deals.
 - Nobody can jump stages or click a stage to land on it. The server re-checks every move; the UI only offers the
   moves that are allowed and says why the others are not.
 - Every stage change records who made it, when, the reason, the deal value at that moment and the days spent in the
@@ -84,6 +84,11 @@ Also:
   first with the one button that does it, the reason when it cannot be done yet, and who is being waited on with
   the due date. Presales and purchase see their own steps and one line for everything sales does, never a price.
   The checklist is computed on the server from the same rules that gate the moves; the screen never decides.
+  Costs and sales prices are entered in one grid (one column, one save for every line); presales and purchase land on
+  the lines when the work is theirs, and completing pricing is offered the moment every line is costed.
+- **Needs you.** Home opens with every deal whose current step is the signed-in person's, with the step, the due
+  date and an Open button; managers also see how many deals wait on their team. The sidebar's Home and My work items
+  carry the count. The same list drives My work for presales and purchase.
 
 **Commit**, **Upside** and **Pipeline** are set by the sales person. A deal in Commit that has not reached Proposal
 Submitted is flagged in pipeline review. **[inferred]**
@@ -93,7 +98,8 @@ Submitted is flagged in pipeline review. **[inferred]**
 **Presales request** (sales → presales). Created when a deal that needs presales advances into BOQ (the one way to
 hand a deal to presales from Qualified), or raised by hand in BOQ when none is open (a second look after a cancelled
 or submitted BOQ). Either way the customer's requirement must be on file, as a document presales can see. It names
-the engineer, a due date and the scope. Presales starts it, edits the lines, and submits it with a short summary;
+the engineer, a due date and the scope. Opening the deal starts it; presales edits the lines and submits it with a short
+summary, naming the buyer when third-party lines still need a cost (the pricing request is raised in the same step);
 while it is open the lines belong to presales (the assignee of the open request) and sales cannot change them or ask
 purchase. The deal's *presales owner* is the engineer on the latest request. Whether a deal needs presales is
 suggested from the Sub BUs on its lines (each Sub BU has a *needs presales* flag an admin maintains) and can be
@@ -141,7 +147,10 @@ through approval chain. Create a template in admin page where I can define these
 - When a rule applies, the owner asks for approval before advancing to Proposal Submitted, and again before closing
   as won if the prices changed since. Approval can be asked for in any open stage once every line is priced and
   costed. Approvers see it in their inbox and approve or reject with a note. Nobody approves their own request; a
-  step with no other approver passes on its own.
+  step with no other approver passes on its own. The approval card and the What's next step name the rule that
+  applies; past reasons are shown as of the time of the request.
+- The two example rules ship **switched off**. Admins turn them on, or write their own, under Approval rules; the
+  flow behind them is live the moment a rule is active.
 - An approval covers exactly the lines and prices it was asked for. If a line's quantity, price, cost, model or term
   changes afterwards, the approval lapses and a new one is needed.
 - With no rules defined, no approval is ever asked for. "We do rate to rate deals sometimes": there is no built-in
@@ -156,10 +165,20 @@ the account and the contact and creates the deal at Qualified.
 ## 9. Documents
 
 Files can be attached to a deal with a kind: Customer RFP, SoW, Solution document, Supplier quote, Customer PO,
-Proposal, Other. "Optional but may be required": the only document that is required is the **Customer PO at
-Closed-Won**. Purchase and presales can attach supplier quotes and solution documents to deals they work on;
-"customer PO" and "proposal" carry sales prices and are visible to sales roles only. Files are stored in the
-database (up to 20 MB each).
+Proposal, Quotation, Other. "Optional but may be required": the customer's requirement (any kind presales can see)
+is required to hand a deal to presales, and the **Customer PO at Closed-Won**. Purchase and presales can attach
+supplier quotes and solution documents to deals they work on; "customer PO", "proposal" and "quotation" carry sales
+prices and are visible to sales roles only. Files are stored in the database (up to 20 MB each).
+
+**Quotations** are generated, not uploaded: an A4 PDF from the deal's lines (description, HSN/SAC, quantity, unit
+price and amount in INR, recurring lines per year over the term), the company block from Admin → Settings, the
+customer's address and GSTIN, the contact, validity, notes, terms and the sender's signature. Amounts are exclusive
+of GST ("GST extra as applicable"). Quotes are numbered per fiscal year (QT-FY27-0001) and revised per deal; each
+revision is a new document. Only final prices qualify: every line priced and costed and any approval given.
+
+**Emails** go out from the deal page from the sales person's own address through the SMTP server an admin sets up
+under Settings, with any number of CCs and any deal document attached; every email, sent or failed, is kept on the
+deal. Without a mail server the portal offers download only.
 
 ## 10. Pipeline review
 
@@ -173,10 +192,11 @@ gone well (won, advanced, new pipeline) and what is lagging (pushed, past close,
 
 ## 11. Home and analytics
 
-Sales roles land on **Home**: "first glance should show numbers + todo", then "as we scroll down there should be
-more analytics", and "analytics should be filterable". Numbers: open pipeline, commit this quarter, won this fiscal
-year against target, win rate, average expected GM. To-do: approvals waiting on me, deals past their close date,
-missing or overdue next steps, my overdue requests. Charts, filterable by period, BU, Sub BU, OEM and sales person:
+Sales roles land on **Home**: first "Needs you" (the deals whose current step is mine, overdue first), then
+"first glance should show numbers + todo", then "as we scroll down there should be more analytics", and "analytics
+should be filterable". Numbers: open pipeline, commit this quarter, won this fiscal year against target, win rate,
+average expected GM (amber only when the admin sets a threshold under Settings → Alerts). To-do: approvals waiting
+on me, deals past their close date, missing or overdue next steps, my overdue requests. Charts, filterable by period, BU, Sub BU, OEM and sales person:
 funnel by stage, pipeline by BU, by OEM, by Sub BU, forecast split and (for managers) by sales person. "Dashboard
 elements should be clickable and should take to the selected detailed view."
 
@@ -201,12 +221,14 @@ Every permission is enforced on the server on every route; hiding a button is ne
 | Deals: create, edit header, stage moves, prices | ✓ | team | own | – | – |
 | Lines: products, quantities, model, term | ✓ | team | own | assigned, while open | – |
 | Lines: purchase cost | ✓ | – | – | own-IP lines | assigned, all lines |
-| Back a stage, reopen, delete and restore | ✓ | team (not restore) | – | – | – |
-| Presales / pricing requests | ✓ | team | own deals | start, submit (assignee) / raise pricing while assigned | start, complete (assignee) |
+| Back a stage, reopen, delete | ✓ | team | own | – | – |
+| Restore | ✓ | – | – | – | – |
+| Presales / pricing requests | ✓ | team | own deals | submit (assignee, names the buyer) / raise pricing while assigned | complete (assignee) |
+| Quotes and emails to the customer | ✓ | team | own | – | – |
 | Documents | ✓ | team | own | non-sales kinds on assigned deals | non-sales kinds on assigned deals |
 | Approvals | decide when listed | decide when listed | request; decide when listed | – | – |
 | Home dashboard, pipeline review | all | team | own | – | – |
-| Users, master data, approval rules, audit log | ✓ | targets only | – | – | – |
+| Users, master data, approval rules, settings, audit log | ✓ | targets only | – | – | – |
 | Export | same as the list | same | same | same, technical columns | same, technical columns |
 
 A record outside someone's scope behaves as if it does not exist (404), whether reached through the UI or the API.
@@ -237,16 +259,21 @@ against spreadsheet formula injection). **[inferred]** Native .xlsx is not produ
   meaning (stage tags, forecast tags, a colour per BU) and nothing else is loud; light mode first, dark mode through
   the same tokens; WCAG AA contrast; tags always carry text.
 - **Deployment:** one `docker compose up` (Postgres + app); migrations run on start.
-- **Assistant (optional):** with an OpenAI key in `.env` (`OPENAI_API_KEY`, model `AI_MODEL`), the hand-over dialog
-  and Submit BOQ offer "Draft with AI" (a scope or summary written from the deal's lines and documents, never
-  prices) and sales roles get a one-click plain-English deal brief for a pipeline call. Off, and invisible, without
-  the key; when on, deal text is sent to OpenAI. Nothing is saved until the person submits the dialog.
+- **Settings (Admin):** the company block printed on quotes; the SMTP server the portal sends through (with a test
+  email); the alerts the team sees, every one off until switched on (expected-GM amber threshold, quiet days, stuck
+  in stage, close date passed, Commit without a proposal, no next step); and the assistant's key and model (with a
+  test). Secrets are write-only and redacted in the audit log.
+- **Assistant (optional):** with an OpenAI key under Settings (or `OPENAI_API_KEY` in `.env`), the hand-over dialog,
+  Submit BOQ and the proposal email offer "Draft with AI" (written from the deal's lines and documents, never
+  prices) and sales roles get a one-click plain-English deal brief for a pipeline call. Off without a key: admins
+  see a "Set up the assistant" link where the Brief button would be, nobody else sees anything. When on, deal text
+  is sent to OpenAI. Nothing is saved until the person submits the dialog.
 
 ## 17. Out of scope (deliberately)
 
-Bundle pricing (one price for several lines); quote documents, versions and printing; supplier quotes tied to
-lines; health scores; email, notifications and SMTP settings; password-reset emails (an admin
-resets passwords); backup and upgrade scripts; HTTPS termination; saved views; a command palette; an activities /
+Bundle pricing (one price for several lines); quote templates and GST per line (one quotation layout, amounts
+exclusive of GST); supplier quotes tied to lines; health scores; notifications (email is outbound only, from the
+deal page); password-reset emails (an admin resets passwords); backup and upgrade scripts; HTTPS termination; saved views; a command palette; an activities /
 tasks module; competitor, distributor, deal-registration and procurement-mode fields; contract dates (ERP); native
 Excel files; Microsoft 365 sign-in (prepared for, not built); anything for finance beyond keeping lines billable.
 

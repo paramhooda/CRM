@@ -35,6 +35,9 @@ The deal flow has one source of truth: `domain/stages.ts` (moves and their gates
 raise a request, who may upload, and the per-role "What's next" checklist). `services/deals.ts` returns `moves`,
 `requestAbility`, `canUpload` and `next` on every deal; the deal page only renders them and never decides on its own.
 A new rule goes into those two modules with a unit test, then into the service that enforces it with an API test.
+Admin-set configuration lives in the `settings` table (`src/contracts/settings.ts` schemas, `services/settings.ts`
+`getSetting`); alerts and the assistant read it, never a constant. Quotes are rendered by `src/server/pdf/quote.ts`
+from `domain/quote.ts`; mail goes through `src/server/mail.ts` only.
 
 ## Run
 
