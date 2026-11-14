@@ -14,6 +14,8 @@ import { TabsContent } from "@/components/ui/tabs";
 import { DealTabs } from "./deal-tabs";
 import { NextPanel } from "./next-panel";
 import { DealBrief } from "./deal-brief";
+import { EmailCustomerButton } from "./send-proposal-dialog";
+import { emailStatus } from "@/server/services/emails";
 import { TabBar, Tab, TabCount } from "@/components/crm/tabs";
 import { StatTile } from "@/components/crm/stat-tile";
 import { CalendarDays, IndianRupee, Layers, Percent } from "lucide-react";
@@ -43,12 +45,13 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   }
   const sales = !isSupportRole(actor.role);
   const manager = isManagerRole(actor.role);
-  const [history, approvals, presalesPeople, purchasePeople, owners] = await Promise.all([
+  const [history, approvals, presalesPeople, purchasePeople, owners, mail] = await Promise.all([
     dealHistory(actor, id),
     sales ? listDealApprovals(actor, id).then((r) => r.rows) : Promise.resolve([]),
     peopleWithRole("PRESALES"),
     peopleWithRole("PURCHASE"),
     manager ? salesPeopleFor(actor) : Promise.resolve([]),
+    emailStatus(),
   ]);
   const facts = sales
     ? [
@@ -88,6 +91,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         meta={<><StagePill stage={d.stage} dot /><span className="text-sm text-muted-foreground">{d.daysInStage}d in stage</span>{sales && d.forecastCategory && <ForecastPill forecast={d.forecastCategory} dot />}{d.deletedAt && <NeutralPill className="bg-destructive/10 text-destructive">Deleted {fmtDate(d.deletedAt)}</NeutralPill>}</>}
         actions={
           <>
+            {sales && d.canEdit && (d.stage === "PROPOSAL_SUBMITTED" || d.stage === "NEGOTIATION") && <EmailCustomerButton dealId={d.id} version={d.version} dealName={d.name} quotes={d.quotes} documents={d.documents.map((x) => ({ id: x.id, fileName: x.fileName, kind: { name: x.kind.name } }))} contactEmail={d.primaryContact?.email ?? null} mailEnabled={mail.enabled} />}
             {sales && <DealBrief dealId={d.id} />}
             {sales && <StageActions dealId={d.id} version={d.version} moves={d.moves} presalesPeople={presalesPeople} hasPoDocument={d.facts.hasPoDocument} />}
             <DealMenu deal={{ id: d.id, name: d.name, version: d.version, ownerId: d.owner.id, presalesOwnerId: d.presalesOwner?.id ?? null, deleted: !!d.deletedAt, canEdit: d.canEdit, stage: d.stage }} owners={owners} presalesPeople={presalesPeople} />
@@ -101,7 +105,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
       </section>
       <StagePath stage={d.stage} needsPresales={d.needsPresales} heldFromStage={d.heldFromStage} lastOpenStage={d.lastOpenStage} />
       <div className="mt-4">
-        <NextPanel deal={{ id: d.id, version: d.version, stage: d.stage, moves: d.moves, facts: d.facts, requestAbility: d.requestAbility, presalesRequests: d.presalesRequests, pricingRequests: d.pricingRequests, account: d.account, primaryContactId: d.primaryContactId, nextStep: d.nextStep, nextStepDate: d.nextStepDate, canEdit: d.canEdit, lines: d.lines, lineEditable: d.lineEditable }} next={d.next} presalesPeople={presalesPeople} purchasePeople={purchasePeople} sales={sales} />
+        <NextPanel deal={{ id: d.id, version: d.version, stage: d.stage, moves: d.moves, facts: d.facts, requestAbility: d.requestAbility, presalesRequests: d.presalesRequests, pricingRequests: d.pricingRequests, account: d.account, primaryContactId: d.primaryContactId, nextStep: d.nextStep, nextStepDate: d.nextStepDate, canEdit: d.canEdit, lines: d.lines, lineEditable: d.lineEditable, name: d.name, primaryContact: d.primaryContact, quotes: d.quotes, documents: d.documents }} next={d.next} presalesPeople={presalesPeople} purchasePeople={purchasePeople} sales={sales} mailEnabled={mail.enabled} />
       </div>
 
       <DealTabs tab={["lines", "documents", "history"].includes(tab ?? "") ? tab! : d.canEditLines && !sales ? "lines" : "overview"}>
@@ -126,6 +130,19 @@ export default async function DealPage({ params, searchParams }: { params: Promi
           </div>
           <div className="flex flex-col gap-4">
             {sales && (!closed || d.approvalState === "APPROVED" || d.approvalState === "PENDING") && <ApprovalCard dealId={d.id} stage={d.stage} state={d.approvalState} reasons={d.approvalReasons} rules={d.approvalRules} approvals={approvals} canEdit={d.canEdit} />}
+            {sales && d.emails.length > 0 && (
+              <section className="rounded-xl border border-border bg-card p-4" aria-label="Emails">
+                <h2 className="mb-2 text-sm font-semibold">Emails</h2>
+                <ul className="flex flex-col divide-y divide-border">
+                  {d.emails.map((e) => (
+                    <li key={e.id} className="py-2 text-sm first:pt-0 last:pb-0">
+                      <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{e.subject}</span>{e.status === "FAILED" && <span className="text-xs text-destructive">failed</span>}<span className="ml-auto text-xs text-muted-foreground">{fmtDate(e.sentAt)}</span></div>
+                      <div className="text-xs text-muted-foreground">To {e.to.join(", ")}{e.cc.length ? ` · cc ${e.cc.join(", ")}` : ""} · by {e.sentBy.fullName}{e.documentIds.length ? ` · ${e.documentIds.length} attachment${e.documentIds.length === 1 ? "" : "s"}` : ""}{e.error ? ` · ${e.error}` : ""}</div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             <RequestCards dealId={d.id} canEdit={d.canEdit} presales={d.presalesRequests} pricing={d.pricingRequests} presalesPeople={presalesPeople} purchasePeople={purchasePeople} ability={d.requestAbility} facts={d.facts} />
           </div>
         </TabsContent>

@@ -24,17 +24,18 @@ import { SetContactDialog } from "./set-contact-dialog";
 import { PriceGridDialog, type GridMode } from "@/components/crm/price-grid";
 import { LineDialog, emptyLine, lineUpsertBody } from "@/components/crm/line-dialog";
 import type { LineField } from "@/domain/lines";
+import { SendProposalDialog } from "./send-proposal-dialog";
 
 type Person = { id: string; fullName: string };
-type Deal = Pick<DealView, "id" | "version" | "stage" | "moves" | "facts" | "requestAbility" | "presalesRequests" | "pricingRequests" | "account" | "primaryContactId" | "nextStep" | "nextStepDate" | "canEdit" | "lines" | "lineEditable">;
-type Dialog = { type: "move"; move: Move } | { type: "raise"; kind: "presales" | "pricing" } | { type: "finish"; kind: "presales" | "pricing"; requestId: string } | { type: "upload"; kindId: string | null; title: string } | { type: "contact" } | { type: "note" } | { type: "grid"; mode: GridMode } | { type: "line" };
+type Deal = Pick<DealView, "id" | "version" | "stage" | "name" | "moves" | "facts" | "requestAbility" | "presalesRequests" | "pricingRequests" | "account" | "primaryContact" | "primaryContactId" | "nextStep" | "nextStepDate" | "canEdit" | "lines" | "lineEditable" | "quotes" | "documents">;
+type Dialog = { type: "move"; move: Move } | { type: "raise"; kind: "presales" | "pricing" } | { type: "finish"; kind: "presales" | "pricing"; requestId: string } | { type: "upload"; kindId: string | null; title: string } | { type: "contact" } | { type: "note" } | { type: "grid"; mode: GridMode } | { type: "line" } | { type: "send" };
 const OPEN = ["REQUESTED", "IN_PROGRESS"];
 
 /**
  * "What's next": the stage's checklist with the viewer's own step first, one button that does it, and the reason
  * when it cannot be done yet. The rules come from the server (`deal.next`); nothing here decides anything.
  */
-export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }: { deal: Deal; next: NextActions; presalesPeople: Person[]; purchasePeople: Person[]; sales: boolean }) {
+export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales, mailEnabled }: { deal: Deal; next: NextActions; presalesPeople: Person[]; purchasePeople: Person[]; sales: boolean; mailEnabled: boolean }) {
   const actor = useActor();
   const router = useRouter();
   const L = useLookups();
@@ -102,6 +103,10 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }:
         const blocker = finishBlocker(kind, deal.facts);
         return <Gated reason={blocker}><Button size="sm" disabled={!!blocker} onClick={() => setDialog({ type: "finish", kind, requestId: r.id })}>{kind === "presales" ? "Submit BOQ" : "Complete pricing"}</Button></Gated>;
       }
+      case "SEND_PROPOSAL": {
+        const move = deal.moves.find((m) => m.primary);
+        return <Gated reason={move && !move.enabled ? move.reason ?? null : null}><Button size="sm" onClick={() => setDialog({ type: "send" })}>Send proposal <ArrowRight /></Button></Gated>;
+      }
       case "ASK_APPROVAL": return <Button size="sm" disabled={busy} onClick={() => run(async () => { const r = await api.post<{ approval: { status: string } }>(`/deals/${deal.id}/approvals`); if (r.approval.status === "APPROVED") toast.success("Approved: no other approver was needed"); }, "Approval requested")}>Ask for approval</Button>;
       case "DECIDE_APPROVAL": return <Button asChild size="sm"><a href="#approval">Go to the approval</a></Button>;
       default: return null;
@@ -165,6 +170,9 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }:
         <LineDialog open onOpenChange={(o) => !o && setDialog(null)} initial={emptyLine()} editable={new Set<LineField>(deal.lineEditable.thirdParty)}
           onSave={async (draft) => { await api.patch(`/deals/${deal.id}/lines`, { version: deal.version, upserts: [lineUpsertBody(draft, new Set<LineField>(deal.lineEditable.thirdParty))], deleteIds: [] }); toast.success("Line added"); router.refresh(); }} />
       )}
+      {dialog?.type === "send" && (() => { const move = deal.moves.find((m) => m.primary); return (
+        <SendProposalDialog dealId={deal.id} version={deal.version} dealName={deal.name} mode="proposal" quotes={deal.quotes} documents={deal.documents.map((x) => ({ id: x.id, fileName: x.fileName, kind: { name: x.kind.name } }))} contactEmail={deal.primaryContact?.email ?? null} mailEnabled={mailEnabled} canAdvance={!!move?.enabled && move.toStage === "PROPOSAL_SUBMITTED"} advanceReason={move?.enabled ? null : move?.reason ?? null} onClose={() => setDialog(null)} />
+      ); })()}
       {dialog?.type === "note" && <NoteDialog dealId={deal.id} version={deal.version} nextStep={deal.nextStep} nextStepDate={deal.nextStepDate} onClose={() => setDialog(null)} />}
     </section>
   );

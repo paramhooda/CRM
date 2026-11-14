@@ -168,7 +168,7 @@ test("sales follows the panel: proposal, negotiation, PO and won; history has ev
   await login(page, "rep");
   await go(page, dealUrl);
   await expect(page.getByText(/Expected GM/)).toBeVisible();
-  await expect(headline(page)).toHaveText("Your next step: advance to Proposal Submitted");
+  await expect(headline(page)).toHaveText("Your next step: send the proposal (quote and email)");
   // Prices are changed in one grid as well: the value follows
   await page.getByRole("tab", { name: /Lines/ }).click();
   await page.getByRole("button", { name: "Set prices" }).click();
@@ -178,9 +178,21 @@ test("sales follows the panel: proposal, negotiation, PO and won; history has ev
   await prices.getByRole("button", { name: "Save prices" }).click();
   await expect(page.getByText(/Prices saved on 1 line/)).toBeVisible();
   await expect(page.getByText("₹46.5 L").first()).toBeVisible();
-  await panel(page).getByRole("button", { name: "Advance to Proposal Submitted" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Advance to Proposal Submitted" }).click();
+  // The proposal: generate the quotation here, download it, and (no mail server in the test run) mark it as sent
+  await panel(page).getByRole("button", { name: "Send proposal" }).click();
+  const send = page.getByRole("dialog", { name: "Send the proposal" });
+  await expect(send.getByText("No quotation yet")).toBeVisible();
+  await send.locator("#q-notes").fill("Includes installation and a 3-year warranty.");
+  await send.getByRole("button", { name: "Generate quote" }).click();
+  await expect(send.getByText(/^QT-FY\d{2}-\d{4}$/)).toBeVisible();
+  await expect(send.getByRole("link", { name: "Download quote" })).toHaveAttribute("href", /\/api\/v1\/documents\/.+\/download/);
+  await expect(send.getByRole("checkbox", { name: /Attach QT-FY/ })).toBeChecked();
+  await expect(send.getByText("Email is not set up on this server")).toBeVisible();
+  await expect(send.getByRole("button", { name: "Send and move to Proposal Submitted" })).toBeDisabled();
+  await send.getByRole("button", { name: "Mark as sent outside the CRM" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Mark as sent" }).click();
   await expect(page.getByText("Moved to Proposal Submitted")).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Documents 2/ })).toBeVisible(); // the requirement and the quotation
   await expect(headline(page)).toHaveText("Your next step: attach the customer's PO under Documents");
   // Requests are over: nothing invites one now
   await expect(page.getByRole("button", { name: "Ask presales" })).toHaveCount(0);

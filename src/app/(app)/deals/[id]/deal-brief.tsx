@@ -7,14 +7,17 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useAiEnabled } from "@/components/crm/providers";
 import { api, errorMessage } from "@/client/api";
 import { LoadingState } from "@/components/crm/states";
+import Link from "next/link";
+import { useActor } from "@/components/crm/providers";
 
 /** "Brief": a plain-English read of the deal for a pipeline call. Sales roles only, and only when AI is on. */
 export function DealBrief({ dealId }: { dealId: string }) {
   const enabled = useAiEnabled();
+  const actor = useActor();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  if (!enabled) return null;
+  if (!enabled) return actor.role === "ADMIN" ? <Button asChild size="sm" variant="ghost" className="text-muted-foreground"><Link href="/admin/settings"><Sparkles /> Set up the assistant</Link></Button> : null;
   const run = async () => {
     setOpen(true);
     setText(null);

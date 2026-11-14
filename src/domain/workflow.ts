@@ -53,7 +53,7 @@ export function canUploadDocument(v: Viewer, stage: Stage, deleted: boolean): bo
 export type StepAction =
   | "SET_CONTACT" | "FIX_CLOSE_DATE" | "ATTACH_DOCUMENT" | "ADD_LINES" | "ADVANCE" | "ASK_PRESALES" | "ASK_PRICING"
   | "SUBMIT_BOQ" | "ENTER_COSTS" | "COMPLETE_PRICING" | "SET_PRICES" | "ASK_APPROVAL" | "DECIDE_APPROVAL"
-  | "ATTACH_PO" | "CLOSE_WON" | "RESUME" | "REOPEN";
+  | "ATTACH_PO" | "CLOSE_WON" | "RESUME" | "REOPEN" | "SEND_PROPOSAL";
 
 export type Step = {
   key: string;
@@ -111,6 +111,9 @@ function priceSteps(f: DealFacts): Draft[] {
   return out;
 }
 
+/** The proposal goes out from the portal: the quote is generated and emailed, and the stage moves with it. */
+const SEND: Draft = { key: "send", label: "Send the proposal (quote and email)", owner: "SALES", action: "SEND_PROPOSAL", hint: "Generates the quotation, emails it with any documents you tick, and moves the deal to Proposal Submitted. Sent it yourself? Mark it as sent instead." };
+
 function closeSteps(f: DealFacts): Draft[] {
   return [
     { key: "po", label: "Attach the customer's PO under Documents", owner: "SALES", action: "ATTACH_PO", done: f.hasPoDocument },
@@ -130,7 +133,7 @@ function stageSteps(f: DealFacts): { steps: Draft[]; done?: string; detail?: str
       }
       steps.push({ key: "lines", label: "Add the lines (what is being sold)", owner: "SALES", action: "ADD_LINES", done: f.lineCount > 0 });
       if (f.lineCount > 0) steps.push(...priceSteps(f));
-      steps.push({ key: "advance", label: "Advance to Proposal Submitted", owner: "SALES", action: "ADVANCE", hint: "Once the proposal has gone to the customer." });
+      steps.push(SEND);
       return { steps, detail: "No presales needed: price the lines and send the proposal. Change that under Edit details if a BOQ is needed." };
     }
     case "BOQ": {
@@ -141,7 +144,7 @@ function stageSteps(f: DealFacts): { steps: Draft[]; done?: string; detail?: str
       } else if (f.presalesRequest === "SUBMITTED") steps.push({ key: "boq", label: "BOQ submitted by presales", owner: "PRESALES", done: true });
       else steps.push({ key: "ask-presales", label: "Ask presales for the BOQ (or Skip BOQ if none is needed)", owner: "SALES", action: "ASK_PRESALES" });
       if (f.lineCount > 0 || !f.openPresalesRequest) steps.push(...priceSteps(f));
-      steps.push({ key: "advance", label: "Advance to Proposal Submitted", owner: "SALES", action: "ADVANCE", hint: "Once the proposal has gone to the customer." });
+      steps.push(SEND);
       return { steps };
     }
     case "PROPOSAL_SUBMITTED":

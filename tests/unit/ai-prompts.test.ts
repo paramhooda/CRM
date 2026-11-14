@@ -36,6 +36,14 @@ describe("ai prompts", () => {
     expect(p.maxTokens).toBeGreaterThan(buildPrompt("scope", deal).maxTokens);
   });
 
+  it("the proposal email names what is enclosed, never a price", () => {
+    const p = buildPrompt("email", deal);
+    expect(p.user).toContain("- HPE 2U rack server (2 Nos)");
+    expect(p.user).toContain("- NOC monitoring (10 Devices, 12 months)");
+    expect(p.user).toMatch(/quotation attached/);
+    expect(p.user).not.toMatch(/1200000|987654|GM|margin/i);
+  });
+
   it("a brief for a support role would carry no money even if asked", () => {
     const { money: _m, ...noMoney } = deal;
     expect(buildPrompt("brief", noMoney).user).not.toMatch(/Value|GM/);

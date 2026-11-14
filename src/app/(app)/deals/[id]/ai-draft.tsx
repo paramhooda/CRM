@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useAiEnabled } from "@/components/crm/providers";
 import { api, errorMessage } from "@/client/api";
 
-export type DraftKind = "scope" | "boq_summary" | "brief";
+export type DraftKind = "scope" | "boq_summary" | "brief" | "email";
 
 /** "Draft with AI": fills a text field from the deal's data. Rendered only when the server has an AI key. */
 export function AiDraftButton({ dealId, kind, onDraft, label = "Draft with AI" }: { dealId: string; kind: DraftKind; onDraft: (text: string) => void; label?: string }) {

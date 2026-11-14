@@ -57,6 +57,7 @@ export const dealDetailInclude = {
   documents: { where: { deletedAt: null }, orderBy: { uploadedAt: "desc" }, select: { id: true, fileName: true, contentType: true, sizeBytes: true, description: true, uploadedAt: true, kind: { select: { id: true, name: true, restrictedToSales: true, requiredAtWon: true } }, uploadedBy: { select: { id: true, fullName: true } } } },
   approvals: { orderBy: { requestedAt: "desc" }, take: 5, include: { steps: { orderBy: { stepNo: "asc" } }, requestedBy: { select: { id: true, fullName: true } } } },
   quotes: { orderBy: { revision: "desc" }, select: { id: true, quoteNo: true, revision: true, validUntil: true, subtotal: true, documentId: true, createdAt: true, createdBy: { select: { id: true, fullName: true } } } },
+  emails: { orderBy: { sentAt: "desc" }, take: 20, select: { id: true, to: true, cc: true, subject: true, documentIds: true, status: true, error: true, sentAt: true, sentBy: { select: { id: true, fullName: true } } } },
 } satisfies Prisma.DealInclude;
 
 export type DealDetailRecord = Prisma.DealGetPayload<{ include: typeof dealDetailInclude }>;
@@ -257,6 +258,7 @@ export async function dealView(actor: Actor, deal: DealDetailRecord) {
     documents: deal.documents.filter((d) => salesSide || !d.kind.restrictedToSales),
     approvals: deal.approvals.map((a) => ({ ...a, dealValue: a.dealValue.toString(), gmPct: a.gmPct?.toString() ?? null })),
     quotes: salesSide ? deal.quotes.map((q) => ({ ...q, subtotal: q.subtotal.toString(), validUntil: q.validUntil.toISOString().slice(0, 10) })) : [],
+    emails: salesSide ? deal.emails : [],
     approvalState: approval,
     approvalReasons: matched.flatMap((m) => m.reasons.map((r) => `${m.rule.name}: ${r}`)),
     approvalRules: matched.map((m) => m.rule.name),

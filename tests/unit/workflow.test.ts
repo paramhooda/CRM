@@ -80,8 +80,8 @@ describe("what's next", () => {
     expect(current({ ...costed, unpricedLines: 0, approvalState: "NEEDED" }, rep)).toMatchObject({ action: "ASK_APPROVAL" });
     expect(nextActions({ ...costed, unpricedLines: 0, approvalState: "PENDING" }, rep, people).headline).toMatch(/Waiting on the approvers/);
     expect(current({ ...costed, unpricedLines: 0, approvalState: "PENDING" }, viewer({ role: "SALES_HEAD", isApprover: true }))).toMatchObject({ action: "DECIDE_APPROVAL", mine: true });
-    expect(current({ ...costed, unpricedLines: 0, approvalState: "APPROVED" }, rep)).toMatchObject({ action: "ADVANCE" });
-    expect(current({ ...costed, unpricedLines: 0 }, rep)).toMatchObject({ action: "ADVANCE", label: "Advance to Proposal Submitted" });
+    expect(current({ ...costed, unpricedLines: 0, approvalState: "APPROVED" }, rep)).toMatchObject({ action: "SEND_PROPOSAL" });
+    expect(current({ ...costed, unpricedLines: 0 }, rep)).toMatchObject({ action: "SEND_PROPOSAL", label: "Send the proposal (quote and email)" });
   });
 
   it("BOQ: presales starts, builds and submits; sales waits, then prices and advances", () => {

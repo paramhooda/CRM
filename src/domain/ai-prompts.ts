@@ -60,6 +60,15 @@ export function buildPrompt(kind: AiDraftKind, d: DealForPrompt): Prompt {
       maxTokens: 300,
     };
   }
+  if (kind === "email") {
+    const t = technicalOnly(d);
+    const lines = t.lines.length ? t.lines.map((l) => `- ${l.description} (${l.quantity} ${l.unit}${l.revenueModel === "ARR" ? `, ${l.termMonths ?? "?"} months` : ""})`).join("\n") : "(no lines)";
+    return {
+      system: SYSTEM,
+      user: `${base}\n\nWhat is being proposed:\n${lines}\n\nWrite the email ${d.owner} sends the customer contact with the quotation attached: a short greeting, what is enclosed and what it covers in one or two sentences, the validity, an offer to walk them through it, and a sign-off with the sender's name. Plain text, five to eight short sentences, no subject line, no prices.`,
+      maxTokens: 350,
+    };
+  }
   const lines = d.lines.length ? d.lines.map((l) => lineText(l, true)).join("\n") : "(no lines)";
   const history = d.history.length ? d.history.map((h) => `${h.when}: ${h.from ? `${h.from} → ` : ""}${h.to}${h.note ? ` (${h.note})` : ""}`).join("\n") : "(none)";
   const money = d.money ? `Value ${d.money.value}; GM ${d.money.gmPct ?? "unknown"}%; forecast ${d.money.forecast}; approval ${d.money.approvalState}` : "";

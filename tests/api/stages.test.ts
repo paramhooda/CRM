@@ -124,7 +124,7 @@ describe("stage moves", () => {
     d = expectOk(await rep.patch<Deal>(`/deals/${d.id}/lines`, { version: d.version, upserts: d.lines.map((l) => ({ id: l.id, unitSalesPrice: l.unitPurchaseCost ? String(Math.round(Number(l.unitPurchaseCost) / 0.8)) : "20000" })) }));
     expect(d.approvalState).toBe("NONE_NEEDED");
     expect(move(d, "ADVANCE")).toMatchObject({ enabled: true, toStage: "PROPOSAL_SUBMITTED" });
-    expect(d.next.headline).toBe("Your next step: advance to Proposal Submitted");
+    expect(d.next.headline).toBe("Your next step: send the proposal (quote and email)");
     d = expectOk(await stage(rep, d, { action: "ADVANCE" }));
     expect(d.stage).toBe("PROPOSAL_SUBMITTED");
     expect(move(d, "WON")).toMatchObject({ enabled: false, reason: expect.stringMatching(/PO document/) });

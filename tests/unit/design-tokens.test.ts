@@ -8,8 +8,9 @@ import path from "node:path";
  */
 const ROOT = path.resolve(import.meta.dirname, "../../src");
 const CSS = fs.readFileSync(path.join(ROOT, "app/globals.css"), "utf8");
-// The root error page renders without the stylesheet, so it mirrors the tokens inline.
-const EXEMPT = new Set(["app/globals.css", "app/global-error.tsx"]);
+// The root error page renders without the stylesheet, so it mirrors the tokens inline; the PDF renderer draws with
+// pdfkit, which takes hex colours (the same zinc greys as the tokens).
+const EXEMPT = new Set(["app/globals.css", "app/global-error.tsx", "server/pdf/quote.ts"]);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
