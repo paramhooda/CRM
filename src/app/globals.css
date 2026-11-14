@@ -55,6 +55,16 @@
   --color-ink-900: var(--ink-900);
   --color-ink-800: var(--ink-800);
 
+  /* Tinted icon squares and dots, for status and the four metric families */
+  --color-tint-blue: var(--tint-blue);
+  --color-tint-blue-foreground: var(--tint-blue-fg);
+  --color-tint-red: var(--tint-red);
+  --color-tint-red-foreground: var(--tint-red-fg);
+  --color-tint-amber: var(--tint-amber);
+  --color-tint-amber-foreground: var(--tint-amber-fg);
+  --color-tint-green: var(--tint-green);
+  --color-tint-green-foreground: var(--tint-green-fg);
+
   --color-brand-50: var(--brand-50);
   --color-brand-100: var(--brand-100);
   --color-brand-200: var(--brand-200);
@@ -132,13 +142,13 @@
   --color-bu-cyber-soft: var(--bu-cyber-soft);
   --color-bu-cyber-foreground: var(--bu-cyber-fg);
 
-  /* Shape: 12px cards and dialogs, 8px buttons, inputs and chips, 6px small tags */
+  /* Shape: 14px cards and dialogs (18px hero), 8px buttons, inputs and chips, 6px small tags */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-3xl: 20px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
   --radius-4xl: 24px;
 
   /* Depth: faint */
@@ -163,7 +173,7 @@
   --brand-900: #1e3a8a;
 
   /* Neutrals (zinc) */
-  --background: #fafafa;
+  --background: #f7f8fa;
   --foreground: #09090b;
   --foreground-secondary: #3f3f46;
   --foreground-subtle: #a1a1aa;
@@ -178,9 +188,9 @@
   --muted-foreground: #71717a;
   --accent: #f4f4f5;
   --accent-foreground: #09090b;
-  --border: #e4e4e7;
-  --border-strong: #d4d4d8;
-  --input: #e4e4e7;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --input: #e5e7eb;
   --ink-900: #18181b;
   --ink-800: #27272a;
   --overlay: rgb(9 9 11 / 0.2);
@@ -204,7 +214,7 @@
   --warning-foreground: #ffffff;
 
   /* Depth */
-  --shadow-card: 0 1px 2px rgb(9 9 11 / 0.04);
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.05);
   --shadow-raised: 0 2px 8px rgb(9 9 11 / 0.06), 0 1px 2px rgb(9 9 11 / 0.04);
   --shadow-popover: 0 0 0 1px rgb(9 9 11 / 0.05), 0 20px 50px -16px rgb(9 9 11 / 0.28);
 
@@ -223,16 +233,25 @@
   --chart-mag-4: var(--brand-600);
   --chart-mag-5: var(--brand-800);
 
-  /* Sidebar: same surface as the page, brand tint on the active item */
-  --sidebar: #fafafa;
-  --sidebar-foreground: #3f3f46;
+  /* Sidebar: white, the active item drawn as a bordered white card */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #27272a;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: var(--selected);
   --sidebar-accent-foreground: var(--selected-foreground);
   --sidebar-hover: #f4f4f5;
-  --sidebar-border: #e4e4e7;
+  --sidebar-border: #e5e7eb;
   --sidebar-ring: var(--ring);
+
+  --tint-blue: #eef4ff;
+  --tint-blue-fg: #2563eb;
+  --tint-red: #fef2f2;
+  --tint-red-fg: #dc2626;
+  --tint-amber: #fff7e6;
+  --tint-amber-fg: #b45309;
+  --tint-green: #ecfdf3;
+  --tint-green-fg: #15803d;
 
   --stage-qualified: #eff6ff;
   --stage-qualified-fg: #1d4ed8;
@@ -321,7 +340,7 @@
   --chart-mag-4: var(--brand-600);
   --chart-mag-5: var(--brand-800);
 
-  --sidebar: #09090b;
+  --sidebar: #0f0f11;
   --sidebar-foreground: #d4d4d8;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
@@ -330,6 +349,15 @@
   --sidebar-hover: #18181b;
   --sidebar-border: #27272a;
   --sidebar-ring: var(--ring);
+
+  --tint-blue: #172036;
+  --tint-blue-fg: #93c5fd;
+  --tint-red: #3b1212;
+  --tint-red-fg: #fca5a5;
+  --tint-amber: #3b2a05;
+  --tint-amber-fg: #fcd34d;
+  --tint-green: #06281c;
+  --tint-green-fg: #6ee7b7;
 
   --stage-qualified: #172554;
   --stage-qualified-fg: #93c5fd;
@@ -384,9 +412,8 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
-  /* Numbers that align: Geist Mono, tabular figures */
+  /* Numbers that align: tabular figures in the UI face; codes alone use the mono face (RecordCode) */
   .tabular {
-    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 }
