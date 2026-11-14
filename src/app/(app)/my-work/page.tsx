@@ -43,11 +43,12 @@ export default async function MyWorkPage() {
                   <div className="text-xs text-muted-foreground"><RecordCode>{r.deal.code}</RecordCode> · {r.deal.account.name} · {r.deal.owner.fullName} · {r.deal._count.lines} line{r.deal._count.lines === 1 ? "" : "s"}</div>
                   {"scope" in r && r.scope && <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{r.scope}</div>}
                   {"notes" in r && r.notes && <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{r.notes}</div>}
+                  <div className="mt-1 text-sm font-medium" data-slot="todo">{r.todo}</div>
                 </div>
                 <StagePill stage={r.deal.stage} dot />
                 <StatusPill status={r.overdue ? "OVERDUE" : r.status} dot />
                 <span className={cn("w-28 text-right text-xs", r.overdue ? "font-medium text-destructive" : "text-muted-foreground")}>Due {fmtDate(r.dueDate)} · {relativeDays(r.dueDate)}</span>
-                <Button asChild size="sm"><Link href={`/deals/${r.deal.id}?tab=lines`}>{r.status === "REQUESTED" ? "Start" : "Open"}</Link></Button>
+                <Button asChild size="sm"><Link href={`/deals/${r.deal.id}`}>Open deal</Link></Button>
               </div>
             ))}
           </div>

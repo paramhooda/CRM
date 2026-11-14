@@ -316,7 +316,8 @@ function resolveLine(input: LineInput, refs: LineRefs, existing?: Partial<Resolv
     unit: input.unit ?? existing?.unit ?? product?.unit ?? "Nos",
     revenueModel, termMonths,
     unitSalesPrice: input.unitSalesPrice === undefined ? existing?.unitSalesPrice ?? null : input.unitSalesPrice,
-    unitPurchaseCost: input.unitPurchaseCost === undefined ? existing?.unitPurchaseCost ?? (oem.isOwnIp && product?.standardCost ? product.standardCost.toString() : null) : input.unitPurchaseCost,
+    // An own-IP catalogue line takes the product's standard cost unless someone sets a cost; a blank never clears it
+    unitPurchaseCost: input.unitPurchaseCost ?? existing?.unitPurchaseCost ?? (oem.isOwnIp && product?.standardCost ? product.standardCost.toString() : null),
     salesMethodId,
     ownIp: oem.isOwnIp,
   };

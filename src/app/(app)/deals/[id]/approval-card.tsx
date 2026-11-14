@@ -9,7 +9,7 @@ import { ReasonDialog, ConfirmDialog } from "@/components/crm/dialogs";
 import { useActor } from "@/components/crm/providers";
 import { api, errorMessage } from "@/client/api";
 import { fmtDate } from "@/lib/format";
-import type { ApprovalState } from "@/domain/stages";
+import { isOpen, type ApprovalState, type Stage } from "@/domain/stages";
 import { cn } from "@/lib/utils";
 
 type Step = { stepNo: number; label: string; approvers: { id: string; fullName: string }[]; decision: string | null; decidedByName: string | null; decidedAt: Date | string | null; note: string | null; autoPassed: boolean; current: boolean };
@@ -31,7 +31,7 @@ export function ApprovalCard({ dealId, stage, state, reasons, approvals, canEdit
   const [asking, setAsking] = useState(false);
   const latest = approvals[0];
   const s = STATE_TEXT[state];
-  const canAsk = canEdit && (state === "NEEDED" || state === "STALE" || state === "REJECTED") && (stage === "QUALIFIED" || stage === "BOQ");
+  const canAsk = canEdit && (state === "NEEDED" || state === "STALE" || state === "REJECTED") && isOpen(stage as Stage);
   const myStep = latest?.status === "PENDING" ? latest.steps.find((st) => st.current && st.approvers.some((a) => a.id === actor.id)) : undefined;
   const request = async () => {
     setAsking(true);
@@ -46,7 +46,7 @@ export function ApprovalCard({ dealId, stage, state, reasons, approvals, canEdit
     }
   };
   return (
-    <section className="rounded-xl border border-border bg-card p-4" aria-label="Approval">
+    <section id="approval" className="scroll-mt-24 rounded-xl border border-border bg-card p-4" aria-label="Approval">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold"><ShieldCheck className="size-4 text-muted-foreground" /> Price approval</h2>
         <span className={cn("text-xs font-medium", s.tone)}>{s.label}</span>

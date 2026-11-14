@@ -105,7 +105,9 @@ describe("stage path", () => {
 
   it("handing over to presales needs the customer's requirement on file, and reuses an open presales request", () => {
     expect(handoverBlockers(facts({ presalesDocuments: 0 }))[0]).toMatch(/requirement/);
-    expect(findMove(facts({ presalesDocuments: 0 }), owner, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/Documents/) });
+    // the move stays clickable: its dialog attaches the document first, and the server refuses the move without it
+    expect(findMove(facts({ presalesDocuments: 0 }), owner, "ADVANCE")).toMatchObject({ enabled: true, needsDocument: true, needsPresalesRequest: true });
+    expect(findMove(facts(), owner, "ADVANCE")).toMatchObject({ enabled: true, needsDocument: false });
     expect(findMove(facts({ openPresalesRequest: true, presalesRequest: "REQUESTED" }), owner, "ADVANCE")).toMatchObject({ enabled: true, needsPresalesRequest: false });
     // a resale deal never needs a document to advance
     expect(findMove(facts({ needsPresales: false, presalesDocuments: 0 }), owner, "ADVANCE")!.enabled).toBe(true);

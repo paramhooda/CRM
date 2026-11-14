@@ -51,23 +51,43 @@ export function DocumentsPanel({ dealId, documents, canUpload, sales }: { dealId
   );
 }
 
-function UploadDialog({ dealId, sales, onClose }: { dealId: string; sales: boolean; onClose: () => void }) {
+/** The kind + file pair, reused inside the hand-over dialogs. `kinds` is already filtered for the viewer. */
+export function DocumentFields({ idPrefix = "doc", kinds, kindId, onKind, onFile, errors, required }: { idPrefix?: string; kinds: { id: string; name: string }[]; kindId: string | null; onKind: (v: string | null) => void; onFile: (f: File | null) => void; errors: Record<string, string>; required?: boolean }) {
+  return (
+    <>
+      <Field label="Kind" htmlFor={`${idPrefix}-kind`} error={errors.documentKindId} required={required}><OptionSelect id={`${idPrefix}-kind`} value={kindId} onChange={onKind} options={kinds} invalid={!!errors.documentKindId} /></Field>
+      <Field label="File" htmlFor={`${idPrefix}-file`} error={errors.file} required={required} hint="PDF, Office files, images or zip, up to 20 MB."><Input id={`${idPrefix}-file`} type="file" onChange={(e) => onFile(e.target.files?.[0] ?? null)} aria-invalid={!!errors.file} /></Field>
+    </>
+  );
+}
+
+/** One multipart POST; the server checks kind, type and size again. */
+export async function uploadDocument(dealId: string, documentKindId: string, file: File, description?: string) {
+  const form = new FormData();
+  form.set("documentKindId", documentKindId);
+  if (description) form.set("description", description);
+  form.set("file", file);
+  return api.upload<Doc>(`/deals/${dealId}/documents`, form);
+}
+
+/** Kinds the viewer may attach: sales roles see every kind, support roles only the ones not restricted to sales. */
+export function useDocumentKinds(sales: boolean) {
   const L = useLookups();
+  return L.documentKinds.filter((k) => sales || !k.restrictedToSales);
+}
+
+export function UploadDialog({ dealId, sales, kindId: preset, title = "Upload a document", description, onClose }: { dealId: string; sales: boolean; kindId?: string | null; title?: string; description?: string; onClose: () => void }) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
-  const f = useForm({ documentKindId: null as string | null, description: "" });
-  const kinds = L.documentKinds.filter((k) => sales || !k.restrictedToSales);
+  const f = useForm({ documentKindId: (preset ?? null) as string | null, description: "" });
+  const kinds = useDocumentKinds(sales);
   const save = () =>
     f.submit(async (v) => {
       const errs: Record<string, string> = {};
       if (!v.documentKindId) errs.documentKindId = "Pick the kind of document.";
       if (!file) errs.file = "Choose a file.";
       if (Object.keys(errs).length) return f.setErrors(errs);
-      const form = new FormData();
-      form.set("documentKindId", v.documentKindId!);
-      if (v.description) form.set("description", v.description);
-      form.set("file", file!);
-      await api.upload(`/deals/${dealId}/documents`, form);
+      await uploadDocument(dealId, v.documentKindId!, file!, v.description);
       toast.success("Document uploaded");
       onClose();
       router.refresh();
@@ -75,10 +95,9 @@ function UploadDialog({ dealId, sales, onClose }: { dealId: string; sales: boole
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Upload a document</DialogTitle><DialogDescription>PDF, Office files, images or zip, up to 20 MB.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description ?? "It is attached to the deal and shows under Documents."}</DialogDescription></DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-          <Field label="Kind" htmlFor="doc-kind" error={f.errors.documentKindId} required><OptionSelect id="doc-kind" value={f.values.documentKindId} onChange={(v) => f.set("documentKindId", v)} options={kinds} invalid={!!f.errors.documentKindId} /></Field>
-          <Field label="File" htmlFor="doc-file" error={f.errors.file} required><Input id="doc-file" type="file" onChange={(e) => { setFile(e.target.files?.[0] ?? null); f.setErrors((x) => { const { file: _f, ...rest } = x; return rest; }); }} aria-invalid={!!f.errors.file} /></Field>
+          <DocumentFields kinds={kinds} kindId={f.values.documentKindId} onKind={(v) => f.set("documentKindId", v)} onFile={(x) => { setFile(x); f.setErrors((e) => { const { file: _f, ...rest } = e; return rest; }); }} errors={f.errors} required />
           <Field label="Description" htmlFor="doc-desc" error={f.errors.description}><Input id="doc-desc" value={f.values.description} onChange={(e) => f.set("description", e.target.value)} placeholder="Optional" maxLength={300} /></Field>
           <FormError message={f.formError && !Object.keys(f.errors).length ? f.formError : null} />
           <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" disabled={f.pending}>Upload</Button></DialogFooter>

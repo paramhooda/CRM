@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Client, as, expectError, expectOk, isoDate, uniq, uploadDoc } from "./helpers";
 
-type Move = { action: string; enabled: boolean; reason?: string; toStage: string; needsPresalesRequest?: boolean; needsPo?: boolean };
+type Move = { action: string; enabled: boolean; reason?: string; toStage: string; needsPresalesRequest?: boolean; needsPo?: boolean; needsDocument?: boolean };
 type Line = { id: string; lineNo: number; unitSalesPrice: string | null; unitPurchaseCost: string | null; editable: string[]; oem: { isOwnIp: boolean } };
 type Next = { headline: string; waitingOn?: { party: string; name: string | null; due: string | null }; steps: { key: string; action?: string; done: boolean; current: boolean; mine: boolean }[] };
 type Ability = { enabled: boolean; reason: string | null };
@@ -42,13 +42,14 @@ describe("stage moves", () => {
     expectError(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: presalesId, presalesDueDate: isoDate(7) }), 409, "NOT_ALLOWED");
     d = expectOk(await rep.patch<Deal>(`/deals/${d.id}`, { version: d.version, primaryContactId: contactId }));
     // the customer's requirement travels with the hand-over; presales is asked through Advance, never by hand in Qualified
-    expect(move(d, "ADVANCE")).toMatchObject({ enabled: false, reason: expect.stringMatching(/requirement/) });
+    expect(move(d, "ADVANCE")).toMatchObject({ enabled: true, needsDocument: true });
     expect(d.next).toMatchObject({ headline: expect.stringMatching(/^Your next step: attach the customer's requirement/) });
     expect(d.requestAbility.presales).toMatchObject({ enabled: false, reason: expect.stringMatching(/Advance to BOQ/) });
     expectError(await rep.post(`/deals/${d.id}/presales-requests`, { assignedToId: presalesId, dueDate: isoDate(5), scope: "Size it" }), 409, "WRONG_STAGE");
+    expectError(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: presalesId, presalesDueDate: isoDate(7), presalesScope: "Two hosts" }), 409, "NO_DOCUMENT");
     expectOk(await uploadDoc(rep, d.id, "Customer RFP", "RFP.pdf"));
     d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
-    expect(move(d, "ADVANCE")).toMatchObject({ enabled: true, toStage: "BOQ", needsPresalesRequest: true });
+    expect(move(d, "ADVANCE")).toMatchObject({ enabled: true, toStage: "BOQ", needsPresalesRequest: true, needsDocument: false });
     expect(d.next.steps.find((s) => s.current)).toMatchObject({ action: "ADVANCE", mine: true });
     expectError(await stage(rep, d, { action: "ADVANCE" }), 400); // who and when
     expectError(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: purchaseId, presalesDueDate: isoDate(7) }), 400);
@@ -150,7 +151,7 @@ describe("stage moves", () => {
     expect(move(d, "ADVANCE")).toMatchObject({ toStage: "PROPOSAL_SUBMITTED", enabled: true });
     expect(move(d, "SKIP_BOQ")).toBeUndefined();
     d = expectOk(await rep.patch<Deal>(`/deals/${d.id}`, { version: d.version, needsPresales: true }));
-    expectError(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: presalesId, presalesDueDate: isoDate(3), presalesScope: "Check the spec" }), 409, "NOT_ALLOWED"); // no requirement attached
+    expectError(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: presalesId, presalesDueDate: isoDate(3), presalesScope: "Check the spec" }), 409, "NO_DOCUMENT"); // no requirement attached
     expectOk(await uploadDoc(rep, d.id, "Customer RFP"));
     d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
     d = expectOk(await stage(rep, d, { action: "ADVANCE", presalesAssigneeId: presalesId, presalesDueDate: isoDate(3), presalesScope: "Check the spec" }));
@@ -211,6 +212,9 @@ describe("stage moves", () => {
     d = expectOk(await rep.patch<Deal>(`/deals/${d.id}/lines`, { version: d.version, upserts: [{ productId: laptop.id, quantity: 5 }], deleteIds: [] }));
     const pr = expectOk(await rep.post<Req>(`/deals/${d.id}/pricing-requests`, { assignedToId: purchaseId, dueDate: isoDate(5) }));
     d = expectOk(await rep.get<Deal>(`/deals/${d.id}`));
+    // the assigned buyer sees the deal but never gets a brief (it carries prices); nobody gets one without a key
+    expectError(await purchase.post(`/deals/${d.id}/ai`, { kind: "brief" }), 403);
+    expectError(await purchase.post(`/deals/${d.id}/ai`, { kind: "scope" }), 403);
     // sales keeps the price while purchase prices; the spec is frozen
     expect(d.lines[1]!.editable).toEqual(["price"]);
     expectError(await rep.patch(`/deals/${d.id}/lines`, { version: d.version, upserts: [{ id: d.lines[1]!.id, quantity: 6 }] }), 403);

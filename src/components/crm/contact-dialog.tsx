@@ -16,7 +16,7 @@ import { contactSchema } from "@/contracts/accounts";
 export type ContactValues = { accountId: string | null; firstName: string; lastName: string; email: string; phone: string; mobile: string; designation: string; department: string; isPrimary: boolean };
 
 /** Add or edit a contact. The account is fixed when opened from an account page, otherwise picked here. */
-export function ContactDialog({ open, onOpenChange, contactId, initial, accountId, accountName, canDelete }: { open: boolean; onOpenChange: (o: boolean) => void; contactId?: string; initial?: Partial<ContactValues>; accountId?: string; accountName?: string; canDelete?: boolean }) {
+export function ContactDialog({ open, onOpenChange, contactId, initial, accountId, accountName, canDelete, onSaved }: { open: boolean; onOpenChange: (o: boolean) => void; contactId?: string; initial?: Partial<ContactValues>; accountId?: string; accountName?: string; canDelete?: boolean; onSaved?: (contact: { id: string; firstName: string; lastName: string }) => void | Promise<void> }) {
   const router = useRouter();
   const f = useForm<ContactValues>({ accountId: accountId ?? null, firstName: "", lastName: "", email: "", phone: "", mobile: "", designation: "", department: "", isPrimary: false, ...initial }, contactSchema);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -27,10 +27,10 @@ export function ContactDialog({ open, onOpenChange, contactId, initial, accountI
   const save = () =>
     f.submit(
       async (body) => {
-        if (contactId) await api.patch(`/contacts/${contactId}`, body);
-        else await api.post("/contacts", body);
+        const saved = contactId ? await api.patch<{ id: string; firstName: string; lastName: string }>(`/contacts/${contactId}`, body) : await api.post<{ id: string; firstName: string; lastName: string }>("/contacts", body);
         toast.success(contactId ? "Contact saved" : "Contact added");
         onOpenChange(false);
+        if (onSaved) await onSaved(saved);
         router.refresh();
       },
       (v: ContactValues): Record<string, unknown> => {

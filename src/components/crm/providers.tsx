@@ -8,6 +8,7 @@ import type { Actor } from "@/server/auth/actor";
 
 const LookupsContext = createContext<Lookups | null>(null);
 const ActorContext = createContext<Actor | null>(null);
+const AiContext = createContext(false);
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
@@ -18,12 +19,19 @@ export function Providers({ children }: { children: ReactNode }) {
   );
 }
 
-export function AppDataProvider({ lookups, actor, children }: { lookups: Lookups; actor: Actor; children: ReactNode }) {
+export function AppDataProvider({ lookups, actor, aiEnabled = false, children }: { lookups: Lookups; actor: Actor; aiEnabled?: boolean; children: ReactNode }) {
   return (
     <ActorContext.Provider value={actor}>
-      <LookupsContext.Provider value={lookups}>{children}</LookupsContext.Provider>
+      <LookupsContext.Provider value={lookups}>
+        <AiContext.Provider value={aiEnabled}>{children}</AiContext.Provider>
+      </LookupsContext.Provider>
     </ActorContext.Provider>
   );
+}
+
+/** Whether the server has an AI key, so "Draft with AI" buttons show. */
+export function useAiEnabled(): boolean {
+  return useContext(AiContext);
 }
 
 export function useLookups(): Lookups {

@@ -6,7 +6,7 @@ type Product = { id: string; code: string; name: string; oemId: string; business
 type Line = { id: string; lineNo: number; description: string; quantity: string; unitSalesPrice: string | null; unitPurchaseCost: string | null; lineValue: string | null; expectedGmPct: string | null; revenueModel: string; termMonths: number | null; editable: string[]; oem: { isOwnIp: boolean } };
 type Deal = {
   id: string; code: string; name: string; stage: string; version: number; dealValue: string; annualRecurringValue: string; expectedGmPct: string | null; totalCost: string | null; needsPresales: boolean;
-  primaryBusinessUnit: { name: string } | null; primaryOem: { name: string } | null; lines: Line[]; moves: { action: string; enabled: boolean; reason?: string; toStage: string }[]; canEdit: boolean; owner: { id: string }; forecastCategory?: string;
+  primaryBusinessUnit: { name: string } | null; primaryOem: { name: string } | null; lines: Line[]; moves: { action: string; enabled: boolean; reason?: string; toStage: string; needsDocument?: boolean }[]; canEdit: boolean; owner: { id: string }; forecastCategory?: string;
   next: { headline: string; steps: { action?: string; done: boolean }[] };
 };
 
@@ -57,7 +57,7 @@ describe("deals", () => {
     expect(d.lines[0]!.expectedGmPct).toBe("20");
     expect(d.lines[0]!.editable).toEqual(["spec", "price", "delete"]);
     const adv = d.moves.find((m) => m.action === "ADVANCE")!;
-    expect(adv).toMatchObject({ toStage: "BOQ", enabled: false, reason: expect.stringMatching(/requirement/) }); // the hand-over needs the customer's document
+    expect(adv).toMatchObject({ toStage: "BOQ", enabled: true, needsDocument: true }); // the hand-over asks for the customer's document
     expect(d.next.headline).toMatch(/^Your next step: attach the customer's requirement/);
     expect(d.next.steps.map((s) => [s.action, s.done])).toEqual([["SET_CONTACT", true], ["ATTACH_DOCUMENT", false], ["ADVANCE", false]]);
   });
@@ -144,5 +144,13 @@ describe("deals", () => {
     expect(p).not.toHaveProperty("dealValue");
     expect(p).not.toHaveProperty("forecastCategory");
     expect(p.moves).toEqual([]);
+  });
+
+  it("the assistant answers 404 AI_OFF until a key is set, and never writes a brief for a support role", async () => {
+    const d = expectOk(await rep.post<Deal>("/deals", { name: uniq("AI deal"), accountId, primaryContactId: contactId, expectedCloseDate: isoDate(30), lines: [{ productId: laptop.id, quantity: 1 }] }));
+    expectError(await rep.post(`/deals/${d.id}/ai`, { kind: "brief" }), 404, "AI_OFF");
+    expectError(await rep.post(`/deals/${d.id}/ai`, { kind: "nonsense" }), 400);
+    expectError(await (await as("purchase")).post(`/deals/${d.id}/ai`, { kind: "brief" }), 404); // out of scope: not even visible
+    expectError(await (await as("rep2")).post(`/deals/${d.id}/ai`, { kind: "scope" }), 404);
   });
 });

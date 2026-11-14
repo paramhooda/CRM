@@ -46,15 +46,19 @@ test("presales and purchase see only their assigned deals, never prices, and nev
   const unassigned = await createDeal(rep.page);
   const presalesUser = (await api<{ rows: { id: string; email: string }[] }>(rep.page, "GET", "/users")).rows.find((u) => u.email === "rakesh.yadav@progression.com")!;
   const buyer = (await api<{ rows: { id: string; email: string }[] }>(rep.page, "GET", "/users")).rows.find((u) => u.email === "meera.iyer@progression.com")!;
-  await api(rep.page, "POST", `/deals/${assigned.id}/presales-requests`, { assignedToId: presalesUser.id, dueDate: isoDay(7), scope: "Size the BOQ" });
-  await api(rep.page, "POST", `/deals/${assigned.id}/pricing-requests`, { assignedToId: buyer.id, dueDate: isoDay(7), notes: "Best price" });
   const po = L.documentKinds.find((k) => k.name === "Customer PO")!;
   const proposal = L.documentKinds.find((k) => k.name === "Solution document")!;
+  const rfp = L.documentKinds.find((k) => k.name === "Customer RFP")!;
   const upload = async (kindId: string, name: string) => {
     const res = await rep.page.request.post(`/api/v1/deals/${assigned.id}/documents`, { headers: { "x-requested-with": "fetch" }, multipart: { documentKindId: kindId, file: pdf(name) } });
     expect(res.status()).toBe(200);
     return (await res.json()).data as { id: string };
   };
+  // Purchase is asked while the deal is still sales'; presales comes in through the hand-over, which needs the requirement on file
+  await api(rep.page, "POST", `/deals/${assigned.id}/pricing-requests`, { assignedToId: buyer.id, dueDate: isoDay(7), notes: "Best price" });
+  await upload(rfp.id, "rfp.pdf");
+  const fresh = await api<{ version: number }>(rep.page, "GET", `/deals/${assigned.id}`);
+  await api(rep.page, "POST", `/deals/${assigned.id}/stage`, { version: fresh.version, action: "ADVANCE", presalesAssigneeId: presalesUser.id, presalesDueDate: isoDay(7), presalesScope: "Size the BOQ" });
   const poDoc = await upload(po.id, "po.pdf");
   const solDoc = await upload(proposal.id, "solution.pdf");
   await rep.context.close();

@@ -12,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Field, FormError, OptionSelect } from "@/components/crm/form";
 import { ConfirmDialog } from "@/components/crm/dialogs";
 import { useLookups } from "@/components/crm/providers";
+import { DocumentFields, uploadDocument, useDocumentKinds } from "./documents-panel";
 import { useForm } from "@/client/use-form";
 import { api } from "@/client/api";
 import type { Move } from "@/domain/stages";
@@ -55,11 +56,18 @@ export function StageActions({ dealId, version, moves, presalesPeople, hasPoDocu
   );
 }
 
-function MoveDialog({ dealId, version, move, presalesPeople, hasPoDocument, onClose }: { dealId: string; version: number; move: Move; presalesPeople: Person[]; hasPoDocument: boolean; onClose: () => void }) {
+/**
+ * The dialog behind every stage move. Entering BOQ asks for the presales engineer, due date and scope, and for the
+ * customer's requirement document when none is attached yet (uploaded first, then the move is posted).
+ */
+export function MoveDialog({ dealId, version, move, presalesPeople, hasPoDocument, onClose }: { dealId: string; version: number; move: Move; presalesPeople: Person[]; hasPoDocument: boolean; onClose: () => void }) {
   const router = useRouter();
   const L = useLookups();
+  const kinds = useDocumentKinds(true).filter((k) => !k.restrictedToSales);
   const [defaultDue] = useState(() => isoDay(new Date(Date.now() + 7 * 86_400_000)));
-  const f = useForm({ reason: "", lossReasonId: null as string | null, lossNotes: "", poNumber: "", presalesAssigneeId: null as string | null, presalesDueDate: defaultDue, presalesScope: "" });
+  const [file, setFile] = useState<File | null>(null);
+  const f = useForm({ reason: "", lossReasonId: null as string | null, lossNotes: "", poNumber: "", presalesAssigneeId: null as string | null, presalesDueDate: defaultDue, presalesScope: "", documentKindId: null as string | null });
+  const needsDocument = !!move.needsDocument;
   const needsForm = move.needsReason || move.needsLossReason || move.needsPo || move.needsPresalesRequest;
   const lossReasons = L.lossReasons.filter((r) => r.appliesTo === "BOTH" || r.appliesTo === (move.action === "LOST" ? "LOST" : "DROPPED"));
   const submit = () =>
@@ -70,10 +78,14 @@ function MoveDialog({ dealId, version, move, presalesPeople, hasPoDocument, onCl
       if (move.needsPo && !v.poNumber.trim()) errs.poNumber = "Enter the PO number.";
       if (move.needsPresalesRequest && !v.presalesAssigneeId) errs.presalesAssigneeId = "Pick a presales engineer.";
       if (move.needsPresalesRequest && !v.presalesDueDate) errs.presalesDueDate = "Set a due date.";
+      if (move.needsPresalesRequest && v.presalesScope.trim().length < 3) errs.presalesScope = "Say what presales should size and specify.";
+      if (needsDocument && !v.documentKindId) errs.documentKindId = "Pick the kind of document.";
+      if (needsDocument && !file) errs.file = "Attach the customer's requirement.";
       if (Object.keys(errs).length) {
         f.setErrors(errs);
         return;
       }
+      if (needsDocument) await uploadDocument(dealId, v.documentKindId!, file!);
       await api.post(`/deals/${dealId}/stage`, {
         action: move.action, version,
         reason: v.reason || null, lossReasonId: v.lossReasonId, lossNotes: v.lossNotes || null, poNumber: v.poNumber || null,
@@ -106,7 +118,13 @@ function MoveDialog({ dealId, version, move, presalesPeople, hasPoDocument, onCl
                 <OptionSelect id="mv-assignee" value={f.values.presalesAssigneeId} onChange={(v) => f.set("presalesAssigneeId", v)} options={presalesPeople.map((p) => ({ id: p.id, name: p.fullName }))} invalid={!!f.errors.presalesAssigneeId} />
               </Field>
               <Field label="Due date" htmlFor="mv-due" error={f.errors.presalesDueDate} required><Input id="mv-due" type="date" value={f.values.presalesDueDate} onChange={(e) => f.set("presalesDueDate", e.target.value)} /></Field>
-              <Field label="Scope" htmlFor="mv-scope" error={f.errors.presalesScope} hint="What presales should size and specify."><Textarea id="mv-scope" rows={3} value={f.values.presalesScope} onChange={(e) => f.set("presalesScope", e.target.value)} /></Field>
+              <Field label="Scope" htmlFor="mv-scope" error={f.errors.presalesScope} required hint="What presales should size and specify."><Textarea id="mv-scope" rows={3} value={f.values.presalesScope} onChange={(e) => f.set("presalesScope", e.target.value)} aria-invalid={!!f.errors.presalesScope} /></Field>
+              {needsDocument && (
+                <div className="flex flex-col gap-4 rounded-lg border border-border bg-background p-3">
+                  <p className="text-xs text-muted-foreground">Presales works from the customer&apos;s requirement. Attach it here (RFP, SoW or similar); it goes under Documents.</p>
+                  <DocumentFields idPrefix="mv-doc" kinds={kinds} kindId={f.values.documentKindId} onKind={(v) => f.set("documentKindId", v)} onFile={(x) => { setFile(x); f.setErrors((e) => { const { file: _f, ...rest } = e; return rest; }); }} errors={f.errors} required />
+                </div>
+              )}
             </>
           )}
           {move.needsPo && (

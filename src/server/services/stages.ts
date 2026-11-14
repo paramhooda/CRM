@@ -7,7 +7,7 @@ import { isManager } from "../authz/scope";
 import { toDate } from "@/contracts/common";
 import type { StageMoveInput } from "@/contracts/stages";
 import { activeRules, approvalStateFor, dealFacts, getDeal, loadDeal, todayDate, type DealDetailRecord } from "./deals";
-import { applyMove, findMove, STAGE_META, type Stage } from "@/domain/stages";
+import { applyMove, findMove, handoverBlockers, STAGE_META, type Stage } from "@/domain/stages";
 import { daysBetween } from "@/domain/fiscal";
 import { canEditDeal } from "../authz/scope";
 
@@ -47,6 +47,7 @@ export async function moveStage(actor: Actor, dealId: string, input: StageMoveIn
   const move = findMove(facts, { canEdit, isManager: isManager(actor) }, input.action);
   if (!move) throw new Conflict("That move isn't available from this stage.", "NOT_ALLOWED");
   if (!move.enabled) throw new Conflict(move.reason ?? "That move isn't allowed right now.", "NOT_ALLOWED");
+  if (move.needsDocument) throw new Conflict(handoverBlockers(facts)[0]!, "NO_DOCUMENT");
 
   if (move.needsReason && !input.reason) throw new ValidationError("Give a reason.", { reason: "Required." });
   let lossReasonName: string | null = null;

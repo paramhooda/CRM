@@ -54,7 +54,7 @@ export function LinesTable({ rows, sales, onEdit, onDelete, totals }: { rows: Li
                   <TableCell className="whitespace-nowrap text-right tabular">{r.quantity} <span className="text-xs text-muted-foreground">{r.unit}</span></TableCell>
                   <TableCell className="whitespace-nowrap text-xs">{REVENUE_MODEL_LABEL[r.revenueModel]}{r.revenueModel === "ARR" && r.termMonths ? ` · ${r.termMonths} mo` : ""}</TableCell>
                   {sales && <TableCell className={cn("text-right", r.unitSalesPrice ? "" : "text-warning")}>{r.unitSalesPrice ? <Money value={r.unitSalesPrice} precise /> : "Not priced"}</TableCell>}
-                  <TableCell className="text-right">{r.unitPurchaseCost ? <Money value={r.unitPurchaseCost} precise /> : <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell className={cn("text-right", !r.unitPurchaseCost && "text-warning")}>{r.unitPurchaseCost ? <Money value={r.unitPurchaseCost} precise /> : "No cost"}</TableCell>
                   {sales && <TableCell className="text-right font-medium"><Money value={r.lineValue} /></TableCell>}
                   {sales && <TableCell className="text-right"><Pct value={r.expectedGmPct} /></TableCell>}
                   {actions && (

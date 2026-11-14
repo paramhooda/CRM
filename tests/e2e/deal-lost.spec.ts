@@ -13,7 +13,9 @@ test("a deal goes on hold, resumes, and closes as lost with a reason", async ({ 
   await expect(page.getByText("Hold", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Budget frozen until next quarter")).toBeVisible();
 
-  await page.getByRole("button", { name: "Resume in Qualified" }).click();
+  // The panel says so too, and support roles would see "sales to resume the deal"
+  await expect(page.locator("[data-slot=next-headline]")).toHaveText("Your next step: resume the deal");
+  await page.getByRole("region", { name: "What's next" }).getByRole("button", { name: "Resume in Qualified" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Resume in Qualified" }).click();
   await expect(page.getByText("Moved to Qualified")).toBeVisible();
 

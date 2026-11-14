@@ -13,7 +13,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const [lookups, jar, approvals] = await Promise.all([allLookups(), cookies(), can(actor.role, "approvals.decide") ? myApprovals(actor, "PENDING") : Promise.resolve({ rows: [] })]);
   const sidebarOpen = jar.get("sidebar_state")?.value !== "false";
   return (
-    <AppDataProvider lookups={lookups} actor={actor}>
+    <AppDataProvider lookups={lookups} actor={actor} aiEnabled={!!process.env.OPENAI_API_KEY}>
       <AppShell sidebarOpen={sidebarOpen} pendingApprovals={approvals.rows.length}>{children}</AppShell>
     </AppDataProvider>
   );

@@ -10,7 +10,10 @@ import { isSupportRole, isManagerRole } from "@/domain/scope";
 import { PageHeader } from "@/components/crm/page-header";
 import { StagePill, ForecastPill, NeutralPill } from "@/components/crm/pills";
 import { Money, Pct } from "@/components/crm/money";
-import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { TabsContent } from "@/components/ui/tabs";
+import { DealTabs } from "./deal-tabs";
+import { NextPanel } from "./next-panel";
+import { DealBrief } from "./deal-brief";
 import { TabBar, Tab, TabCount } from "@/components/crm/tabs";
 import { StatTile } from "@/components/crm/stat-tile";
 import { CalendarDays, IndianRupee, Layers, Percent } from "lucide-react";
@@ -23,7 +26,6 @@ import { ApprovalCard } from "./approval-card";
 import { DocumentsPanel } from "./documents-panel";
 import { HistoryPanel } from "./history-panel";
 import { fmtDate, relativeDays } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { RecordCode } from "@/components/crm/code";
 
 export const metadata: Metadata = { title: "Deal" };
@@ -56,7 +58,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
       ]
     : [
         { label: "Lines", value: d.lines.length, sub: `${d.lines.filter((l) => l.unitPurchaseCost !== null).length} costed` },
-        { label: "Cost", value: <Money value={d.lines.reduce((s, l) => s + Number(l.lineCost ?? 0), 0)} />, sub: d.lines.some((l) => l.unitPurchaseCost === null) ? "Some lines uncosted" : "All lines costed" },
+        { label: "Cost", value: <Money value={d.lines.reduce((s, l) => s + Number(l.lineCost ?? 0), 0)} />, sub: d.facts.uncostedThirdPartyLines > 0 ? `${d.facts.uncostedThirdPartyLines} third-party line${d.facts.uncostedThirdPartyLines === 1 ? "" : "s"} to cost` : "All third-party lines costed", warn: d.facts.uncostedThirdPartyLines > 0 && d.facts.openPricingRequest },
         { label: "Close date", value: fmtDate(d.expectedCloseDate), sub: relativeDays(d.expectedCloseDate) },
       ];
   const closed = ["CLOSED_WON", "CLOSED_LOST", "DROPPED"].includes(d.stage);
@@ -86,6 +88,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         meta={<><StagePill stage={d.stage} dot /><span className="text-sm text-muted-foreground">{d.daysInStage}d in stage</span>{sales && d.forecastCategory && <ForecastPill forecast={d.forecastCategory} dot />}{d.deletedAt && <NeutralPill className="bg-destructive/10 text-destructive">Deleted {fmtDate(d.deletedAt)}</NeutralPill>}</>}
         actions={
           <>
+            {sales && <DealBrief dealId={d.id} />}
             {sales && <StageActions dealId={d.id} version={d.version} moves={d.moves} presalesPeople={presalesPeople} hasPoDocument={d.facts.hasPoDocument} />}
             <DealMenu deal={{ id: d.id, name: d.name, version: d.version, ownerId: d.owner.id, presalesOwnerId: d.presalesOwner?.id ?? null, deleted: !!d.deletedAt, canEdit: d.canEdit, stage: d.stage }} owners={owners} presalesPeople={presalesPeople} />
           </>
@@ -96,9 +99,12 @@ export default async function DealPage({ params, searchParams }: { params: Promi
           <StatTile key={f.label} label={f.label} value={f.value} note={f.sub} icon={[sales ? IndianRupee : Layers, sales ? Percent : IndianRupee, CalendarDays][i]} iconTone={"warn" in f && f.warn ? "red" : (["blue", "green", "amber"] as const)[i]} tone={"warn" in f && f.warn ? "red" : "default"} />
         ))}
       </section>
-      {sales && <StagePath stage={d.stage} needsPresales={d.needsPresales} heldFromStage={d.heldFromStage} lastOpenStage={d.lastOpenStage} />}
+      <StagePath stage={d.stage} needsPresales={d.needsPresales} heldFromStage={d.heldFromStage} lastOpenStage={d.lastOpenStage} />
+      <div className="mt-4">
+        <NextPanel deal={{ id: d.id, version: d.version, stage: d.stage, moves: d.moves, facts: d.facts, requestAbility: d.requestAbility, presalesRequests: d.presalesRequests, pricingRequests: d.pricingRequests, account: d.account, primaryContactId: d.primaryContactId, nextStep: d.nextStep, nextStepDate: d.nextStepDate, canEdit: d.canEdit }} next={d.next} presalesPeople={presalesPeople} purchasePeople={purchasePeople} sales={sales} />
+      </div>
 
-      <Tabs defaultValue={["lines", "documents", "history"].includes(tab ?? "") ? tab! : "overview"} className="mt-6">
+      <DealTabs tab={["lines", "documents", "history"].includes(tab ?? "") ? tab! : "overview"}>
         <TabBar>
           <Tab value="overview">Overview</Tab>
           <Tab value="lines">Lines <TabCount>{d.lines.length}</TabCount></Tab>
@@ -108,10 +114,6 @@ export default async function DealPage({ params, searchParams }: { params: Promi
 
         <TabsContent value="overview" className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <div className="flex flex-col gap-4">
-            <div className="rounded-xl border border-border bg-card p-4">
-              <div className="mb-2 flex items-center justify-between"><h2 className="text-sm font-semibold">Next step</h2>{d.nextStepDate && <span className={cn("text-xs", new Date(d.nextStepDate) < new Date() && !closed ? "text-destructive" : "text-muted-foreground")}>{fmtDate(d.nextStepDate)} · {relativeDays(d.nextStepDate)}</span>}</div>
-              <p className={cn("text-sm", !d.nextStep && "text-muted-foreground")}>{d.nextStep ?? (closed ? "Closed." : "No next step set. Add one so the deal keeps moving.")}</p>
-            </div>
             <dl className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm shadow-card">
               {overviewRows.map(([k, v]) => (
                 <div key={k} className="contents">
@@ -124,7 +126,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
           </div>
           <div className="flex flex-col gap-4">
             {sales && (!closed || d.approvalState === "APPROVED" || d.approvalState === "PENDING") && <ApprovalCard dealId={d.id} stage={d.stage} state={d.approvalState} reasons={d.approvalReasons} approvals={approvals} canEdit={d.canEdit} />}
-            <RequestCards dealId={d.id} stage={d.stage} canEdit={d.canEdit} presales={d.presalesRequests} pricing={d.pricingRequests} presalesPeople={presalesPeople} purchasePeople={purchasePeople} lineEditable={d.lineEditable} />
+            <RequestCards dealId={d.id} canEdit={d.canEdit} presales={d.presalesRequests} pricing={d.pricingRequests} presalesPeople={presalesPeople} purchasePeople={purchasePeople} ability={d.requestAbility} facts={d.facts} />
           </div>
         </TabsContent>
 
@@ -133,13 +135,13 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         </TabsContent>
 
         <TabsContent value="documents" className="mt-4">
-          <DocumentsPanel dealId={d.id} documents={d.documents} canUpload={!d.deletedAt && (d.canEdit || d.canEditLines || actor.role === "ADMIN" || d.stage === "PROPOSAL_SUBMITTED" || d.stage === "NEGOTIATION")} sales={sales} />
+          <DocumentsPanel dealId={d.id} documents={d.documents} canUpload={d.canUpload} sales={sales} />
         </TabsContent>
 
         <TabsContent value="history" className="mt-4">
           <HistoryPanel stages={history.stages} audit={history.audit} sales={sales} />
         </TabsContent>
-      </Tabs>
+      </DealTabs>
     </>
   );
 }

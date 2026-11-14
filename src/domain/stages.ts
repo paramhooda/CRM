@@ -79,6 +79,8 @@ export type Move = {
   needsPo?: boolean;
   /** Needs a presales engineer and due date (entering BOQ) */
   needsPresalesRequest?: boolean;
+  /** Entering BOQ with no document presales could work from: the move's dialog attaches one first */
+  needsDocument?: boolean;
 };
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many.replace("N", String(n)));
@@ -140,11 +142,10 @@ export function allowedMoves(f: DealFacts, actor: MoveActor): Move[] {
     let extra: Partial<Move> = {};
     if (f.stage === "QUALIFIED") {
       gates = qualifiedBlockers(f);
-      if (next === "BOQ") {
-        gates = [...gates, ...handoverBlockers(f)];
-        // A presales request raised earlier is reused rather than doubled
-        extra = { needsPresalesRequest: !f.openPresalesRequest };
-      } else gates = [...gates, ...proposalBlockers(f)];
+      // A presales request raised earlier is reused rather than doubled; a missing requirement document is asked
+      // for in the move itself (the server still refuses the move without it)
+      if (next === "BOQ") extra = { needsPresalesRequest: !f.openPresalesRequest, needsDocument: handoverBlockers(f).length > 0 };
+      else gates = [...gates, ...proposalBlockers(f)];
     } else if (next === "PROPOSAL_SUBMITTED") gates = proposalBlockers(f);
     else if (next === "CLOSED_WON") {
       gates = wonBlockers(f);
