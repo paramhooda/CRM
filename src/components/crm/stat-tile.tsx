@@ -37,8 +37,8 @@ export function StatTile({ label, value, tone = "default", icon, iconTone = "blu
         {icon && <TintIcon icon={icon} tone={iconTone === "default" ? "blue" : iconTone} />}
       </div>
       <div className="mt-3 flex items-end justify-between gap-3">
-        <div className={cn("text-[2.25rem] font-bold leading-none tracking-tight tabular", VALUE_TONE[tone])}>{value}</div>
-        {series && series.length > 1 && <Sparkline data={series} tone={sparkTone} className="h-12 w-28 shrink-0" />}
+        <div className={cn("min-w-0 whitespace-nowrap text-[2rem] font-bold leading-none tracking-tight tabular", VALUE_TONE[tone])}>{value}</div>
+        {series && series.length > 1 && <Sparkline data={series} tone={sparkTone} className="h-11 w-24 shrink" />}
       </div>
       {(delta !== undefined || note) && (
         <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">

@@ -9,7 +9,7 @@ import { queryString } from "@/lib/url-state";
 import { cn } from "@/lib/utils";
 
 export type FilterOption = { value: string; label: string };
-export type FilterDef = { key: string; label: string; options: FilterOption[]; width?: string };
+export type FilterDef = { key: string; label: string; options: FilterOption[]; width?: string; /** The text of the "everything" row, default "<label>: all" */ allLabel?: string };
 
 /** The one filter bar: a search box and selects, all written to the URL so lists, charts and exports agree. */
 export function FilterBar({ filters, search, className, children }: { filters: FilterDef[]; search?: { placeholder: string }; className?: string; children?: React.ReactNode }) {
@@ -49,7 +49,7 @@ export function FilterBar({ filters, search, className, children }: { filters: F
             <SelectValue placeholder={f.label} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__all">{f.label}: all</SelectItem>
+            <SelectItem value="__all">{f.allLabel ?? `${f.label}: all`}</SelectItem>
             {f.options.map((o) => (
               <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
             ))}
