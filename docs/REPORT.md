@@ -110,9 +110,9 @@ Everything below was run by `scripts/test-all.sh` from an empty database: recrea
 |---|---|
 | Recreate test database, `prisma migrate deploy`, seed | pass |
 | Lint, typecheck | pass |
-| Unit tests (stages, lines, approvals, scope and permissions, review, formatting, design tokens) | pass, 44 tests |
+| Unit tests (stages, workflow checklist and request rules, lines, approvals, AI prompts, scope and permissions, review, formatting, design tokens) | pass, 61 tests |
 | Production build (`next build`) | pass |
-| API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV) | pass, 44 tests |
+| API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV; the flow rules: document before hand-over, lines before pricing, frozen lines, costs before proposal, approval before won, nothing on hold, AI off) | pass, 47 tests |
 | Browser tests, every core flow per role | pass, 33 tests |
 | Screenshots of every main screen per role | pass, 7 runs, 41 images |
 
@@ -124,7 +124,7 @@ Browser flows, by requirement:
 | Create an account and a contact; GSTIN validated | Sales | `tests/e2e/accounts.spec.ts` | pass |
 | Capture, work, convert and disqualify a lead | Sales | `tests/e2e/leads.spec.ts` | pass |
 | Deal with three lines (catalogue, custom own-IP, recurring) created through the screens | Sales | `tests/e2e/deal-won.spec.ts` | pass |
-| Qualified → BOQ (presales request) → BOQ submitted → pricing completed → Proposal → Negotiation → PO attached → Closed-Won; every stage dated in History | Sales, Presales, Purchase | `tests/e2e/deal-won.spec.ts` | pass |
+| Following only the What's next panel: sales told to attach the requirement, hands over inside Advance to BOQ (scope and document required); presales told to start, costs the own-IP line, submits; sales told to ask purchase; purchase told which line to cost, Complete held back until it is; sales advances, attaches the PO from the panel, closes won; every stage dated in History; lines frozen for the wrong role at each step | Sales, Presales, Purchase | `tests/e2e/deal-won.spec.ts` | pass |
 | Hold, resume, Closed-Lost with a required reason; Dropped; reopen by a manager only | Sales, Sales Head | `tests/e2e/deal-lost.spec.ts` | pass |
 | Edit name, forecast and a line price; History and the audit log show old and new values; stale save refused | Sales, Admin | `tests/e2e/audit.spec.ts` | pass |
 | Another rep cannot see or change a deal through the screens or the API (404); regional head sees only their team | Sales ×2, Sales Head ×2 | `tests/e2e/access.spec.ts` | pass |
