@@ -28,6 +28,9 @@ import { SendProposalDialog } from "./send-proposal-dialog";
 
 type Person = { id: string; fullName: string };
 type Deal = Pick<DealView, "id" | "version" | "stage" | "name" | "moves" | "facts" | "requestAbility" | "presalesRequests" | "pricingRequests" | "account" | "primaryContact" | "primaryContactId" | "nextStep" | "nextStepDate" | "canEdit" | "lines" | "lineEditable" | "quotes" | "documents">;
+/** Fired by the Lines tab when every line has a cost, so the panel can open "Complete pricing" */
+export const ALL_COSTED_EVENT = "crm:all-costed";
+
 type Dialog = { type: "move"; move: Move } | { type: "raise"; kind: "presales" | "pricing" } | { type: "finish"; kind: "presales" | "pricing"; requestId: string } | { type: "upload"; kindId: string | null; title: string } | { type: "contact" } | { type: "note" } | { type: "grid"; mode: GridMode } | { type: "line" } | { type: "send" };
 const OPEN = ["REQUESTED", "IN_PROGRESS"];
 
@@ -40,6 +43,12 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales, m
   const router = useRouter();
   const L = useLookups();
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  // The inline cost grid on the Lines tab says when the last cost is in: the panel then offers to complete pricing
+  useEffect(() => {
+    const onDone = () => { const pr = deal.pricingRequests.find((r) => OPEN.includes(r.status)); if (pr) setDialog({ type: "finish", kind: "pricing", requestId: pr.id }); };
+    window.addEventListener(ALL_COSTED_EVENT, onDone);
+    return () => window.removeEventListener(ALL_COSTED_EVENT, onDone);
+  }, [deal.pricingRequests]);
   const [busy, setBusy] = useState(false);
   const current = next.steps.find((s) => s.current);
   const openRequest = (owner: Step["owner"]) => (owner === "PURCHASE" ? deal.pricingRequests : deal.presalesRequests).find((r) => OPEN.includes(r.status));
@@ -83,7 +92,7 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales, m
       case "FIX_CLOSE_DATE": return <Button asChild size="sm"><Link href={`/deals/${deal.id}/edit`}>Edit details</Link></Button>;
       case "ATTACH_DOCUMENT": return <Button size="sm" onClick={() => setDialog({ type: "upload", kindId: null, title: "Attach the customer's requirement" })}>Attach document</Button>;
       case "ATTACH_PO": return <Button size="sm" onClick={() => setDialog({ type: "upload", kindId: poKind, title: "Attach the customer's PO" })}>Attach PO</Button>;
-      case "ADD_LINES": return canAdd ? <Button size="sm" onClick={() => setDialog({ type: "line" })}>Add line</Button> : lines;
+      case "ADD_LINES": return canAdd && sales ? <Button size="sm" onClick={() => setDialog({ type: "line" })}>Add line</Button> : <Button asChild size="sm"><Link href={`/deals/${deal.id}?tab=lines`}>Build the BOQ <ArrowRight /></Link></Button>;
       case "ENTER_COSTS": return deal.lines.some((l) => l.editable.includes("cost")) ? <Button size="sm" onClick={() => setDialog({ type: "grid", mode: "cost" })}>Enter costs</Button> : lines;
       case "SET_PRICES": return deal.lines.some((l) => l.editable.includes("price")) ? <Button size="sm" onClick={() => setDialog({ type: "grid", mode: "price" })}>Set prices</Button> : lines;
       case "ADVANCE": case "CLOSE_WON": case "RESUME": case "REOPEN": {

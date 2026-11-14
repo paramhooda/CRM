@@ -100,7 +100,10 @@ Submitted is flagged in pipeline review. **[inferred]**
 hand a deal to presales from Qualified), or raised by hand in BOQ when none is open (a second look after a cancelled
 or submitted BOQ). Either way the customer's requirement must be on file, as a document presales can see. It names
 the engineer, a due date and the scope. Opening the deal starts it; presales edits the lines and submits it with a short
-summary, naming the buyer when third-party lines still need a cost (the pricing request is raised in the same step);
+summary, naming the buyer when third-party lines still need a cost (the pricing request is raised in the same step).
+Presales lands on the **BOQ grid**: every line a row (catalogue product or custom description, BU, Sub BU, OEM,
+quantity, unit, model, term, own-IP cost), rows added by hand or read out of a document, one Save for the whole bill,
+and never a price;
 while it is open the lines belong to presales (the assignee of the open request) and sales cannot change them or ask
 purchase. The deal's *presales owner* is the engineer on the latest request. Whether a deal needs presales is
 suggested from the Sub BUs on its lines (each Sub BU has a *needs presales* flag an admin maintains) and can be
@@ -108,7 +111,8 @@ changed by sales. "When I select no pre-sales required, it must not ask me to se
 
 **Pricing request** (sales or presales → purchase). Raised on an open deal with a buyer, due date and notes, in any
 open stage (a re-quote in Negotiation is real), once the deal has at least one line with a third-party OEM. Purchase
-starts it, enters the unit purchase cost on every line that is not own IP, and completes it; while it is open
+opens it and lands on one cost grid (nothing else on the tab), enters the unit purchase cost on every line that is
+not own IP, by hand or read out of the vendors' quotations, and completes it the moment the last cost is in; while it is open
 nobody but an admin changes what is sold (sales may still set prices, presales still costs own-IP lines). Own-IP
 lines take the product's standard cost by default; presales may enter their cost. "Sales will add pricing per
 product after getting prices from Purchase."
@@ -266,7 +270,12 @@ against spreadsheet formula injection). **[inferred]** Native .xlsx is not produ
   test). Secrets are write-only and redacted in the audit log.
 - **Assistant (optional):** with an OpenAI key under Settings (or `OPENAI_API_KEY` in `.env`), the hand-over dialog,
   Submit BOQ and the proposal email offer "Draft with AI" (written from the deal's lines and documents, never
-  prices) and sales roles get a one-click plain-English deal brief for a pipeline call. Off without a key: admins
+  prices), sales roles get a one-click plain-English deal brief for a pipeline call, and documents are read into the
+  deal: "Import from document" on the BOQ grid turns a solution document, BOQ sheet, quote or email (PDF, Excel,
+  CSV, .eml or a screenshot) into proposed lines matched to the catalogue, BU, Sub BU and OEM; "Import vendor
+  quotes" on the cost grid reads one or more vendor quotations into unit costs per line (the lowest of several
+  vendors wins). Every import is shown for review with what to check, ticked rows go into the grid, and nothing is
+  saved until the person saves the grid. Off without a key: admins
   see a "Set up the assistant" link where the Brief button would be, nobody else sees anything. When on, deal text
   is sent to OpenAI. Nothing is saved until the person submits the dialog.
 

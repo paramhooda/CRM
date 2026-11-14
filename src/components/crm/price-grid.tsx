@@ -7,6 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/client/api";
+import { FileUp } from "lucide-react";
+import { ImportDialog } from "./import-dialog";
+import { useAiEnabled } from "./providers";
+import type { ExtractedCost } from "@/domain/ai-extract";
 import { inr, pct } from "@/domain/money";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +31,9 @@ export function PriceGrid({ dealId, version, lines, mode, sales, onSaved }: { de
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(rows.map((l) => [l.id, l[field] ?? ""])));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const ai = useAiEnabled();
+  const importCosts = (costs: ExtractedCost[]) => { setValues((v) => { const n = { ...v }; for (const c of costs) if (c.lineId in n) n[c.lineId] = c.unitPurchaseCost; return n; }); toast.success(`${costs.length} cost${costs.length === 1 ? "" : "s"} filled from the quotes; check and save`); };
   const changed = rows.filter((l) => (values[l.id] ?? "") !== (l[field] ?? ""));
   const num = (v: string | null | undefined) => (v && MONEY.test(v) ? Number(v) : null);
   const totals = rows.reduce(
@@ -98,8 +105,12 @@ export function PriceGrid({ dealId, version, lines, mode, sales, onSaved }: { de
         <div className="text-muted-foreground">
           {mode === "cost" ? <>Total cost <span className="font-semibold text-foreground tabular">{inr(totals.cost)}</span></> : <>Value <span className="font-semibold text-foreground tabular">{inr(totals.value)}</span>{sales && <> · Cost <span className="font-medium text-foreground tabular">{inr(totals.cost)}</span> · GM <span className="font-semibold text-foreground tabular">{totals.value > 0 && totals.costed ? pct(((totals.value - totals.cost) / totals.value) * 100, 1) : "—"}</span></>}</>}
         </div>
-        <Button onClick={save} disabled={pending || changed.length === 0}>{mode === "cost" ? "Save costs" : "Save prices"}</Button>
+        <div className="flex gap-2">
+          {mode === "cost" && ai && <Button variant="outline" onClick={() => setImporting(true)}><FileUp /> Import vendor quotes</Button>}
+          <Button onClick={save} disabled={pending || changed.length === 0}>{mode === "cost" ? "Save costs" : "Save prices"}</Button>
+        </div>
       </div>
+      {importing && <ImportDialog dealId={dealId} kind="prices" onImportCosts={importCosts} onClose={() => setImporting(false)} />}
     </div>
   );
 }

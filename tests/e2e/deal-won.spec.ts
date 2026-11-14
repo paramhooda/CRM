@@ -104,13 +104,13 @@ test("presales lands on the deal from My work (opening it starts the request), c
   // opening the deal started the request (no Start button anywhere) and landed on the lines, where the work is
   await expect(page.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: /Lines/ })).toHaveAttribute("data-state", "active");
-  // Edit the own-IP line: presales may set its cost
-  await expect(page.locator("table thead tr").first()).toContainText("Cost");
-  await expect(page.locator("table thead tr").first()).not.toContainText("Sales price");
-  await page.getByRole("button", { name: "Edit line 2" }).click();
-  await page.fill("#line-unitPurchaseCost", "120000");
-  await page.getByRole("button", { name: "Save line" }).click();
-  await expect(page.getByText("Line saved")).toBeVisible();
+  // The BOQ is one grid: presales sets the own-IP cost on row 2 and saves the whole bill; no prices anywhere
+  const boq = page.getByRole("region", { name: "BOQ" });
+  await expect(boq.locator("[data-slot=boq-grid] thead")).not.toContainText(/price/i);
+  await expect(boq.getByLabel("Own-IP cost for row 1")).toBeDisabled(); // a Dell line: purchase prices it
+  await boq.getByLabel("Own-IP cost for row 2").fill("120000");
+  await boq.getByRole("button", { name: "Save BOQ" }).click();
+  await expect(page.getByText(/BOQ saved: 3 lines/)).toBeVisible();
   await panel(page).getByRole("button", { name: "Submit BOQ" }).click();
   await page.fill("#reason", "Sized with the customer: 2 servers, 12 months of compute");
   // the Dell server line still needs a cost, so submitting names the buyer and asks purchase in the same step
@@ -147,11 +147,11 @@ test("sales sees purchase has the deal; purchase is told which lines to cost and
   await expect(headline(buyer.page)).toHaveText("Your next step: enter the purchase cost on the remaining line and complete pricing");
   // Opening the deal started the request and landed on the lines, with the cost grid ready; one line shows no cost
   await expect(buyer.page.getByRole("tab", { name: /Lines/ })).toHaveAttribute("data-state", "active");
-  await expect(buyer.page.getByRole("region", { name: "Enter purchase costs" })).toBeVisible();
-  await expect(buyer.page.getByText("No cost", { exact: true })).toHaveCount(1);
-  // One grid, one save: the panel's button opens it; completing is offered the moment every line is costed
-  await panel(buyer.page).getByRole("button", { name: "Enter costs" }).click();
-  const grid = buyer.page.getByRole("dialog", { name: "Enter purchase costs" });
+  const grid = buyer.page.getByRole("region", { name: "Enter purchase costs" });
+  await expect(grid).toBeVisible();
+  await expect(buyer.page.getByRole("button", { name: /Edit line/ })).toHaveCount(0); // nothing else on the tab
+  // One grid, one save; completing is offered the moment every line is costed
+  await expect(grid.getByLabel("Cost for line 1")).toHaveValue("");
   await expect(grid.getByLabel("Cost for line 2")).toHaveValue("120000"); // presales' own-IP cost, editable too
   await grid.getByLabel("Cost for line 1").fill("1000000");
   await grid.getByRole("button", { name: "Save costs" }).click();

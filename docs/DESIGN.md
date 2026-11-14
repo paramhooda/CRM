@@ -105,7 +105,17 @@ real state (target met, overdue).
   scope), rather than sending the person elsewhere.
 - Price grid (`components/crm/price-grid.tsx`): the lines as a table with one editable money column (36px inputs,
   right-aligned, tabular figures), line totals and the margin recomputed as you type, one primary Save. Opened as a
-  dialog from the panel or the Lines tab; inline on the Lines tab for purchase.
+  dialog from the panel or the Lines tab; inline and alone on the Lines tab for purchase, with "Import vendor
+  quotes" beside Save when the assistant is on.
+- BOQ grid (`components/crm/boq-grid.tsx`): presales' Lines tab. One row per line, 32px controls: a product
+  combobox over an editable description, BU / Sub BU / OEM selects (locked once a catalogue product is picked),
+  quantity, unit, model, term and an own-IP cost column; "Add row", "Import from document", a trailing remove
+  icon, one primary "Save BOQ" with an unsaved-changes note. Rows with something to check carry a `--warning` note
+  under the description; invalid rows a `--destructive` note and a 5% red tint. Wider than the page: it scrolls
+  sideways inside its card rather than squeezing the controls.
+- Import dialog (`components/crm/import-dialog.tsx`, 768px): a dashed drop zone listing the chosen files, then a
+  review table with a checkbox per row (unticked rows at 50% opacity), the assistant's note in small muted text, and
+  one primary button that says how many rows it adds ("Add 4 lines to the BOQ", "Fill 3 costs").
 - Needs you: a task icon in the top bar with a red count and a 384px menu (name, step, due date; "See everything
   that needs you"), and on Home, under the numbers, a bordered list card, one row per deal (name, code · account,
   the step in body text, stage pill, due date in muted or `--destructive`, a primary Open), overdue rows on a 5% red

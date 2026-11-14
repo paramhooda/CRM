@@ -74,6 +74,17 @@ delete). Admin → Settings holds the company block, the mail server, the alerts
 the owner saw was a value-based approval rule, which now names itself) and the assistant's key; the two example
 approval rules ship off. The assistant also drafts the proposal email; admins see where to set it up.
 
+**BOQ and costs, fifth round**: presales and purchase come to a deal for one job, so the Lines tab is that job.
+Presales lands on one BOQ grid (product combobox or custom description, BU / Sub BU / OEM, quantity, unit, model,
+term, own-IP cost; add and remove rows; one Save sends the whole bill in one request) and never sees a price.
+Purchase lands on the cost grid alone, and the moment the last cost is saved the Complete pricing dialog opens.
+With the assistant on, both read documents: "Import from document" turns a solution document, BOQ sheet, quote or
+email (PDF, Excel through exceljs, CSV, .eml, screenshot) into proposed lines matched to the catalogue and the
+lookups, and "Import vendor quotes" reads one or more quotations into unit costs per line, lowest vendor first.
+Every import is reviewed row by row with what to check, and nothing is saved until the grid is saved. The server
+checks role, file count and kind before anything reaches the assistant, and the matching rules are pure and
+unit-tested.
+
 ## 2. Decisions and assumptions
 
 Taken with the owner during the build:
@@ -130,9 +141,9 @@ Everything below was run by `scripts/test-all.sh` from an empty database: recrea
 |---|---|
 | Recreate test database, `prisma migrate deploy`, seed | pass |
 | Lint, typecheck | pass |
-| Unit tests (stages, workflow checklist and request rules, lines, approvals, quotation, AI prompts, scope and permissions, review flags and alert config, formatting, design tokens) | pass, 66 tests |
+| Unit tests (stages, workflow checklist and request rules, lines, approvals, quotation, AI prompts and document extraction, scope and permissions, review flags and alert config, formatting, design tokens) | pass, 70 tests |
 | Production build (`next build`) | pass |
-| API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV; the flow rules: document before hand-over, lines before pricing, frozen lines, costs before proposal, approval before won, nothing on hold; Submit BOQ hands to purchase; Needs you per role; owner back, reopen and delete; settings admin-only with secrets never returned; alerts switching review flags; quotes 409 until final and a real PDF download; email off, refused and recorded, manual advance) | pass, 51 tests |
+| API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV; the flow rules: document before hand-over, lines before pricing, frozen lines, costs before proposal, approval before won, nothing on hold; Submit BOQ hands to purchase; Needs you per role; owner back, reopen and delete; settings admin-only with secrets never returned; alerts switching review flags; quotes 409 until final and a real PDF download; email off, refused and recorded, manual advance; document import checked for role, files and kind before the assistant) | pass, 53 tests |
 | Browser tests, every core flow per role | pass, 35 tests |
 | Screenshots of every main screen per role | pass, 7 runs, 41 images |
 

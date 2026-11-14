@@ -12,7 +12,7 @@ import { dealHistory, dealView, loadDeal, viewerFor } from "./deals";
 /** Twenty drafts an hour per person keeps a stuck button from running up a bill. */
 const LIMIT = 20;
 const calls = new Map<string, number[]>();
-function throttle(userId: string) {
+export function throttle(userId: string) {
   const now = Date.now();
   const recent = (calls.get(userId) ?? []).filter((t) => now - t < 3_600_000);
   if (recent.length >= LIMIT) throw new RateLimited("That is enough drafting for this hour; try again later.");
