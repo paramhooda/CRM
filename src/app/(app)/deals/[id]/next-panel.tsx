@@ -21,10 +21,13 @@ import { MoveDialog } from "./stage-actions";
 import { FinishRequestDialog, RaiseDialog, finishBlocker } from "./request-cards";
 import { UploadDialog } from "./documents-panel";
 import { SetContactDialog } from "./set-contact-dialog";
+import { PriceGridDialog, type GridMode } from "@/components/crm/price-grid";
+import { LineDialog, emptyLine, lineUpsertBody } from "@/components/crm/line-dialog";
+import type { LineField } from "@/domain/lines";
 
 type Person = { id: string; fullName: string };
-type Deal = Pick<DealView, "id" | "version" | "stage" | "moves" | "facts" | "requestAbility" | "presalesRequests" | "pricingRequests" | "account" | "primaryContactId" | "nextStep" | "nextStepDate" | "canEdit">;
-type Dialog = { type: "move"; move: Move } | { type: "raise"; kind: "presales" | "pricing" } | { type: "finish"; kind: "presales" | "pricing"; requestId: string } | { type: "upload"; kindId: string | null; title: string } | { type: "contact" } | { type: "note" };
+type Deal = Pick<DealView, "id" | "version" | "stage" | "moves" | "facts" | "requestAbility" | "presalesRequests" | "pricingRequests" | "account" | "primaryContactId" | "nextStep" | "nextStepDate" | "canEdit" | "lines" | "lineEditable">;
+type Dialog = { type: "move"; move: Move } | { type: "raise"; kind: "presales" | "pricing" } | { type: "finish"; kind: "presales" | "pricing"; requestId: string } | { type: "upload"; kindId: string | null; title: string } | { type: "contact" } | { type: "note" } | { type: "grid"; mode: GridMode } | { type: "line" };
 const OPEN = ["REQUESTED", "IN_PROGRESS"];
 
 /**
@@ -73,12 +76,15 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }:
   /** The one button for the current step, when it is the viewer's. Disabled with the reason when the server says not yet. */
   const action = (step: Step) => {
     const lines = <Button asChild size="sm"><Link href={`/deals/${deal.id}?tab=lines`}>Open lines <ArrowRight /></Link></Button>;
+    const canAdd = deal.lineEditable.thirdParty.includes("spec");
     switch (step.action) {
       case "SET_CONTACT": return <Button size="sm" onClick={() => setDialog({ type: "contact" })}>Set contact</Button>;
       case "FIX_CLOSE_DATE": return <Button asChild size="sm"><Link href={`/deals/${deal.id}/edit`}>Edit details</Link></Button>;
       case "ATTACH_DOCUMENT": return <Button size="sm" onClick={() => setDialog({ type: "upload", kindId: null, title: "Attach the customer's requirement" })}>Attach document</Button>;
       case "ATTACH_PO": return <Button size="sm" onClick={() => setDialog({ type: "upload", kindId: poKind, title: "Attach the customer's PO" })}>Attach PO</Button>;
-      case "ADD_LINES": case "SET_PRICES": case "ENTER_COSTS": return lines;
+      case "ADD_LINES": return canAdd ? <Button size="sm" onClick={() => setDialog({ type: "line" })}>Add line</Button> : lines;
+      case "ENTER_COSTS": return deal.lines.some((l) => l.editable.includes("cost")) ? <Button size="sm" onClick={() => setDialog({ type: "grid", mode: "cost" })}>Enter costs</Button> : lines;
+      case "SET_PRICES": return deal.lines.some((l) => l.editable.includes("price")) ? <Button size="sm" onClick={() => setDialog({ type: "grid", mode: "price" })}>Set prices</Button> : lines;
       case "ADVANCE": case "CLOSE_WON": case "RESUME": case "REOPEN": {
         const move = moveFor(step);
         if (!move) return null;
@@ -147,6 +153,18 @@ export function NextPanel({ deal, next, presalesPeople, purchasePeople, sales }:
       {dialog?.type === "finish" && <FinishRequestDialog kind={dialog.kind} dealId={deal.id} requestId={dialog.requestId} facts={deal.facts} purchasePeople={purchasePeople} lastBuyerId={deal.pricingRequests[0]?.assignedToId ?? null} onClose={() => setDialog(null)} />}
       {dialog?.type === "upload" && <UploadDialog dealId={deal.id} sales={actor.role !== "PRESALES" && actor.role !== "PURCHASE"} kindId={dialog.kindId} title={dialog.title} onClose={() => setDialog(null)} />}
       {dialog?.type === "contact" && <SetContactDialog dealId={deal.id} version={deal.version} account={deal.account} current={deal.primaryContactId} onClose={() => setDialog(null)} />}
+      {dialog?.type === "grid" && (
+        <PriceGridDialog dealId={deal.id} version={deal.version} lines={deal.lines} mode={dialog.mode} sales={sales} onClose={() => setDialog((d) => (d?.type === "grid" ? null : d))}
+          onSaved={(r) => {
+            // Costs all in: go straight to completing the pricing request, one click less
+            const pr = deal.pricingRequests.find((x) => OPEN.includes(x.status) && x.assignedToId === actor.id);
+            if (dialog.mode === "cost" && r.allCosted && pr) setDialog({ type: "finish", kind: "pricing", requestId: pr.id });
+          }} />
+      )}
+      {dialog?.type === "line" && (
+        <LineDialog open onOpenChange={(o) => !o && setDialog(null)} initial={emptyLine()} editable={new Set<LineField>(deal.lineEditable.thirdParty)}
+          onSave={async (draft) => { await api.patch(`/deals/${deal.id}/lines`, { version: deal.version, upserts: [lineUpsertBody(draft, new Set<LineField>(deal.lineEditable.thirdParty))], deleteIds: [] }); toast.success("Line added"); router.refresh(); }} />
+      )}
       {dialog?.type === "note" && <NoteDialog dealId={deal.id} version={deal.version} nextStep={deal.nextStep} nextStepDate={deal.nextStepDate} onClose={() => setDialog(null)} />}
     </section>
   );

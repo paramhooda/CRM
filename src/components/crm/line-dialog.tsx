@@ -39,6 +39,16 @@ export function lineToInput(l: LineDraft) {
   };
 }
 
+/** The PATCH body for one line: only the groups the actor may change, so a stale field never overwrites someone else's work. */
+export function lineUpsertBody(draft: LineDraft, editable: Set<LineField>): Record<string, unknown> {
+  const input = lineToInput(draft);
+  const body: Record<string, unknown> = { id: input.id };
+  if (editable.has("spec")) Object.assign(body, { productId: input.productId, description: input.description, businessUnitId: input.businessUnitId, subBusinessUnitId: input.subBusinessUnitId, oemId: input.oemId, quantity: input.quantity, unit: input.unit, revenueModel: input.revenueModel, termMonths: input.termMonths });
+  if (editable.has("price")) Object.assign(body, { unitSalesPrice: input.unitSalesPrice, salesMethodId: input.salesMethodId });
+  if (editable.has("cost")) Object.assign(body, { unitPurchaseCost: input.unitPurchaseCost });
+  return body;
+}
+
 /**
  * Add or edit one opportunity line. `editable` says which groups the actor may change: spec (what is sold),
  * price (sales price), cost (purchase cost). `onSave` gets the draft; the caller stores it or sends it to the API.

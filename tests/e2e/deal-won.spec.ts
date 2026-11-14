@@ -101,11 +101,10 @@ test("presales lands on the deal from My work (opening it starts the request), c
   await expect(page).toHaveURL(dealUrl);
   await expect(headline(page)).toHaveText("Your next step: submit the BOQ");
   await expect(page.getByText("Expected GM")).toHaveCount(0);
-  // opening the deal started the request: no Start button anywhere
+  // opening the deal started the request (no Start button anywhere) and landed on the lines, where the work is
   await expect(page.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
-  await expect(page.getByText("In progress", { exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Lines/ })).toHaveAttribute("data-state", "active");
   // Edit the own-IP line: presales may set its cost
-  await page.getByRole("tab", { name: /Lines/ }).click();
   await expect(page.locator("table thead tr").first()).toContainText("Cost");
   await expect(page.locator("table thead tr").first()).not.toContainText("Sales price");
   await page.getByRole("button", { name: "Edit line 2" }).click();
@@ -146,19 +145,18 @@ test("sales sees purchase has the deal; purchase is told which lines to cost and
   await go(buyer.page, "/my-work");
   await buyer.page.locator("section[aria-label='Open requests']").getByText(dealName).locator("xpath=ancestor::div[contains(@class,'flex-wrap')][1]").getByRole("link", { name: "Open deal" }).click();
   await expect(headline(buyer.page)).toHaveText("Your next step: enter the purchase cost on the remaining line and complete pricing");
-  await expect(buyer.page.getByText("In progress", { exact: true })).toBeVisible(); // opening it started the request
-  // Complete is held back, with the reason, until the third-party line is costed
-  await expect(buyer.page.getByRole("button", { name: "Complete pricing" }).first()).toBeDisabled();
-  await expect(buyer.page.getByText("Enter the purchase cost on the remaining line first.").first()).toBeVisible();
-  await buyer.page.getByRole("tab", { name: /Lines/ }).click();
-  await expect(buyer.page.getByText("No cost")).toHaveCount(1);
-  await buyer.page.getByRole("button", { name: "Edit line 1" }).click();
-  await expect(buyer.page.locator("#line-description")).toBeDisabled();
-  await buyer.page.fill("#line-unitPurchaseCost", "1000000");
-  await buyer.page.getByRole("button", { name: "Save line" }).click();
-  await expect(buyer.page.getByText("Line saved")).toBeVisible();
-  await expect(headline(buyer.page)).toHaveText("Your next step: complete pricing");
-  await panel(buyer.page).getByRole("button", { name: "Complete pricing" }).click();
+  // Opening the deal started the request and landed on the lines, with the cost grid ready; one line shows no cost
+  await expect(buyer.page.getByRole("tab", { name: /Lines/ })).toHaveAttribute("data-state", "active");
+  await expect(buyer.page.getByRole("region", { name: "Enter purchase costs" })).toBeVisible();
+  await expect(buyer.page.getByText("No cost", { exact: true })).toHaveCount(1);
+  // One grid, one save: the panel's button opens it; completing is offered the moment every line is costed
+  await panel(buyer.page).getByRole("button", { name: "Enter costs" }).click();
+  const grid = buyer.page.getByRole("dialog", { name: "Enter purchase costs" });
+  await expect(grid.getByLabel("Cost for line 2")).toHaveValue("120000"); // presales' own-IP cost, editable too
+  await grid.getByLabel("Cost for line 1").fill("1000000");
+  await grid.getByRole("button", { name: "Save costs" }).click();
+  await expect(buyer.page.getByText(/Costs saved on 1 line/)).toBeVisible();
+  await expect(buyer.page.getByRole("dialog", { name: "Complete pricing" })).toBeVisible();
   await buyer.page.fill("#reason", "Best supplier price, 30-day validity");
   await buyer.page.getByRole("dialog").getByRole("button", { name: "Complete pricing" }).click();
   await expect(buyer.page.getByText("Pricing completed")).toBeVisible();
@@ -171,6 +169,15 @@ test("sales follows the panel: proposal, negotiation, PO and won; history has ev
   await go(page, dealUrl);
   await expect(page.getByText(/Expected GM/)).toBeVisible();
   await expect(headline(page)).toHaveText("Your next step: advance to Proposal Submitted");
+  // Prices are changed in one grid as well: the value follows
+  await page.getByRole("tab", { name: /Lines/ }).click();
+  await page.getByRole("button", { name: "Set prices" }).click();
+  const prices = page.getByRole("dialog", { name: "Set sales prices" });
+  await prices.getByLabel("Price for line 2").fill("250000");
+  await expect(prices.getByText("₹46.5 L")).toBeVisible();
+  await prices.getByRole("button", { name: "Save prices" }).click();
+  await expect(page.getByText(/Prices saved on 1 line/)).toBeVisible();
+  await expect(page.getByText("₹46.5 L").first()).toBeVisible();
   await panel(page).getByRole("button", { name: "Advance to Proposal Submitted" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Advance to Proposal Submitted" }).click();
   await expect(page.getByText("Moved to Proposal Submitted")).toBeVisible();

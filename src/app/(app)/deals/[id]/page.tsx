@@ -101,10 +101,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
       </section>
       <StagePath stage={d.stage} needsPresales={d.needsPresales} heldFromStage={d.heldFromStage} lastOpenStage={d.lastOpenStage} />
       <div className="mt-4">
-        <NextPanel deal={{ id: d.id, version: d.version, stage: d.stage, moves: d.moves, facts: d.facts, requestAbility: d.requestAbility, presalesRequests: d.presalesRequests, pricingRequests: d.pricingRequests, account: d.account, primaryContactId: d.primaryContactId, nextStep: d.nextStep, nextStepDate: d.nextStepDate, canEdit: d.canEdit }} next={d.next} presalesPeople={presalesPeople} purchasePeople={purchasePeople} sales={sales} />
+        <NextPanel deal={{ id: d.id, version: d.version, stage: d.stage, moves: d.moves, facts: d.facts, requestAbility: d.requestAbility, presalesRequests: d.presalesRequests, pricingRequests: d.pricingRequests, account: d.account, primaryContactId: d.primaryContactId, nextStep: d.nextStep, nextStepDate: d.nextStepDate, canEdit: d.canEdit, lines: d.lines, lineEditable: d.lineEditable }} next={d.next} presalesPeople={presalesPeople} purchasePeople={purchasePeople} sales={sales} />
       </div>
 
-      <DealTabs tab={["lines", "documents", "history"].includes(tab ?? "") ? tab! : "overview"}>
+      <DealTabs tab={["lines", "documents", "history"].includes(tab ?? "") ? tab! : d.canEditLines && !sales ? "lines" : "overview"}>
         <TabBar>
           <Tab value="overview">Overview</Tab>
           <Tab value="lines">Lines <TabCount>{d.lines.length}</TabCount></Tab>
