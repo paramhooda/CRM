@@ -38,9 +38,9 @@ test("the manager's pipeline total and open-deal count match the records behind 
   await login(page, "salesHead");
   // Home tile
   await go(page, "/home");
-  const tile = page.locator("section[aria-label='Numbers']").getByText("Open pipeline").locator("..");
-  const tileValue = (await tile.locator("div").nth(1).innerText()).trim();
-  const tileCount = Number((await tile.getByText(/deals$/).innerText()).replace(/\D/g, ""));
+  const tile = page.locator("section[aria-label='Numbers'] a", { hasText: "Open pipeline" });
+  const tileValue = (await tile.locator("[data-slot=stat-value]").innerText()).trim();
+  const tileCount = Number(/([\d,]+) deals/.exec(await tile.locator("[data-slot=stat-note]").innerText())![1]!.replace(/\D/g, ""));
 
   // Deals list, open deals only, shows the same total in its footer
   const OPEN = "stage=QUALIFIED&stage=BOQ&stage=PROPOSAL_SUBMITTED&stage=NEGOTIATION";

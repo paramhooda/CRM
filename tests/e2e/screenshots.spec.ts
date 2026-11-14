@@ -94,7 +94,8 @@ test("dark mode and a narrow screen", async ({ page }) => {
   await page.screenshot({ path: path.join(OUT, "sales-head--deals-phone.png"), fullPage: false });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/home", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Toggle dark mode" }).click();
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Dark mode" }).click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, "sales-head--home-dark.png") });
   await page.goto("/deals", { waitUntil: "networkidle" });

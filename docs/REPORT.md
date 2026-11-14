@@ -52,11 +52,14 @@ Taken with the owner during the build:
   OEM on every line, so funnels cut by BU, Sub BU, OEM and product. No bundles, no quote generator.
 - **Stages**: no "Identified" stage; new deals start at Qualified.
 - **Kept**: leads, documents on deals, admin-defined approval chains, the pipeline review page.
-- **Design system** (`docs/DESIGN.md`, applied after the first build): a light, flat, quiet UI in the style of Linear
-  and Vercel. Geist and Geist Mono, zinc neutrals (`#fafafa` page, white cards, `#e4e4e7` borders), a brand-blue scale
-  with brand-600 as the primary, fixed 6/8/12px radii, three faint shadow tokens, 36px controls, a full-width top
-  bar with a context search and the avatar menu over a nav-only sidebar. Every colour, font, radius and shadow is a
-  token and a unit test keeps raw values out of components and every tinted pair at WCAG AA.
+- **Design system** (`docs/DESIGN.md`): matched to the owner's reference application. A white tree sidebar with a
+  navigator filter, a 76px top bar with search, New deal, an approvals badge and the avatar; a hero card with a
+  period segmented control and a scope select at the top of every page; uppercase section captions; trend tiles
+  with tinted icon squares, sparklines and delta pills; flow bars, donuts and a weekday × hour heatmap; a stage
+  performance table; one metric row per business unit and an accounts strip; dotted status pills and underline tabs.
+  Every colour, font, radius and shadow is a token and a unit test keeps raw values out of components and every
+  tinted pair at WCAG AA. The sign-in page offers one-click demo logins for the five roles when `SEED_DEMO_DATA`
+  is true.
 
 Inferred where the brief was silent (each is also marked **[inferred]** in `docs/PRODUCT.md`):
 
@@ -91,14 +94,14 @@ Everything below was run by `scripts/test-all.sh` from an empty database: recrea
 | Unit tests (stages, lines, approvals, scope and permissions, review, formatting, design tokens) | pass, 44 tests |
 | Production build (`next build`) | pass |
 | API tests (every route group: happy path, validation, 401, 403, out-of-scope 404, 409, shaped responses, CSV) | pass, 44 tests |
-| Browser tests, every core flow per role | pass, 32 tests |
+| Browser tests, every core flow per role | pass, 33 tests |
 | Screenshots of every main screen per role | pass, 7 runs, 41 images |
 
 Browser flows, by requirement:
 
 | Flow | Role(s) | Spec | Result |
 |---|---|---|---|
-| Login and logout; wrong password refused; support roles kept off the funnel | all five roles | `tests/e2e/auth.spec.ts` | pass |
+| Login and logout; one-click demo login; wrong password refused; support roles kept off the funnel | all five roles | `tests/e2e/auth.spec.ts` | pass |
 | Create an account and a contact; GSTIN validated | Sales | `tests/e2e/accounts.spec.ts` | pass |
 | Capture, work, convert and disqualify a lead | Sales | `tests/e2e/leads.spec.ts` | pass |
 | Deal with three lines (catalogue, custom own-IP, recurring) created through the screens | Sales | `tests/e2e/deal-won.spec.ts` | pass |

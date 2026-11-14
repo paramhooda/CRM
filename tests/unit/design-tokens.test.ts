@@ -82,6 +82,8 @@ describe("design tokens", () => {
     ["card", "destructive"],
     ["sidebar-accent", "sidebar-accent-foreground"],
     ["ink-900", "background"],
+    // Tint foregrounds double as big status numbers on white cards
+    ...["blue", "red", "amber", "green"].map((t): [string, string] => ["card", `tint-${t}-fg`]),
   ];
 
   for (const mode of [":root", ".dark"]) {

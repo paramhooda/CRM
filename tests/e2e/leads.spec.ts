@@ -13,12 +13,12 @@ test("a lead is captured, worked and converted into an account, contact and deal
   await page.fill("#estimatedValue", "2500000");
   await page.getByRole("button", { name: "Capture lead" }).click();
   await expect(page).toHaveURL(/\/leads\/[0-9a-f-]+$/);
-  await expect(page.getByText("New", { exact: true })).toBeVisible();
+  await expect(page.locator("main").getByText("New", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Mark contacted" }).click();
-  await expect(page.getByText("Contacted", { exact: true })).toBeVisible();
+  await expect(page.locator("main").getByText("Contacted", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Mark qualified" }).click();
-  await expect(page.getByText("Qualified", { exact: true })).toBeVisible();
+  await expect(page.locator("main").getByText("Qualified", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Convert to deal" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -32,7 +32,7 @@ test("a lead is captured, worked and converted into an account, contact and deal
 
   // A lead converts once
   await page.goBack();
-  await expect(page.getByText("Converted", { exact: true })).toBeVisible();
+  await expect(page.locator("main").getByText("Converted", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Convert to deal" })).toHaveCount(0);
 });
 

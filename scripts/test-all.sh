@@ -37,7 +37,8 @@ run "Unit tests" npx vitest run --config vitest.config.mts
 run "Build" npm run build
 
 step "Start the built app on :$PORT"
-npx next start -p "$PORT" > .next/test-server.log 2>&1 &
+# Demo data is seeded above, so the sign-in page also offers the one-click demo logins
+SEED_DEMO_DATA=true npx next start -p "$PORT" > .next/test-server.log 2>&1 &
 SERVER_PID=$!
 for i in $(seq 1 60); do
   if curl -fs "$BASE/api/v1/health" > /dev/null 2>&1; then break; fi

@@ -110,7 +110,7 @@ test("an admin creates a user who must change the temporary password at first si
   await go(page, "/login");
   await page.fill("#email", email);
   await page.fill("#password", "Welcome2026!x");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/account/);
   await expect(page.getByText(/Choose a new password/)).toBeVisible();
 });

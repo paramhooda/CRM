@@ -1,7 +1,10 @@
 # Progression CRM: design system
 
-A light, flat, quiet enterprise UI in the style of Linear and Vercel. No gradients, no decorative colour, no heavy
-shadows; hierarchy comes from whitespace, 1px borders and type weight. Every value below is a CSS custom property in
+A light, flat, quiet enterprise UI, matched to the owner's reference application: a white tree sidebar with a
+navigator filter, a 76px top bar with search, a hero card at the top of every page, uppercase section captions,
+white cards with 1px borders and a faint shadow on a very light grey page, trend tiles with tinted icon squares,
+dotted status pills and underline tabs. No gradients, no decorative colour, no heavy shadows; hierarchy comes from
+whitespace, 1px borders and type weight. Every value below is a CSS custom property in
 `src/app/globals.css` and components reference tokens only (`tests/unit/design-tokens.test.ts` fails on a raw hex,
 `rgb()`/`hsl()` or a Tailwind palette class anywhere else, and checks the contrast of every tinted pair). The one
 exception is `src/app/global-error.tsx`, which renders without the stylesheet and mirrors the tokens inline.
@@ -10,24 +13,26 @@ exception is `src/app/global-error.tsx`, which renders without the stylesheet an
 
 | Use | Token / class | Value |
 |---|---|---|
-| All UI text | `--font-sans`, `font-sans` | Geist, then -apple-system, Segoe UI, Roboto, Helvetica Neue, Arial |
-| Codes, IDs, numbers that align | `--font-mono`, `font-mono`, `.tabular` | Geist Mono, then the system mono stack |
-| Base size | `body` | 14px (`text-sm`); muted small labels 12px (`text-xs`) |
-| Headings | `font-medium` / `font-semibold` | 500–600, never bold; `tracking-tight` on large headings |
+| All UI text and numbers | `--font-sans`, `font-sans`, `.tabular` | Geist, then -apple-system, Segoe UI, Roboto, Helvetica Neue, Arial; `.tabular` adds tabular figures |
+| Codes and IDs | `--font-mono`, `font-mono` | Geist Mono, then the system mono stack |
+| Base size | `body` | 14px (`text-sm`); muted small labels 12px; nav and tabs 15px |
+| Headings | hero `text-3xl font-semibold tracking-tight`; card titles 17px/600; tile values 32px/700 | never bold below 24px |
 
-`RecordCode` (`src/components/crm/code.tsx`) renders a code or id; `Money` and `Pct` inherit the mono face through
-`.tabular`, as do KPI values and right-aligned table cells.
+`RecordCode` (`src/components/crm/code.tsx`) renders a code or id in the mono face; every other number stays in the
+UI face with tabular figures.
 
 ## Neutrals (zinc)
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--background` | `#fafafa` | `#09090b` | page, sidebar, table header rows, card footers |
+| `--background` | `#f7f8fa` | `#09090b` | page, table header rows, card footers |
+| `--sidebar` | `#ffffff` | `#0f0f11` | the sidebar (active item = white card with border and shadow) |
 | `--card`, `--popover` | `#ffffff` | `#18181b` | cards, panels, inputs, menus |
 | `--muted`, `--secondary`, `--accent` | `#f4f4f5` | `#27272a` | secondary surfaces, hover |
 | `--surface-3` | `#e4e4e7` | `#3f3f46` | tertiary surface |
-| `--border`, `--input` | `#e4e4e7` | `#27272a` / `#3f3f46` | 1px borders |
-| `--border-strong` | `#d4d4d8` | `#3f3f46` | hover borders, dashed empty states |
+| `--border`, `--input` | `#e5e7eb` | `#27272a` / `#3f3f46` | 1px borders |
+| `--border-strong` | `#d1d5db` | `#3f3f46` | hover borders, dashed empty states |
+| `--tint-{blue,red,amber,green}` / `-fg` | `#eef4ff/#2563eb`, `#fef2f2/#dc2626`, `#fff7e6/#b45309`, `#ecfdf3/#15803d` | darker tints, light text | icon squares on tiles and rows, delta pills, status numbers |
 | `--foreground` | `#09090b` | `#fafafa` | primary text |
 | `--foreground-secondary` | `#3f3f46` | `#d4d4d8` | secondary text, sidebar text |
 | `--muted-foreground` | `#71717a` | `#a1a1aa` | muted labels |
@@ -60,7 +65,8 @@ real state (target met, overdue).
 
 | Token | Value | Use |
 |---|---|---|
-| `--radius-xl` | 12px | cards, dialogs |
+| `--radius-2xl` | 18px | hero, tiles, chart cards, metric rows |
+| `--radius-xl` | 14px | dialogs, inputs in the top bar and sidebar |
 | `--radius-lg` | 8px | buttons, inputs, chips, board cards |
 | `--radius-md` | 6px | tags, menu items |
 | `--radius-sm` | 4px | checkboxes, swatches |
@@ -75,8 +81,16 @@ real state (target met, overdue).
 - Tables: `--background` header row with 12px muted labels, 1px row dividers, no zebra striping, right-aligned
   numbers in mono.
 - Tags: 24px tall, 6px radius, tinted background and matching darker text; the text always says what it is.
-- Shell: a 48px top bar (brand mark, context search, theme toggle, avatar menu) over a nav-only sidebar on
-  `--background` with a 1px border; content on white cards.
+- Shell: a 300px white sidebar (wordmark, "Filter navigator" box, uppercase captions, collapsible groups with
+  sub-item trees, the active item as a white bordered card) beside a 76px top bar (search with ⌘K, New deal, the
+  approvals badge, avatar with name); content on white cards on the grey page.
+- Page header: `PageHero` (date or breadcrumb eyebrow, 30px title, grey description, actions; optional controls row
+  with `Segmented` and selects under a divider). `SectionLabel` captions sections, with a right-hand note.
+- Tiles: `StatTile` (label, tinted icon square, 32px value coloured only for status, `Sparkline`, `DeltaPill`, note).
+  Rows: `MetricRow` (icon, title, subtitle, arrow link, five metric columns) and `MetricStrip`.
+- Charts: `FlowCard` (thin daily bars with light gridlines and legend dots, segmented views), `DonutCard` (centre
+  value and legend table), `Heatmap` (weekday × hour in one blue scale), `BarChartCard` (horizontal lists).
+- Tabs: `LineTabs` (navigating) and `TabBar`/`Tab` (in-page) draw a 2px rule under the active tab.
 - Charts: `--primary` for a single series; `--chart-1 … --chart-8` (`#2a78d6 #eb6834 #1baf7a #eda100 #e87ba4
   #008300 #4a3aa7 #e34948`) for categorical series in that order; `--chart-mag-1 … -5` (brand-300 → brand-800)
   light-to-dark for ordered magnitudes such as stage and forecast; status colours only for status.

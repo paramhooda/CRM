@@ -22,7 +22,7 @@ export async function login(page: Page, key: UserKey) {
   await go(page, "/login");
   await page.fill("#email", USERS[key].email);
   await page.fill("#password", PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL((u) => !u.pathname.startsWith("/login"));
 }
 

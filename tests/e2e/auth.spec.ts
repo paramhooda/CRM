@@ -17,11 +17,19 @@ for (const key of ["admin", "salesHead", "rep", "presales", "purchase"] as UserK
   });
 }
 
+test("a demo login signs in as that role in one click", async ({ page }) => {
+  await go(page, "/login");
+  await page.getByRole("button", { name: /Presales · Rakesh Yadav/ }).click();
+  await expect(page).toHaveURL(/\/my-work$/);
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await expect(page.getByRole("menu").getByText("Rakesh Yadav")).toBeVisible();
+});
+
 test("wrong password is refused with a clear message, and the form stays usable", async ({ page }) => {
   await go(page, "/login");
   await page.fill("#email", USERS.rep.email);
   await page.fill("#password", "not-the-password");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: /email or password/i })).toBeVisible();
   await expect(page).toHaveURL(/\/login/);
 });
