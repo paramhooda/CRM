@@ -1,114 +1,41 @@
-// Formatting helpers. Currency is INR using the Indian lakh/crore system; display timezone is IST.
+// Display helpers shared by server and client components.
+export { inr, pct } from "@/domain/money";
 
-const TZ = "Asia/Kolkata";
+const IST = "Asia/Kolkata";
 
-export function toNumber(v: unknown): number {
-  if (v === null || v === undefined || v === "") return 0;
-  if (typeof v === "number") return v;
-  if (typeof v === "string") return Number(v) || 0;
-  if (typeof v === "object" && v !== null && "toNumber" in v) return (v as { toNumber(): number }).toNumber();
-  return Number(v) || 0;
-}
-
-/** Compact INR: ₹1.25 Cr, ₹48.6 L, ₹85K, ₹950 */
-export function inr(value: unknown, opts: { precise?: boolean } = {}): string {
-  const n = toNumber(value);
-  const sign = n < 0 ? "-" : "";
-  const a = Math.abs(n);
-  if (opts.precise) return sign + "₹" + a.toLocaleString("en-IN", { maximumFractionDigits: 2 });
-  if (a >= 1e7) return `${sign}₹${trim(a / 1e7, a >= 1e9 ? 0 : 2)} Cr`;
-  if (a >= 1e5) return `${sign}₹${trim(a / 1e5, a >= 1e6 ? 1 : 2)} L`;
-  if (a >= 1e3) return `${sign}₹${trim(a / 1e3, 1)}K`;
-  return `${sign}₹${Math.round(a)}`;
-}
-
-/** Axis-friendly short INR without symbol clutter: 1.2Cr, 45L */
-export function inrAxis(value: number): string {
-  const a = Math.abs(value);
-  if (a >= 1e7) return `${trim(value / 1e7, 1)}Cr`;
-  if (a >= 1e5) return `${trim(value / 1e5, 0)}L`;
-  if (a >= 1e3) return `${trim(value / 1e3, 0)}K`;
-  return String(value);
-}
-
-function trim(n: number, digits: number) {
-  return Number(n.toFixed(digits)).toLocaleString("en-IN", { maximumFractionDigits: digits });
-}
-
-export function pct(value: unknown, digits = 0): string {
-  const n = toNumber(value);
-  return `${n.toFixed(digits)}%`;
-}
-
-export function num(value: unknown): string {
-  return toNumber(value).toLocaleString("en-IN");
-}
-
-export function fmtDate(d: Date | string | null | undefined, style: "short" | "medium" = "medium"): string {
+export function fmtDate(d: Date | string | null | undefined, style: "short" | "long" = "short"): string {
   if (!d) return "—";
   const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("en-IN", {
-    timeZone: TZ,
-    day: "2-digit",
-    month: "short",
-    ...(style === "medium" ? { year: "numeric" } : {}),
-  });
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", ...(style === "long" ? { year: "numeric" } : {}), timeZone: "UTC" });
 }
 
 export function fmtDateTime(d: Date | string | null | undefined): string {
   if (!d) return "—";
   const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleString("en-IN", {
-    timeZone: TZ,
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return date.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: IST });
 }
 
-/** Date as yyyy-mm-dd in IST, for <input type="date"> values */
-export function isoDate(d: Date | string | null | undefined): string {
+/** "in 3d", "today", "4d ago" for a date-only value. */
+export function relativeDays(d: Date | string | null | undefined, now = new Date()): string {
   if (!d) return "";
   const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("en-CA", { timeZone: TZ });
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const days = Math.round((date.getTime() - today) / 86_400_000);
+  if (days === 0) return "today";
+  if (days === 1) return "tomorrow";
+  if (days === -1) return "yesterday";
+  return days > 0 ? `in ${days}d` : `${-days}d ago`;
 }
 
-/**
- * A date picked in a form ("15 Nov") means the whole of that day in India. Stored as 23:59:59 IST, so a request due
- * on the 15th is not overdue at 05:30 that morning, and a quote valid till the 15th is still valid that afternoon.
- */
-export function endOfDayIST(d: Date | string): Date {
-  const iso = typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : isoDate(d);
-  return new Date(`${iso}T23:59:59.999+05:30`);
-}
+export const isoDay = (d: Date | string | null | undefined) => (d ? (typeof d === "string" ? d.slice(0, 10) : d.toISOString().slice(0, 10)) : "");
 
-/** Midnight at the start of today in India, for "not in the past" checks on picked dates */
-export function startOfTodayIST(now = new Date()): Date {
-  return new Date(`${isoDate(now)}T00:00:00.000+05:30`);
-}
-
-export function daysBetween(a: Date, b: Date): number {
-  return Math.floor((b.getTime() - a.getTime()) / 86_400_000);
-}
-
-export function relativeDays(d: Date | string | null | undefined, now = new Date()): string {
-  if (!d) return "never";
-  const date = typeof d === "string" ? new Date(d) : d;
-  const diff = daysBetween(date, now);
-  if (diff === 0) return "today";
-  if (diff === 1) return "yesterday";
-  if (diff === -1) return "tomorrow";
-  if (diff > 0) return diff < 60 ? `${diff}d ago` : `${Math.round(diff / 30)}mo ago`;
-  return -diff < 60 ? `in ${-diff}d` : `in ${Math.round(-diff / 30)}mo`;
-}
-
-export function initials(name: string): string {
-  return name
+export const initials = (name: string) =>
+  name
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((p) => p[0]!.toUpperCase())
+    .map((s) => s[0]!.toUpperCase())
     .join("");
-}
+
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

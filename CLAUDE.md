@@ -1,57 +1,80 @@
-# Working on Progression CRM
+# Progression CRM
 
-This CRM is in daily use by about 30 people and there is no engineering team reviewing changes. Every change must
-keep existing data and keep the running system upgradable. These rules are not optional.
+Internal CRM for Progression (systems integrator / managed services provider, ~30 users). The product is specified in
+`docs/PRODUCT.md`; every table and column is described in `docs/DATA_DICTIONARY.md` (generated). Build against the
+spec; when the spec and the code disagree, the spec wins and the code is fixed.
 
-## Data safety (most important)
+## Stack
 
-- **Database changes are additive.** New columns are nullable or have a default. New tables are fine.
-- **Never drop, rename or retype a column or table in one step.** Use expand → migrate → contract across releases:
-  add the new column, copy or derive the data in the same migration, switch the code to it, and drop the old column
-  only in a later release once it is unused. `scripts/check-migrations.mjs` fails CI on destructive SQL unless the
-  migration has `-- destructive-ok: <reason>`. Only use that marker when the user has agreed to lose that data.
-- **Existing rows must make sense after the migration.** If a new field needs a value for old records, fill it in
-  the same migration (an `UPDATE …` backfill). Say in the commit and CHANGELOG what happens to current records.
-- **Never edit or delete a migration in `prisma/migrations/`** once committed. Production may have run it, and
-  `prisma/migrations/shipped.txt` records checksums. Fix mistakes with a new migration.
-- Create migrations with `npx prisma migrate dev --name <what>` and review the SQL. Never use `prisma db push`.
-- **Never run destructive commands against a non-local database:** `prisma migrate reset`, `db:seed -- --force`,
-  `DROP`, `TRUNCATE`. The seed is for local and demo databases only.
-- Removing a feature from the UI does not remove its data. Leave the columns until the user explicitly agrees.
-- New enum values: add them in a migration of their own, before any migration that uses them (a Postgres rule).
+- Next.js 16 (App Router) + React 19 + TypeScript, strict. Tailwind 4 + shadcn/ui (Radix). lucide icons, recharts
+  through the shadcn chart component, sonner toasts, next-themes.
+- Postgres 16 through Prisma 7 (`@prisma/adapter-pg`). zod schemas shared by forms and routes. decimal.js for money.
+- vitest (unit + API tests), Playwright (browser tests), eslint, prettier. Docker Compose for Postgres and the app.
+- Dependencies are pinned exact (`.npmrc` has `save-exact=true`, `legacy-peer-deps=true`).
 
-## Before every commit
-
-Run `npm run check` (lint, types, unit tests, migration check) and `npm run check:drift` against the dev database.
-For behaviour changes, also run the e2e suite against a production build:
+## Layout
 
 ```
-npx tsx prisma/seed.ts --force && npm run build && (npm start &) && npx playwright test
+docs/            PRODUCT.md (spec), DESIGN.md (design system), DATA_DICTIONARY.md (generated), REPORT.md, screenshots/
+prisma/          schema.prisma (/// comments feed the dictionary), migrations/, seed/ (reference + demo data)
+scripts/         test-all.sh (everything from an empty DB), db-reset.*, data-dictionary.ts, docker-entrypoint.sh
+src/app/         (auth)/login, (app)/… screens (server components read through services), api/v1/** route handlers
+src/components/  ui/ (shadcn, generated then restyled: heights, radii, shadows; `shadcn add` overwrites, re-apply from git), crm/ (one component per job)
+src/contracts/   zod schemas + types for every request body and list query
+src/domain/      pure business rules, no I/O: stages, lines, approvals, scope, permissions, review, fiscal, money, csv
+src/server/      db, http (route wrapper), errors, audit, auth/, authz/, services/ (the only place that touches Prisma)
+src/client/      api.ts (the one fetch wrapper), use-form.ts
+tests/           unit/, api/ (against a running server), e2e/ (Playwright, one spec per core flow)
 ```
 
-Add or extend tests for new rules: unit tests for pure logic in `src/lib`, e2e for flows.
+Layering: screen or route → `handle()` (session, role, CSRF header, zod, error envelope) → service → Prisma.
+Services call `domain/*` for rules and `authz/*` for scope. Screens never query Prisma directly and never duplicate a
+rule that lives in `domain/`. All browser writes go through `/api/v1` via `src/client/api.ts`.
 
-## Releases
+## Run
 
-- Bump `version` in `package.json` (semver: patch for fixes, minor for features, major for anything that needs
-  manual steps) and add an entry at the top of `CHANGELOG.md`. Include a **Data** line saying what happens to
-  existing records, and any **Upgrade steps**.
-- After the user confirms a release is deployed to production, run `node scripts/check-migrations.mjs --ship` and
-  commit `prisma/migrations/shipped.txt`.
+```
+cp .env.example .env          # set DATABASE_URL and SESSION_SECRET
+docker compose up -d db       # Postgres 16
+npm install
+npm run db:migrate            # prisma migrate dev
+npm run db:seed               # reference data + demo data (password for everyone: Progression@123)
+npm run dev                   # http://localhost:3000
+```
 
-## Dependencies
+`docker compose up --build` runs Postgres and the app together; the container migrates on start and seeds when the
+database is empty (`SEED_DEMO_DATA=true` adds the demo data).
 
-Versions are pinned exactly (`npm install --save-exact`). Pick versions at least two weeks old. Upgrade one area at a
-time, on its own commit, with the full test suite. Prisma and Next.js majors need their migration guides.
+## Test
 
-## Code conventions
+```
+npm test              # unit tests (domain rules, permissions, csv…)
+npm run test:api      # API tests; needs a running server on API_BASE_URL (default :3000) with seeded data
+npm run test:e2e      # browser tests; needs a running server on E2E_BASE_URL (default :3000) with seeded data
+npm run test:all      # the whole proof from an empty database (recreate crm_test → migrate → seed → lint →
+                      # typecheck → unit → build → start → API → browser → screenshots). CI runs this.
+```
 
-- Server actions live in `src/server/actions/`. Wrap each exported action in `safeAction` (`src/server/action-error.ts`),
-  check permissions with `src/lib/authz.ts`, validate input with zod, and record changes with `src/lib/audit.ts`.
-  Throw `UserError` for messages meant for the user.
-- Writes that someone else may be editing at the same time use an optimistic version check (`Opportunity.version`,
-  `Opportunity.boqVersion`). Bump the version on any write that changes what an open form shows.
-- Pure business rules go in `src/lib` and get unit tests. Keep the UI consistent with the existing components.
-- Docs: product behaviour in `docs/sales-workflow.md` and `docs/deal-structure.md`; operations in `docs/operations.md`.
-  Update them in the same change.
-- Commit and push only to the branch you were given. Don't open pull requests unless asked.
+## Rules
+
+1. **Every schema change needs a migration** (`npm run db:migrate`), and `///` comments on new tables and columns;
+   then `npm run docs:dictionary`. Never edit a migration that has been pushed.
+2. **Never drop data.** Soft delete (`deleted_at`) for records, deactivate (`is_active`) for lookups and users.
+   A migration never deletes rows or columns without an explicit, reviewed plan.
+3. **Every feature gets tests**: a unit test for a rule in `domain/`, an API test for a route (including the
+   permission-denied case), a browser test for a user-facing flow. A fix for a bug starts with a test that fails.
+4. **Do not touch login, sessions or permissions without asking.** That is `src/server/auth/**`, `src/server/authz/**`,
+   `src/domain/permissions.ts`, `src/domain/scope.ts`, `src/proxy.ts` and the auth routes.
+5. **Keep it lean.** No new module, field, dependency or setting unless the spec needs it. Prefer removing to adding.
+   One component per job; reuse `components/crm/*` before writing a new one.
+6. Every permission is enforced on the server (`handle({ roles })` + scope in services); the UI only hides what the
+   server would refuse. Out-of-scope reads answer 404, never 403, so records are not enumerable.
+7. Money is `Decimal` in the database and strings over the API; never do arithmetic with JS numbers on money
+   (use `domain/money.ts`). Dates are UTC; date-only values are `yyyy-mm-dd` strings over the API.
+8. Audit: every write goes through `recordChanges`/`recordEvent` with old and new values; stage moves write
+   `deal_stage_history`. Do not add a write path that skips this.
+9. Secrets only in `.env` (ignored). Never commit `.env`, never log a password, token or session cookie.
+10. Lint, typecheck and the unit tests must be green before a commit; run `npm run test:all` before a release.
+11. **Colours, fonts, radii and shadows are tokens** in `src/app/globals.css` (see `docs/DESIGN.md`). No raw hex,
+    `rgb()` or Tailwind palette class in a component; `tests/unit/design-tokens.test.ts` enforces it and checks the
+    contrast of every tinted pair. Status colour only for actual status.

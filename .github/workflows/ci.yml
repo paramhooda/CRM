@@ -5,13 +5,11 @@ on:
     branches: ["**"]
   pull_request:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   test:
+    name: Lint, typecheck, unit, API and browser tests from an empty database
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16-alpine
@@ -21,10 +19,15 @@ jobs:
           POSTGRES_DB: crm
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U crm -d crm" --health-interval 5s --health-timeout 5s --health-retries 20
+          --health-cmd "pg_isready -U crm -d crm"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     env:
-      DATABASE_URL: postgresql://crm:crm@localhost:5432/crm?schema=public
-      SESSION_SECRET: ci-only-Zq8vN3xK7pR2mW9tY4bH6jL1cF5gD0sA
+      DATABASE_URL: postgresql://crm:crm@localhost:5432/crm
+      TEST_DATABASE_URL: postgresql://crm:crm@localhost:5432/crm_test
+      SESSION_SECRET: ci-only-secret-ci-only-secret-ci-only-secret
+      CI: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,42 +35,23 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Data safety: shipped migrations unchanged, new ones additive, and the schema fully covered by migrations
-      - run: npm run check:migrations
-      - run: npx prisma migrate deploy
-      - name: Schema matches migrations
-        run: npm run check:drift
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: npm run db:seed
-        env:
-          SEED_DEMO_DATA: "true"
-      - name: Start app
-        env:
-          DEMO_LOGINS: "true"
-        run: |
-          npx next start -p 3000 &
-          curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://localhost:3000/api/health
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
-      - uses: actions/upload-artifact@v4
-        if: failure()
+      - run: bash scripts/test-all.sh
+      - name: Keep the browser report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: playwright-traces
-          path: test-results
+          name: test-output
+          path: |
+            playwright-report
+            test-results
+            docs/screenshots
+          if-no-files-found: ignore
 
   docker:
+    name: Docker image builds
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          build-args: GIT_SHA=${{ github.sha }}
-          tags: progression-crm:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - run: docker build -t progression-crm:ci .

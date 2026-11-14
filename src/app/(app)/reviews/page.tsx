@@ -1,232 +1,133 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import {
-  AlertTriangle, CheckCircle2, CircleDashed, AlertOctagon, ListChecks, Gauge, Wallet, Target, Trophy, CalendarClock, Users, ThumbsUp,
-} from "lucide-react";
-import { requireRole } from "@/lib/auth";
-import { can, SALES_ROLES } from "@/lib/authz";
-import { getPipelineReview } from "@/server/queries/pipeline-review";
-import { PageHeader, PageBody, StatTile, EmptyState } from "@/components/crm/page";
-import { Section } from "@/components/ui/card";
-import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
-import { Avatar } from "@/components/crm/badges";
-import { ReviewNav, CompleteReview } from "@/components/reviews/review-controls";
-import { ReviewDeals } from "@/components/reviews/review-board";
-import { SINCE_OPTIONS } from "@/lib/review";
-import { inr, fmtDate, relativeDays } from "@/lib/format";
+import { History } from "lucide-react";
+import { requireActor } from "@/server/auth/actor";
+import { pipelineReview } from "@/server/services/reviews";
+import { salesPeopleFor } from "@/server/services/people";
+import { NotFound, ValidationError } from "@/server/errors";
+import { can } from "@/domain/permissions";
+import { FLAG_LABEL } from "@/domain/review";
+import { PageHeader } from "@/components/crm/page-header";
+import { KpiTile } from "@/components/crm/kpi-tile";
+import { StagePill, ForecastPill, NeutralPill } from "@/components/crm/pills";
+import { Money, Pct } from "@/components/crm/money";
+import { EmptyState } from "@/components/crm/states";
+import { Button } from "@/components/ui/button";
+import { ReviewControls } from "./review-controls";
+import { MarkReviewed } from "./mark-reviewed";
+import { fmtDate, inr } from "@/lib/format";
+import { fieldLabel } from "@/lib/labels";
+import { STAGE_META, type Stage } from "@/domain/stages";
 import { cn } from "@/lib/utils";
-import type { SearchParams } from "@/lib/filters";
+import { RecordCode } from "@/components/crm/code";
 
-export const metadata = { title: "Pipeline review" };
+export const metadata: Metadata = { title: "Pipeline review" };
 
-export default async function ReviewsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const user = await requireRole(...SALES_ROLES);
-  if (!can.reviewPipeline(user)) redirect("/dashboard");
-  const sp = await searchParams;
-  const r = await getPipelineReview(user, sp);
-  const single = r.scope.selected.length === 1 && r.scope.kind === "people" ? r.scope.selected[0]! : null;
-  const firstName = single ? r.scope.label.split(" ")[0] : null;
-  const sameBaseline = new Set(r.baselines.map((b) => b.date.toISOString().slice(0, 10))).size <= 1;
-  const b0 = r.baselines[0];
-  const sinceLabel = !b0 ? "" : !sameBaseline ? "each person's last review" : b0.label === "last review" ? (single ? `${firstName}'s last review` : "the last review") : b0.label;
-  const description = !b0 ? null : sameBaseline ? (
-    <>Changes since {sinceLabel}: <span className="font-medium text-ink">{fmtDate(b0.date)}</span> ({relativeDays(b0.date)})</>
-  ) : (
-    <>Changes since each person&apos;s last review ({fmtDate(minDate(r.baselines), "short")} to {fmtDate(maxDate(r.baselines), "short")})</>
-  );
-  const m = r.metrics;
-  const delta = (now: number, start: number) => {
-    const d = now - start;
-    return Math.abs(d) < 1 ? null : { value: `${d > 0 ? "+" : "−"}${inr(Math.abs(d))}`, good: d > 0 };
-  };
+const show = (field: string, v: string | null) => (v === null ? "—" : field === "stage" && v in STAGE_META ? STAGE_META[v as Stage].label : field === "dealValue" ? inr(v) : field === "expectedGmPct" ? `${v}%` : v);
 
+export default async function ReviewsPage({ searchParams }: { searchParams: Promise<{ scope?: string; scope_user_id?: string; since?: string; show?: string }> }) {
+  const actor = await requireActor();
+  if (!can(actor.role, "reviews.view")) redirect("/");
+  const q = await searchParams;
+  const scope = (["rep", "team", "everyone"].includes(q.scope ?? "") ? q.scope : actor.role === "SALES" ? "rep" : "everyone") as "rep" | "team" | "everyone";
+  const since = q.since ?? "last";
+  const people = await salesPeopleFor(actor);
+  let r: Awaited<ReturnType<typeof pipelineReview>> | null = null;
+  let problem: string | null = null;
+  try {
+    r = await pipelineReview(actor, { scope, scopeUserId: q.scope_user_id ?? null, since });
+  } catch (e) {
+    if (e instanceof NotFound || e instanceof ValidationError) problem = e.message;
+    else throw e;
+  }
+  const showAll = q.show === "all";
+  const shown = r ? (showAll ? r.deals : r.deals.filter((d) => d.flags.length || d.changes.isNew || Object.keys(d.changes.changes).length)) : [];
   return (
     <>
-      <PageHeader
-        title={`Pipeline review · ${r.scope.label}`}
-        description={description}
-        actions={
-          <CompleteReview
-            who={r.scope.kind === "all" ? "all" : r.scope.selected}
-            scopeLabel={r.scope.label}
-            people={r.people}
-            deals={r.deals.map((d) => ({ id: d.id, name: d.name, ownerId: d.ownerId }))}
-            defaultOwner={single ?? r.scope.selected[0] ?? user.id}
-          />
-        }
-      >
-        <div className="mt-6">
-          <Suspense>
-            <ReviewNav
-              people={r.people}
-              selected={r.scope.selected}
-              scopeKind={r.scope.kind}
-              hasTeam={r.hasTeam}
-              canChooseOwner={r.canChooseOwner}
-              since={r.since}
-              sinceOptions={SINCE_OPTIONS}
-            />
-          </Suspense>
-        </div>
-      </PageHeader>
+      <PageHeader title="Pipeline review" description="What changed since the last review, what needs raising, and how each person is doing." actions={<Button asChild variant="outline" size="sm"><Link href="/reviews/history"><History /> Past reviews</Link></Button>} />
+      <ReviewControls people={people.filter((p) => p.role !== "ADMIN")} scope={scope} />
+      {problem && <EmptyState title="Can't build that review" description={problem} />}
+      {r && (
+        <>
+          <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Summary">
+            <KpiTile label="Deals in scope" value={r.deals.length} />
+            <KpiTile label="Changed since" value={r.changed} sub={since === "last" ? "since the last review" : `in the window`} />
+            <KpiTile label="Flagged" value={r.flagged} tone={r.flagged ? "warn" : "default"} />
+            <KpiTile label="People" value={r.people.length} />
+          </section>
 
-      <PageBody className="flex flex-col gap-6">
-        {r.lastReview && (r.priorActions.length > 0 || r.lastReview.notes) && (
-          <Section
-            title="Agreed last time"
-            description={`${fmtDate(r.lastReview.at)} · ${r.lastReview.by}${r.lastReview.notes ? ` · ${r.lastReview.notes}` : ""}`}
-            icon={<ListChecks />}
-            tone="violet"
-            flush
-          >
-            {r.priorActions.length > 0 ? (
-              <ul>
-                {r.priorActions.map((a) => (
-                  <li key={a.id} className="flex items-center gap-3 border-t border-border px-5 py-2.5 text-[13px]">
-                    {a.completedAt ? (
-                      <CheckCircle2 className="size-4 shrink-0 text-[var(--t-green)]" />
-                    ) : a.overdue ? (
-                      <AlertOctagon className="size-4 shrink-0 text-[var(--t-red)]" />
-                    ) : (
-                      <CircleDashed className="size-4 shrink-0 text-ink-3" />
-                    )}
-                    <span className={cn("min-w-0 flex-1 truncate", a.completedAt && "text-ink-3 line-through")}>
-                      {a.subject}
-                      {a.deal && <Link href={`/opportunities/${a.deal.id}`} className="ml-1.5 text-xs text-ink-3 hover:text-primary">{a.deal.name}</Link>}
-                    </span>
-                    {!single && <span className="hidden text-xs text-ink-3 sm:inline">{a.owner}</span>}
-                    <span className={cn("w-28 text-right text-xs", a.completedAt ? "text-[var(--t-green)]" : a.overdue ? "font-medium text-[var(--t-red)]" : "text-ink-3")}>
-                      {a.completedAt ? "Done" : a.overdue ? `Overdue · ${fmtDate(a.dueAt, "short")}` : `Due ${fmtDate(a.dueAt, "short")}`}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </Section>
-        )}
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatTile label="Open pipeline" value={inr(m.total.now)} icon={<Wallet />} tone="blue" delta={delta(m.total.now, m.total.start)} sub={`${m.total.count} active deals`} />
-          <StatTile label="Commit" value={inr(m.commit.now)} icon={<Target />} tone="violet" delta={delta(m.commit.now, m.commit.start)} sub={`${inr(m.upside.now)} best case`} />
-          <StatTile label="Won" value={inr(m.won.value)} icon={<Trophy />} tone="green" sub={`${m.won.count} deal${m.won.count === 1 ? "" : "s"}${m.lost.count ? ` · ${m.lost.count} lost (${inr(m.lost.value)})` : ""}`} />
-          <StatTile label="Close dates pushed" value={String(m.pushed.count)} icon={<CalendarClock />} tone="amber" sub={m.pushed.count ? `${inr(m.pushed.value)} pushed out` : "None in this window"} />
-        </div>
-
-        <div className="grid items-start gap-6 lg:grid-cols-3">
-          <Section className="lg:col-span-2" title="Raise in this call" description="Most urgent first, largest deals on top" icon={<AlertTriangle />} tone="red" flush>
-            {r.agenda.length === 0 ? (
-              <EmptyState title="Nothing urgent" description="No breached deadlines, slips or stalled deals." />
+          <section className="mt-6" aria-label="People">
+            <h2 className="mb-2 text-sm font-semibold">By person</h2>
+            {r.people.length === 0 ? (
+              <EmptyState title="No sales people in this scope" className="py-8" />
             ) : (
-              r.agenda.map((g) => (
-                <div key={g.key}>
-                  <p className="border-t border-border bg-surface-2/50 px-5 py-1.5 text-xs">
-                    <span className="font-medium" style={{ color: `var(--t-${g.tone})` }}>{g.title}</span>
-                    <span className="text-ink-3"> · {g.items.length}</span>
-                  </p>
-                  <ul>
-                    {g.items.slice(0, single ? 6 : 3).map((i) => (
-                      <li key={i.dealId}>
-                        <Link href={`/opportunities/${i.dealId}`} className="flex items-center gap-3 border-t border-border px-5 py-2.5 hover:bg-surface-2/70">
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[13px] font-medium">{i.deal}{!single && <span className="font-normal text-ink-3"> · {i.owner}</span>}</p>
-                            <p className="text-xs text-ink-3">{i.fact}</p>
-                          </div>
-                          <span className="w-20 shrink-0 text-right text-[13px] font-medium tabular">{inr(i.amount)}</span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                  {g.items.length > (single ? 6 : 3) && (
-                    <p className="border-t border-border px-5 py-2 text-xs text-ink-3">+{g.items.length - (single ? 6 : 3)} more in the deals list below</p>
-                  )}
-                </div>
-              ))
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {r.people.map((p) => (
+                  <div key={p.user.id} className="rounded-xl border border-border bg-card p-4 text-sm shadow-card">
+                    <div className="flex items-baseline justify-between">
+                      <div className="font-semibold">{p.user.fullName}</div>
+                      <div className="text-xs text-muted-foreground">{p.deals} deals · since {fmtDate(p.since)}</div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                      <div><div className="text-muted-foreground">Won</div><div className="font-medium"><Money value={p.summary.wonValue} /></div></div>
+                      <div><div className="text-muted-foreground">Commit + Upside</div><div className="font-medium"><Money value={p.summary.commitUpside} /></div></div>
+                      <div><div className="text-muted-foreground">Target (Q)</div><div className="font-medium">{p.summary.target === null ? "—" : inr(p.summary.target)}</div></div>
+                    </div>
+                    {p.summary.doneWell.length > 0 && <ul className="mt-3 list-disc pl-4 text-xs text-success">{p.summary.doneWell.map((x) => <li key={x}>{x}</li>)}</ul>}
+                    {p.summary.lagging.length > 0 && <ul className="mt-2 list-disc pl-4 text-xs text-destructive">{p.summary.lagging.map((x) => <li key={x}>{x}</li>)}</ul>}
+                    {p.summary.doneWell.length === 0 && p.summary.lagging.length === 0 && <p className="mt-3 text-xs text-muted-foreground">Nothing to raise.</p>}
+                  </div>
+                ))}
+              </div>
             )}
-          </Section>
+          </section>
 
-          <Section title={single ? `How ${firstName} is doing` : "How the team is doing"} description={`Since ${sinceLabel}`} icon={<Gauge />} tone="green">
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-ink-2"><ThumbsUp className="size-3.5 text-[var(--t-green)]" /> Going well</p>
-            <Points items={r.verdict.good} empty="Nothing stands out yet." />
-            <p className="mb-2 mt-5 flex items-center gap-1.5 text-xs font-medium text-ink-2"><AlertTriangle className="size-3.5 text-[var(--t-amber)]" /> Lagging</p>
-            <Points items={r.verdict.bad} empty="No gaps against target or team." />
-            {r.teamBench && single && (
-              <p className="mt-5 text-[11px] text-ink-3">
-                Compared with team medians:{" "}
-                {[
-                  `${Math.round(r.teamBench.activities)} activities`,
-                  r.teamBench.newPipeline > 0 ? `${inr(r.teamBench.newPipeline)} new pipeline` : null,
-                  r.teamBench.winRate !== null ? `${Math.round(r.teamBench.winRate)}% win rate` : null,
-                ].filter(Boolean).join(", ")}.
-              </p>
-            )}
-          </Section>
-        </div>
-
-        {r.rollup && r.rollup.length > 0 && (
-          <Section title="By sales person" description="Click a name to review them" icon={<Users />} tone="aqua" flush>
-            <div className="overflow-x-auto">
-              <Table className="min-w-[760px]">
-                <THead>
-                  <tr>
-                    <TH>Sales person</TH>
-                    <TH className="text-right">Open pipeline</TH>
-                    <TH className="text-right">Won</TH>
-                    <TH className="text-right">Pushed</TH>
-                    <TH className="text-right">Past close date</TH>
-                    <TH className="text-right">No activity 21d+</TH>
-                    <TH className="text-right">Activities</TH>
-                  </tr>
-                </THead>
-                <TBody>
-                  {r.rollup.map((p) => (
-                    <TR key={p.id}>
-                      <TD>
-                        <Link prefetch={false} href={`/reviews?who=${p.id}&since=${r.since}`} className="flex items-center gap-2 font-medium hover:text-primary">
-                          <Avatar name={p.name} /> {p.name}
-                        </Link>
-                      </TD>
-                      <TD className="text-right tabular">{inr(p.open)} <span className="text-xs text-ink-3">{p.openCount}</span></TD>
-                      <TD className="text-right tabular">{p.wonCount ? inr(p.won) : "—"}</TD>
-                      <Count n={p.pushedCount} />
-                      <Count n={p.pastCloseCount} />
-                      <Count n={p.quietCount} />
-                      <TD className="text-right tabular">{p.activities}</TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
+          <section className="mt-6" aria-label="Deals">
+            <div className="mb-2 flex items-baseline justify-between">
+              <h2 className="text-sm font-semibold">{showAll ? "All deals" : "Deals that changed or need raising"}</h2>
+              <Link href={`/reviews?${new URLSearchParams({ ...(q.scope ? { scope: q.scope } : {}), ...(q.scope_user_id ? { scope_user_id: q.scope_user_id } : {}), ...(q.since ? { since: q.since } : {}), ...(showAll ? {} : { show: "all" }) }).toString()}`} className="text-xs text-link hover:underline">{showAll ? "Show only changed or flagged" : `Show all ${r.deals.length} deals`}</Link>
             </div>
-          </Section>
-        )}
-
-        <ReviewDeals deals={r.deals} closed={r.closed} showOwner={!single} sinceLabel={sinceLabel} />
-      </PageBody>
+            {shown.length === 0 ? (
+              <EmptyState title={r.deals.length === 0 ? "No deals in scope" : "Nothing changed and nothing is flagged"} description={r.deals.length ? "Use the link above to see every deal." : undefined} className="py-8" />
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="border-b border-border bg-background text-left text-xs text-muted-foreground">
+                      <tr><th className="px-3 py-2 font-medium">Deal</th><th className="px-3 py-2 font-medium">Owner</th><th className="px-3 py-2 font-medium">Stage</th><th className="px-3 py-2 text-right font-medium">Value</th><th className="px-3 py-2 text-right font-medium">GM</th><th className="px-3 py-2 font-medium">Close</th><th className="px-3 py-2 font-medium">Changes</th><th className="px-3 py-2 font-medium">Flags</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {shown.map((d) => {
+                        const changes = Object.entries(d.changes.changes);
+                        return (
+                          <tr key={d.id} className={cn("align-top", d.flags.length && "bg-warning/5")}>
+                            <td className="px-3 py-2"><Link href={`/deals/${d.id}`} className="font-medium hover:text-link">{d.name}</Link><div className="text-xs text-muted-foreground"><RecordCode>{d.code}</RecordCode> · {d.account.name}</div></td>
+                            <td className="whitespace-nowrap px-3 py-2 text-xs">{d.owner.fullName}</td>
+                            <td className="px-3 py-2"><StagePill stage={d.stage} /><div className="mt-1 text-[11px] text-muted-foreground">{d.daysInStage}d</div></td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right"><Money value={d.dealValue} /><div className="mt-1"><ForecastPill forecast={d.forecastCategory} /></div></td>
+                            <td className="px-3 py-2 text-right"><Pct value={d.expectedGmPct} /></td>
+                            <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtDate(d.expectedCloseDate)}</td>
+                            <td className="px-3 py-2 text-xs">
+                              {d.changes.isNew && <div className="text-success">New deal</div>}
+                              {changes.length === 0 && !d.changes.isNew && <span className="text-muted-foreground">No change</span>}
+                              {changes.map(([f, c]) => (
+                                <div key={f}><span className="text-muted-foreground">{fieldLabel(f)}:</span> {show(f, c.from)} → <span className="font-medium">{show(f, c.to)}</span></div>
+                              ))}
+                            </td>
+                            <td className="px-3 py-2"><div className="flex flex-wrap gap-1">{d.flags.map((f) => <NeutralPill key={f} className="bg-stage-proposal text-stage-proposal-foreground">{FLAG_LABEL[f]}</NeutralPill>)}</div></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </section>
+          {can(actor.role, "reviews.mark") && <MarkReviewed scope={scope} scopeUserId={r.scopeUserId} since={since} people={r.people.length} />}
+        </>
+      )}
     </>
   );
-}
-
-function Count({ n }: { n: number }) {
-  return <TD className="text-right tabular" style={{ color: n ? "var(--t-red)" : "var(--ink-3)" }}>{n || "—"}</TD>;
-}
-
-function Points({ items, empty }: { items: string[]; empty: string }) {
-  if (!items.length) return <p className="text-[13px] text-ink-3">{empty}</p>;
-  return (
-    <ul className="flex flex-col gap-2">
-      {items.map((t) => (
-        <li key={t} className="flex gap-2 text-[13px] leading-snug">
-          <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-ink-3" />
-          {t}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function minDate(xs: { date: Date }[]) {
-  return new Date(Math.min(...xs.map((x) => x.date.getTime())));
-}
-function maxDate(xs: { date: Date }[]) {
-  return new Date(Math.max(...xs.map((x) => x.date.getTime())));
 }

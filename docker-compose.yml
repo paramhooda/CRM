@@ -1,102 +1,37 @@
-# Progression CRM. Settings go in a .env file next to this one (see .env.example and docs/operations.md).
-#   Plain HTTP on the server's address:   docker compose up -d
-#   HTTPS on your own domain (optional):  set DOMAIN, APP_PORT=127.0.0.1:3000 and TRUST_PROXY=true in .env, then
-#                                         docker compose --profile https up -d
 name: progression-crm
-
-x-logging: &logging
-  driver: json-file
-  options: { max-size: "10m", max-file: "5" }
 
 services:
   db:
     image: postgres:16-alpine
-    restart: unless-stopped
     environment:
       POSTGRES_USER: crm
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - generate one with openssl rand -hex 24}"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm}
       POSTGRES_DB: crm
-      TZ: Asia/Kolkata
+      TZ: UTC
+    ports:
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 20
-    logging: *logging
 
   app:
-    build:
-      context: .
-      args:
-        GIT_SHA: ${GIT_SHA:-}
-    image: progression-crm:latest
-    restart: unless-stopped
+    build: .
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://crm:${POSTGRES_PASSWORD}@db:5432/crm?schema=public&connection_limit=10&pool_timeout=20
-      # Leave empty to auto-generate a strong secret on first start (stored in the appdata volume)
-      SESSION_SECRET: ${SESSION_SECRET:-}
-      # Demo data and one-click demo sign-in are for test installs only
+      DATABASE_URL: postgresql://crm:${POSTGRES_PASSWORD:-crm}@db:5432/crm
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env (any long random string)}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
-      DEMO_LOGINS: ${DEMO_LOGINS:-false}
-      # auto: secure cookies whenever the CRM is opened over HTTPS
-      COOKIE_SECURE: ${COOKIE_SECURE:-auto}
-      # true only behind the HTTPS proxy below (it supplies the browser's real address)
-      TRUST_PROXY: ${TRUST_PROXY:-false}
-      # Optional: the address people use, e.g. https://crm.yourcompany.com (otherwise set in Admin → Email & system)
-      APP_URL: ${APP_URL:-}
-      TZ: Asia/Kolkata
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TZ: UTC
     ports:
       - "${APP_PORT:-3000}:3000"
-    volumes:
-      - appdata:/app/data
-      - backups:/backups
-    logging: *logging
-
-  # Nightly database backup at BACKUP_TIME (default 01:30), kept BACKUP_KEEP_DAYS days (default 14)
-  backup:
-    image: postgres:16-alpine
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "/scripts/backup.sh"]
-    environment:
-      PGHOST: db
-      PGUSER: crm
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-      PGDATABASE: crm
-      BACKUP_TIME: ${BACKUP_TIME:-01:30}
-      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
-      TZ: Asia/Kolkata
-    volumes:
-      - ./deploy/backup.sh:/scripts/backup.sh:ro
-      - backups:/backups
-      - appdata:/appdata:ro
-    logging: *logging
-
-  # Optional HTTPS with an automatic Let's Encrypt certificate. Only runs with --profile https.
-  caddy:
-    image: caddy:2-alpine
-    profiles: ["https"]
-    restart: unless-stopped
-    depends_on: [app]
-    environment:
-      DOMAIN: ${DOMAIN:-}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddydata:/data
-    logging: *logging
 
 volumes:
   pgdata:
-  appdata:
-  backups:
-  caddydata:
