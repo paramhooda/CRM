@@ -16,7 +16,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const sidebarOpen = jar.get("sidebar_state")?.value !== "false";
   return (
     <AppDataProvider lookups={lookups} actor={actor} aiEnabled={ai}>
-      <AppShell sidebarOpen={sidebarOpen} pendingApprovals={approvals.rows.length} needsYou={actions.count}>{children}</AppShell>
+      <AppShell sidebarOpen={sidebarOpen} pendingApprovals={approvals.rows.length} needsYou={{ count: actions.count, team: actions.team, rows: actions.rows.slice(0, 8).map((a) => ({ id: a.id, code: a.code, name: a.name, step: a.step, due: a.due, overdue: a.overdue })) }}>{children}</AppShell>
     </AppDataProvider>
   );
 }

@@ -62,8 +62,9 @@ BOQ summary and write a plain-English deal brief for a pipeline call.
 
 **A seamless flow, fourth round**: the work moves on by itself. Submitting a BOQ with third-party lines still to
 cost names the buyer and raises the pricing request in the same transaction; opening a deal starts the request
-assigned to you; Home opens with "Needs you" (every deal whose current step is yours, overdue first, with the
-sidebar carrying the count; managers also see how many deals wait on their team). Costs and prices are entered in
+assigned to you; the top bar carries a Needs you task icon with the count and a quick list, and Home shows the
+full list under the numbers (every deal whose current step is yours, overdue first; managers also see how many
+deals wait on their team). Costs and prices are entered in
 one grid with one save, and completing pricing is offered the moment every line is costed. Sales send the proposal
 from the deal: the quotation is generated as a PDF from the lines (pdfkit, numbered per fiscal year, revised per
 deal, stored as a sales-only document), emailed from the sender's own address through the admin's SMTP server with

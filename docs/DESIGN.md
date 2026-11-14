@@ -106,8 +106,10 @@ real state (target met, overdue).
 - Price grid (`components/crm/price-grid.tsx`): the lines as a table with one editable money column (36px inputs,
   right-aligned, tabular figures), line totals and the margin recomputed as you type, one primary Save. Opened as a
   dialog from the panel or the Lines tab; inline on the Lines tab for purchase.
-- Needs you (Home): a bordered list card first on the page, one row per deal (name, code · account, the step in
-  body text, stage pill, due date in muted or `--destructive`, a primary Open), overdue rows on a 5% red tint.
+- Needs you: a task icon in the top bar with a red count and a 384px menu (name, step, due date; "See everything
+  that needs you"), and on Home, under the numbers, a bordered list card, one row per deal (name, code · account,
+  the step in body text, stage pill, due date in muted or `--destructive`, a primary Open), overdue rows on a 5% red
+  tint.
 - Send proposal: a two-part dialog, the quotation block on `--background` (number, validity, subtotal, Download,
   Generate or New revision) above the email fields and an attachment checklist; a tinted amber note when the
   server cannot send. Admin Settings: four cards with tinted icon squares, one Save each.

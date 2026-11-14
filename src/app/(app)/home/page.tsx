@@ -85,14 +85,27 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         active={tab}
         tabs={[
           { key: "overview", label: "Overview", href: here({ tab: null }) },
-          { key: "attention", label: "Needs attention", href: here({ tab: "attention" }), count: todoCount },
+          { key: "attention", label: "Needs attention", href: here({ tab: "attention" }), count: actions.count + todoCount },
           { key: "pipeline", label: "Pipeline", href: here({ tab: "pipeline" }) },
         ]}
       />
       <p className="mb-6 text-sm text-muted-foreground">Showing <span className="font-medium text-foreground">{filters.owner ? owners.find((o) => o.id === filters.owner)?.fullName ?? "one person" : manager ? "whole team" : "your deals"} · {WINDOW_LABEL[window]} ({windowNote})</span></p>
 
-      {(showOverview || showAttention) && (
-        <section className="mb-8" aria-label="Needs you">
+      {(showOverview || showPipeline) && (
+        <>
+          <SectionLabel note={`Open now, and the ${WINDOW_LABEL[window]}`}>Sales</SectionLabel>
+          <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5" aria-label="Numbers">
+            <StatTile label="Open pipeline" value={inr(m.kpis.openPipeline.value)} icon={Inbox} iconTone="blue" series={m.kpis.openPipeline.series} delta={{ pct: m.kpis.openPipeline.delta }} note={`${m.kpis.openPipeline.count} deals · ${m.kpis.openPipeline.opened} opened`} href={dealsHref({})} />
+            <StatTile label={`Commit · ${m.period.quarter}`} value={inr(m.kpis.commitThisQuarter.value)} icon={Target} iconTone="green" tone={m.kpis.commitThisQuarter.target && m.kpis.commitThisQuarter.value >= m.kpis.commitThisQuarter.target ? "green" : "default"} series={m.kpis.commitThisQuarter.series} note={m.kpis.commitThisQuarter.target ? `of ${inr(m.kpis.commitThisQuarter.target)} target` : `${m.kpis.commitThisQuarter.count} deals`} href={dealsHref({ forecast: "COMMIT", period: "this-q" })} />
+            <StatTile label={`Won · ${m.period.fy}`} value={inr(m.kpis.wonFytd.value)} icon={Trophy} iconTone="blue" series={m.kpis.wonFytd.series} delta={{ pct: m.kpis.wonFytd.delta }} note={m.kpis.wonFytd.target ? `${Math.round((m.kpis.wonFytd.value / m.kpis.wonFytd.target) * 100)}% of ${inr(m.kpis.wonFytd.target)}` : `${m.kpis.wonFytd.count} deals`} href={`/deals${queryString(q, { stage: "CLOSED_WON", period: "this-fy", days: null, tab: null })}`} />
+            <StatTile label="Past close date" value={m.kpis.pastClose.count} tone={m.kpis.pastClose.count ? "red" : "default"} icon={TriangleAlert} iconTone="red" series={m.kpis.pastClose.series} note={m.kpis.pastClose.count ? `${inr(m.kpis.pastClose.value)} to re-date or close` : "every open deal is in date"} href={dealsHref({})} />
+            <StatTile label="Avg expected GM" value={m.kpis.avgGm.pct === null ? "—" : `${m.kpis.avgGm.pct}%`} tone={m.kpis.avgGm.pct !== null && alerts.gmAmberBelowPct !== null && m.kpis.avgGm.pct < alerts.gmAmberBelowPct ? "amber" : "default"} icon={Percent} iconTone="amber" delta={m.kpis.avgGm.delta === null ? null : { pct: m.kpis.avgGm.delta }} note={`${m.kpis.avgGm.count} costed deals · win rate ${m.kpis.winRate.pct === null ? "—" : `${m.kpis.winRate.pct}%`}`} />
+          </section>
+        </>
+      )}
+
+      {showAttention && (
+        <section className="mb-8" aria-label="To do">
           <SectionLabel note={actions.count ? `${actions.count} deal${actions.count === 1 ? "" : "s"} waiting on you${manager && actions.team ? ` · ${actions.team} waiting on your team` : ""}` : manager && actions.team ? `Nothing on you · ${actions.team} waiting on your team` : "Nothing waiting on you"}>Needs you</SectionLabel>
           {actions.rows.length === 0 ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-card">
@@ -116,25 +129,8 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
               {actions.count > actions.rows.length && <div className="px-5 py-2 text-xs text-muted-foreground">And {actions.count - actions.rows.length} more.</div>}
             </div>
           )}
-        </section>
-      )}
 
-      {(showOverview || showPipeline) && (
-        <>
-          <SectionLabel note={`Open now, and the ${WINDOW_LABEL[window]}`}>Sales</SectionLabel>
-          <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5" aria-label="Numbers">
-            <StatTile label="Open pipeline" value={inr(m.kpis.openPipeline.value)} icon={Inbox} iconTone="blue" series={m.kpis.openPipeline.series} delta={{ pct: m.kpis.openPipeline.delta }} note={`${m.kpis.openPipeline.count} deals · ${m.kpis.openPipeline.opened} opened`} href={dealsHref({})} />
-            <StatTile label={`Commit · ${m.period.quarter}`} value={inr(m.kpis.commitThisQuarter.value)} icon={Target} iconTone="green" tone={m.kpis.commitThisQuarter.target && m.kpis.commitThisQuarter.value >= m.kpis.commitThisQuarter.target ? "green" : "default"} series={m.kpis.commitThisQuarter.series} note={m.kpis.commitThisQuarter.target ? `of ${inr(m.kpis.commitThisQuarter.target)} target` : `${m.kpis.commitThisQuarter.count} deals`} href={dealsHref({ forecast: "COMMIT", period: "this-q" })} />
-            <StatTile label={`Won · ${m.period.fy}`} value={inr(m.kpis.wonFytd.value)} icon={Trophy} iconTone="blue" series={m.kpis.wonFytd.series} delta={{ pct: m.kpis.wonFytd.delta }} note={m.kpis.wonFytd.target ? `${Math.round((m.kpis.wonFytd.value / m.kpis.wonFytd.target) * 100)}% of ${inr(m.kpis.wonFytd.target)}` : `${m.kpis.wonFytd.count} deals`} href={`/deals${queryString(q, { stage: "CLOSED_WON", period: "this-fy", days: null, tab: null })}`} />
-            <StatTile label="Past close date" value={m.kpis.pastClose.count} tone={m.kpis.pastClose.count ? "red" : "default"} icon={TriangleAlert} iconTone="red" series={m.kpis.pastClose.series} note={m.kpis.pastClose.count ? `${inr(m.kpis.pastClose.value)} to re-date or close` : "every open deal is in date"} href={dealsHref({})} />
-            <StatTile label="Avg expected GM" value={m.kpis.avgGm.pct === null ? "—" : `${m.kpis.avgGm.pct}%`} tone={m.kpis.avgGm.pct !== null && alerts.gmAmberBelowPct !== null && m.kpis.avgGm.pct < alerts.gmAmberBelowPct ? "amber" : "default"} icon={Percent} iconTone="amber" delta={m.kpis.avgGm.delta === null ? null : { pct: m.kpis.avgGm.delta }} note={`${m.kpis.avgGm.count} costed deals · win rate ${m.kpis.winRate.pct === null ? "—" : `${m.kpis.winRate.pct}%`}`} />
-          </section>
-        </>
-      )}
-
-      {showAttention && (
-        <section className="mb-8" aria-label="To do">
-          <SectionLabel note={todoCount ? `${todoCount} item${todoCount === 1 ? "" : "s"}` : "Nothing waiting on you"}>Needs your attention</SectionLabel>
+          <SectionLabel className="mt-8" note={todoCount ? `${todoCount} item${todoCount === 1 ? "" : "s"}` : "Dates and next steps are in order"}>Also worth a look</SectionLabel>
           {todoCount === 0 ? (
             <EmptyState title="Nothing waiting on you" description="Close dates and next steps are up to date." className="py-8" />
           ) : (

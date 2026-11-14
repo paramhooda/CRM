@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { Briefcase, Building2, CheckSquare, ClipboardList, Contact, Home, KeyRound, ListChecks, LogOut, Moon, Package, PanelLeftClose, PanelLeftOpen, Plus, ScrollText, Search, Settings2, ShieldCheck, SlidersHorizontal, Sun, Target, Users, UserSquare2, type LucideIcon } from "lucide-react";
+import { Briefcase, Building2, CheckSquare, ClipboardList, Contact, Home, KeyRound, ListChecks, ListTodo, LogOut, Moon, Package, PanelLeftClose, PanelLeftOpen, Plus, ScrollText, Search, Settings2, ShieldCheck, SlidersHorizontal, Sun, Target, Users, UserSquare2, type LucideIcon } from "lucide-react";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -19,12 +19,12 @@ import { cn } from "@/lib/utils";
 type Item = { href: string; label: string; icon: LucideIcon; badge?: number };
 
 /** One line per module. Creating things happens on each module's own page ("New deal" on Deals, and so on). */
-function navFor(role: string, pendingApprovals: number, needsYou: number): { main: Item[]; admin: Item[] } {
+function navFor(role: string, pendingApprovals: number): { main: Item[]; admin: Item[] } {
   if (role === "PRESALES" || role === "PURCHASE") {
-    return { main: [{ href: "/my-work", label: "My work", icon: ListChecks, badge: needsYou }, { href: "/deals", label: "Deals", icon: Briefcase }, { href: "/accounts", label: "Accounts", icon: Building2 }], admin: [] };
+    return { main: [{ href: "/my-work", label: "My work", icon: ListChecks }, { href: "/deals", label: "Deals", icon: Briefcase }, { href: "/accounts", label: "Accounts", icon: Building2 }], admin: [] };
   }
   const main: Item[] = [
-    { href: "/home", label: "Home", icon: Home, badge: needsYou },
+    { href: "/home", label: "Home", icon: Home },
     { href: "/deals", label: "Deals", icon: Briefcase },
     { href: "/accounts", label: "Accounts", icon: Building2 },
     { href: "/contacts", label: "Contacts", icon: Contact },
@@ -111,6 +111,37 @@ function NavItem({ item, pathname }: { item: Item; pathname: string }) {
   );
 }
 
+/** The top bar's task list: what is waiting on the signed-in person, as every CRM keeps it, with the count on the icon. */
+function NeedsYouMenu({ needsYou, allHref }: { needsYou: NeedsYou; allHref: string }) {
+  const router = useRouter();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-lg" aria-label={`Needs you: ${needsYou.count}`} className="relative rounded-xl">
+          <ListTodo className="size-5" />
+          {needsYou.count > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[11px] font-semibold text-destructive-foreground tabular">{needsYou.count > 99 ? "99+" : needsYou.count}</span>}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-96">
+        <DropdownMenuLabel className="flex items-baseline justify-between font-normal">
+          <span className="text-sm font-semibold">Needs you</span>
+          <span className="text-xs text-muted-foreground">{needsYou.count ? `${needsYou.count} deal${needsYou.count === 1 ? "" : "s"}` : "Nothing waiting"}{needsYou.team ? ` · ${needsYou.team} on your team` : ""}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {needsYou.rows.length === 0 && <div className="px-2 py-3 text-sm text-muted-foreground">Every deal of yours is with someone else or up to date.</div>}
+        {needsYou.rows.map((r) => (
+          <DropdownMenuItem key={r.id} onClick={() => router.push(`/deals/${r.id}`)} className="flex-col items-start gap-0.5 py-2">
+            <span className="flex w-full items-center gap-2"><span className="min-w-0 flex-1 truncate font-medium">{r.name}</span>{r.due && <span className={cn("shrink-0 text-xs", r.overdue ? "font-medium text-destructive" : "text-muted-foreground")}>{r.overdue ? "was due" : "due"} {r.due.slice(8, 10)}/{r.due.slice(5, 7)}</span>}</span>
+            <span className="text-xs text-muted-foreground">{r.step}</span>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild><Link href={allHref}>See everything that needs you</Link></DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /** The sidebar's own minimise control: a labelled button when open, an icon with a tooltip when collapsed. */
 function MinimiseButton() {
   const { state, toggleSidebar } = useSidebar();
@@ -127,12 +158,14 @@ function MinimiseButton() {
   );
 }
 
-export function AppShell({ children, sidebarOpen, pendingApprovals = 0, needsYou = 0 }: { children: ReactNode; sidebarOpen: boolean; pendingApprovals?: number; needsYou?: number }) {
+export type NeedsYou = { count: number; team: number; rows: { id: string; code: string; name: string; step: string; due: string | null; overdue: boolean }[] };
+
+export function AppShell({ children, sidebarOpen, pendingApprovals = 0, needsYou = { count: 0, team: 0, rows: [] } }: { children: ReactNode; sidebarOpen: boolean; pendingApprovals?: number; needsYou?: NeedsYou }) {
   const actor = useActor();
   const pathname = usePathname();
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
-  const nav = useMemo(() => navFor(actor.role, pendingApprovals, needsYou), [actor.role, pendingApprovals, needsYou]);
+  const nav = useMemo(() => navFor(actor.role, pendingApprovals), [actor.role, pendingApprovals]);
   const support = actor.role === "PRESALES" || actor.role === "PURCHASE";
   const home = support ? "/my-work" : "/home";
 
@@ -194,6 +227,7 @@ export function AppShell({ children, sidebarOpen, pendingApprovals = 0, needsYou
               <Link href="/deals/new"><Plus /> New deal</Link>
             </Button>
           )}
+          <NeedsYouMenu needsYou={needsYou} allHref={support ? "/my-work" : "/home?tab=attention"} />
           {!support && (
             <Button asChild variant="ghost" size="icon-lg" aria-label={`Approvals waiting on you: ${pendingApprovals}`} className="relative rounded-xl">
               <Link href="/approvals">

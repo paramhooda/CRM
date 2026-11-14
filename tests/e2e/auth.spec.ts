@@ -50,6 +50,11 @@ test("the sidebar is one line per module, minimises from its own button, and rem
   await expect(nav.getByRole("link", { name: /New deal|All open|Board|Closed-won/ })).toHaveCount(0);
   await expect(nav.getByText("Admin", { exact: true })).toHaveCount(0);
   await expect(nav.getByPlaceholder("Filter navigator")).toHaveCount(0);
+  // what needs you lives in the top bar, as in every CRM: a task icon with the count and a quick list
+  await page.getByRole("button", { name: /^Needs you: \d+$/ }).click();
+  await expect(page.getByRole("menu").getByText("Needs you", { exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "See everything that needs you" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await nav.getByRole("button", { name: "Minimise" }).click();
   await expect(page.locator("[data-slot='sidebar']").first()).toHaveAttribute("data-state", "collapsed");
   const railWidth = async () => (await page.locator("[data-slot='sidebar-container']").boundingBox())!.width;

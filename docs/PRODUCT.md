@@ -86,9 +86,10 @@ Also:
   The checklist is computed on the server from the same rules that gate the moves; the screen never decides.
   Costs and sales prices are entered in one grid (one column, one save for every line); presales and purchase land on
   the lines when the work is theirs, and completing pricing is offered the moment every line is costed.
-- **Needs you.** Home opens with every deal whose current step is the signed-in person's, with the step, the due
-  date and an Open button; managers also see how many deals wait on their team. The sidebar's Home and My work items
-  carry the count. The same list drives My work for presales and purchase.
+- **Needs you.** The top bar carries a task icon with the count of deals whose current step is the signed-in
+  person's and a quick list of the first few (as HubSpot, Salesforce and Zoho keep tasks and notifications); the
+  full list, with the step, the due date and an Open button, is the "Needs attention" section of Home (after the
+  numbers) and My work for presales and purchase. Managers also see how many deals wait on their team.
 
 **Commit**, **Upside** and **Pipeline** are set by the sales person. A deal in Commit that has not reached Proposal
 Submitted is flagged in pipeline review. **[inferred]**
@@ -192,9 +193,9 @@ gone well (won, advanced, new pipeline) and what is lagging (pushed, past close,
 
 ## 11. Home and analytics
 
-Sales roles land on **Home**: first "Needs you" (the deals whose current step is mine, overdue first), then
-"first glance should show numbers + todo", then "as we scroll down there should be more analytics", and "analytics
-should be filterable". Numbers: open pipeline, commit this quarter, won this fiscal year against target, win rate,
+Sales roles land on **Home**: "first glance should show numbers + todo" (the numbers, then "Needs you": the deals
+whose current step is mine, overdue first, and the other things worth a look), then "as we scroll down there should
+be more analytics", and "analytics should be filterable". Numbers: open pipeline, commit this quarter, won this fiscal year against target, win rate,
 average expected GM (amber only when the admin sets a threshold under Settings → Alerts). To-do: approvals waiting
 on me, deals past their close date, missing or overdue next steps, my overdue requests. Charts, filterable by period, BU, Sub BU, OEM and sales person:
 funnel by stage, pipeline by BU, by OEM, by Sub BU, forecast split and (for managers) by sales person. "Dashboard
