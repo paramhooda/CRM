@@ -91,6 +91,13 @@ real state (target met, overdue).
 - Charts: `FlowCard` (thin daily bars with light gridlines and legend dots, segmented views), `DonutCard` (centre
   value and legend table), `Heatmap` (weekday × hour in one blue scale), `BarChartCard` (horizontal lists).
 - Tabs: `LineTabs` (navigating) and `TabBar`/`Tab` (in-page) draw a 2px rule under the active tab.
+- "What's next" (`deals/[id]/next-panel.tsx`): a white card under the stage path with an uppercase caption, an 18px
+  headline that addresses the reader ("Your next step: …" / "Waiting on purchase (Meera Iyer): …"), the due date
+  in muted or `--destructive` when overdue, the step list in a three-column grid (done steps struck through in
+  `--muted-foreground` with a `--success` tick, the current step on `--selected`, later steps grey with the owner
+  in small text) and one primary button for the current step on the right, with its reason in small muted text
+  when it is disabled. Every dialog that completes a step asks for whatever is missing inside it (a document, the
+  scope), rather than sending the person elsewhere.
 - Charts: `--primary` for a single series; `--chart-1 … --chart-8` (`#2a78d6 #eb6834 #1baf7a #eda100 #e87ba4
   #008300 #4a3aa7 #e34948`) for categorical series in that order; `--chart-mag-1 … -5` (brand-300 → brand-800)
   light-to-dark for ordered magnitudes such as stage and forecast; status colours only for status.

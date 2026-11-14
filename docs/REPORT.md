@@ -44,6 +44,22 @@ service and builds the Docker image; `docker compose up --build` runs Postgres a
 `npm run docs:dictionary` regenerates the data dictionary from the schema comments; `CLAUDE.md` carries the rules for
 future changes.
 
+**Deal flow, hardened for non-technical users** (third round): one set of rules in `domain/stages.ts` and
+`domain/workflow.ts` decides, per role and stage, what can be done and what comes next, and every screen renders
+the server's answer. A "What's next" panel opens every deal page: the viewer's own step first with the one button
+that does it, the reason when it cannot be done yet, who is being waited on and by when; presales and purchase see
+their own steps and one line for everything sales does, never a price. The gaps the audit found are closed:
+a deal is handed to presales only through Advance to BOQ, with a required scope and the customer's requirement
+document (uploaded inside the dialog when missing; an open request is reused, never doubled); purchase can be asked
+only once lines with a third-party OEM exist, in any open stage, and not by sales while presales is still building
+the BOQ; lines are frozen for sales while presales works and for everyone but the buyer while purchase prices them;
+every line needs a cost before the proposal, so a GM approval rule cannot be skipped by leaving costs empty; Won
+needs final, approved prices (a Negotiation discount lapses the approval, and approval can be asked for in any open
+stage); nothing is worked while a deal is on hold; deleted deals have no moves. The customer contact can be picked or
+added from the deal page, My work says what is left to do on each request, uncosted lines say so, and the sales
+note on what happens next is edited in place. Optional, key-gated OpenAI helpers draft the presales scope and the
+BOQ summary and write a plain-English deal brief for a pipeline call.
+
 ## 2. Decisions and assumptions
 
 Taken with the owner during the build:
@@ -52,6 +68,9 @@ Taken with the owner during the build:
   OEM on every line, so funnels cut by BU, Sub BU, OEM and product. No bundles, no quote generator.
 - **Stages**: no "Identified" stage; new deals start at Qualified.
 - **Kept**: leads, documents on deals, admin-defined approval chains, the pipeline review page.
+- **Flow rules** (third round, with the owner): the proposal document stays optional (quotes are often produced
+  outside the upload flow), the customer's requirement is mandatory for the hand-over to presales, every line must
+  be costed before a proposal, and the assistant uses an OpenAI key the owner supplies.
 - **Design system** (`docs/DESIGN.md`): matched to the owner's reference application. A white tree sidebar with a
   navigator filter, a 76px top bar with search, New deal, an approvals badge and the avatar; a hero card with a
   period segmented control and a scope select at the top of every page; uppercase section captions; trend tiles

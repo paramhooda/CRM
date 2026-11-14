@@ -31,6 +31,11 @@ Layering: screen or route → `handle()` (session, role, CSRF header, zod, error
 Services call `domain/*` for rules and `authz/*` for scope. Screens never query Prisma directly and never duplicate a
 rule that lives in `domain/`. All browser writes go through `/api/v1` via `src/client/api.ts`.
 
+The deal flow has one source of truth: `domain/stages.ts` (moves and their gates) and `domain/workflow.ts` (who may
+raise a request, who may upload, and the per-role "What's next" checklist). `services/deals.ts` returns `moves`,
+`requestAbility`, `canUpload` and `next` on every deal; the deal page only renders them and never decides on its own.
+A new rule goes into those two modules with a unit test, then into the service that enforces it with an API test.
+
 ## Run
 
 ```

@@ -63,11 +63,11 @@ might need to be skipped, but that skip should happen after reaching that stage.
 
 | Stage | Who works it | To advance (the gate) |
 |---|---|---|
-| **Qualified** | Sales | Every new deal starts here ("opportunity created means by default it is qualified"; there is no Identified stage because "there was no difference between identified and qualified"). Needs a primary contact and a close date that is not in the past. If the deal needs presales, advancing creates the presales request and moves to BOQ; otherwise it goes straight to Proposal Submitted. |
-| **BOQ** | Presales | "BOQ is a pre-sales role." Presales refines the lines and submits the BOQ. Skip BOQ is offered only here, for a deal that turns out not to need presales. |
-| **Proposal Submitted** | Sales | Reached only when every line has a sales price, no presales or pricing request is open, and any approval the rules ask for has been given. "Upon pricing, sales will add margin and create & send quote." |
+| **Qualified** | Sales | Every new deal starts here ("opportunity created means by default it is qualified"; there is no Identified stage because "there was no difference between identified and qualified"). Needs a primary contact and a close date that is not in the past. If the deal needs presales, advancing hands it over: the move asks for the presales engineer, a due date, the scope and, when none is on file yet, the customer's requirement document (RFP, SoW or similar), then creates the presales request and moves to BOQ. Otherwise it goes straight to Proposal Submitted. |
+| **BOQ** | Presales | "BOQ is a pre-sales role." Presales starts the request, refines the lines (sales cannot touch them meanwhile) and submits the BOQ, which needs at least one line. Skip BOQ is offered only here, for a deal that turns out not to need presales. |
+| **Proposal Submitted** | Sales | Reached only when every line has a sales price **and a purchase cost** (so the margin is known and a GM approval rule cannot be skipped by leaving costs empty), no presales or pricing request is open, and any approval the rules ask for has been given. "Upon pricing, sales will add margin and create & send quote." The proposal document is optional: quotes are often produced outside the CRM. |
 | **Negotiation** | Sales | Advance from Proposal Submitted. |
-| **Closed-Won** | Sales | From Proposal Submitted or Negotiation, with the customer's PO number and the PO file attached. |
+| **Closed-Won** | Sales | From Proposal Submitted or Negotiation, with the customer's PO number and the PO file attached, every line priced and costed, no open request, and the prices approved if a rule applies (a discount given in Negotiation lapses the earlier approval). |
 | **Hold** | Sales | From any open stage, with a reason. Resume returns the deal to the stage it was held from. |
 | **Closed-Lost / Dropped** | Sales | From any open stage or Hold, with a reason from the loss-reason list. Dropped is not a loss (it does not count against win rate). |
 
@@ -78,29 +78,38 @@ Also:
   moves that are allowed and says why the others are not.
 - Every stage change records who made it, when, the reason, the deal value at that moment and the days spent in the
   previous stage, so time-in-stage can be reported.
-- Closed deals are read-only.
+- Closed deals are read-only. On hold, nothing is worked: lines are locked and requests cannot be started or
+  finished until sales resumes the deal.
+- **What's next.** The deal page opens with the stage's checklist for the person looking at it: their own step
+  first with the one button that does it, the reason when it cannot be done yet, and who is being waited on with
+  the due date. Presales and purchase see their own steps and one line for everything sales does, never a price.
+  The checklist is computed on the server from the same rules that gate the moves; the screen never decides.
 
 **Commit**, **Upside** and **Pipeline** are set by the sales person. A deal in Commit that has not reached Proposal
 Submitted is flagged in pipeline review. **[inferred]**
 
 ## 5. Hand-offs
 
-**Presales request** (sales → presales). Created when a deal that needs presales advances into BOQ, or raised by
-hand while the deal is in Qualified or BOQ. It names the engineer, a due date and the scope. Presales starts it,
-edits the lines, and submits it with a short summary. The deal's *presales owner* is the engineer on the latest
-request. Whether a deal needs presales is suggested from the Sub BUs on its lines (each Sub BU has a *needs presales*
-flag an admin maintains) and can be changed by sales. "When I select no pre-sales required, it must not ask me to
-send to pre-sales."
+**Presales request** (sales → presales). Created when a deal that needs presales advances into BOQ (the one way to
+hand a deal to presales from Qualified), or raised by hand in BOQ when none is open (a second look after a cancelled
+or submitted BOQ). Either way the customer's requirement must be on file, as a document presales can see. It names
+the engineer, a due date and the scope. Presales starts it, edits the lines, and submits it with a short summary;
+while it is open the lines belong to presales (the assignee of the open request) and sales cannot change them or ask
+purchase. The deal's *presales owner* is the engineer on the latest request. Whether a deal needs presales is
+suggested from the Sub BUs on its lines (each Sub BU has a *needs presales* flag an admin maintains) and can be
+changed by sales. "When I select no pre-sales required, it must not ask me to send to pre-sales."
 
-**Pricing request** (sales or presales → purchase). Raised on a deal in Qualified or BOQ with a buyer, due date and
-notes. Purchase starts it, enters the unit purchase cost on every line that is not own IP, and completes it. Own-IP
+**Pricing request** (sales or presales → purchase). Raised on an open deal with a buyer, due date and notes, in any
+open stage (a re-quote in Negotiation is real), once the deal has at least one line with a third-party OEM. Purchase
+starts it, enters the unit purchase cost on every line that is not own IP, and completes it; while it is open
+nobody but an admin changes what is sold (sales may still set prices, presales still costs own-IP lines). Own-IP
 lines take the product's standard cost by default; presales may enter their cost. "Sales will add pricing per
 product after getting prices from Purchase."
 
 Only one presales request and one pricing request can be open on a deal at a time. Either can be cancelled or
 reassigned by the person who raised it or a manager. Presales and purchase see their open requests, overdue first,
-on their **My work** page: "easy to come online and see what work they have to do. They don't need to see any fancy
-numbers."
+on their **My work** page, each with one line saying what is left to do ("Not started", "3 lines to cost"): "easy
+to come online and see what work they have to do. They don't need to see any fancy numbers."
 
 ## 6. Lines and money
 
@@ -129,9 +138,10 @@ through approval chain. Create a template in admin page where I can define these
 - An approval rule has conditions (deal GM below a percentage, deal value at or above an amount, a business unit)
   and an ordered list of approvers (the owner's manager, anyone in a role, or a named person). Every condition on a
   rule must hold for it to apply; several rules act as "or".
-- When a rule applies, the owner asks for approval before advancing to Proposal Submitted. Approvers see it in their
-  inbox and approve or reject with a note. Nobody approves their own request; a step with no other approver passes
-  on its own.
+- When a rule applies, the owner asks for approval before advancing to Proposal Submitted, and again before closing
+  as won if the prices changed since. Approval can be asked for in any open stage once every line is priced and
+  costed. Approvers see it in their inbox and approve or reject with a note. Nobody approves their own request; a
+  step with no other approver passes on its own.
 - An approval covers exactly the lines and prices it was asked for. If a line's quantity, price, cost, model or term
   changes afterwards, the approval lapses and a new one is needed.
 - With no rules defined, no approval is ever asked for. "We do rate to rate deals sometimes": there is no built-in
@@ -192,7 +202,7 @@ Every permission is enforced on the server on every route; hiding a button is ne
 | Lines: products, quantities, model, term | ✓ | team | own | assigned, while open | – |
 | Lines: purchase cost | ✓ | – | – | own-IP lines | assigned, all lines |
 | Back a stage, reopen, delete and restore | ✓ | team (not restore) | – | – | – |
-| Presales / pricing requests | ✓ | team | own deals | start, submit (assignee) / raise pricing | start, complete (assignee) |
+| Presales / pricing requests | ✓ | team | own deals | start, submit (assignee) / raise pricing while assigned | start, complete (assignee) |
 | Documents | ✓ | team | own | non-sales kinds on assigned deals | non-sales kinds on assigned deals |
 | Approvals | decide when listed | decide when listed | request; decide when listed | – | – |
 | Home dashboard, pipeline review | all | team | own | – | – |
@@ -227,11 +237,15 @@ against spreadsheet formula injection). **[inferred]** Native .xlsx is not produ
   meaning (stage tags, forecast tags, a colour per BU) and nothing else is loud; light mode first, dark mode through
   the same tokens; WCAG AA contrast; tags always carry text.
 - **Deployment:** one `docker compose up` (Postgres + app); migrations run on start.
+- **Assistant (optional):** with an OpenAI key in `.env` (`OPENAI_API_KEY`, model `AI_MODEL`), the hand-over dialog
+  and Submit BOQ offer "Draft with AI" (a scope or summary written from the deal's lines and documents, never
+  prices) and sales roles get a one-click plain-English deal brief for a pipeline call. Off, and invisible, without
+  the key; when on, deal text is sent to OpenAI. Nothing is saved until the person submits the dialog.
 
 ## 17. Out of scope (deliberately)
 
 Bundle pricing (one price for several lines); quote documents, versions and printing; supplier quotes tied to
-lines; health scores and automated insights; email, notifications and SMTP settings; password-reset emails (an admin
+lines; health scores; email, notifications and SMTP settings; password-reset emails (an admin
 resets passwords); backup and upgrade scripts; HTTPS termination; saved views; a command palette; an activities /
 tasks module; competitor, distributor, deal-registration and procurement-mode fields; contract dates (ERP); native
 Excel files; Microsoft 365 sign-in (prepared for, not built); anything for finance beyond keeping lines billable.
